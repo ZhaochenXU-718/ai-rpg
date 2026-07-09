@@ -52,6 +52,27 @@ REQUIRED_STORYLET_FIELDS = {
 }
 REQUIRED_ENDING_FIELDS = {"title", "priority", "conditions", "outcome"}
 COMPARISON_SUFFIXES = ("_gte", "_lte", "_gt", "_lt", "_ne")
+KNOWN_STORYLET_TYPES = {
+    "pressure",
+    "reveal",
+    "opportunity",
+    "opportunity_with_cost",
+    "consequence",
+    "reward",
+    "progress",
+    "partial_progress",
+    "failure_pressure",
+    "ending_route",
+}
+CONDITION_GROUPS = (
+    "world_state",
+    "player_state",
+    "npc_state",
+    "flags",
+    "state_gte",
+    "state_lte",
+)
+EFFECT_MUTATION_KEYS = ("set_flags", "set_world", "state_patch")
 
 
 class ValidationReport:
@@ -121,9 +142,9 @@ def collect_objects(scenes: dict[str, Any]) -> set[str]:
             continue
         for group_values in available.values():
             if isinstance(group_values, list):
-                for item in group_values:
-                    if isinstance(item, str):
-                        objects.add(item)
+                objects.update(item for item in group_values if isinstance(item, str))
+            elif isinstance(group_values, dict):
+                objects.update(str(key) for key in group_values)
     return objects
 
 
@@ -216,12 +237,88 @@ def validate_intents(intents: dict[str, Any], report: ValidationReport) -> None:
             continue
         for field in sorted(REQUIRED_INTENT_FIELDS - intent.keys()):
             report.error(f"intents.{intent_id} missing required field: {field}")
+        if "quote_required" in intent and not isinstance(intent["quote_required"], bool):
+            report.error(f"intents.{intent_id}.quote_required must be a boolean.")
+        if "quote_required" not in intent:
+            report.warn(
+                f"intents.{intent_id} has no quote_required; engine will derive it from base_risk."
+            )
+
+
+def validate_condition_block(
+    block: dict[str, Any],
+    known_paths: set[str],
+    character_ids: set[str],
+    report: ValidationReport,
+    context: str,
+    allow_ending_reached: bool = False,
+) -> None:
+    """Validate one AND-block of state conditions (shared by exit_conditions)."""
+    for group, value in block.items():
+        if group == "ending_reached":
+            if not allow_ending_reached:
+                report.error(f"{context}: ending_reached is only allowed in exit_conditions.")
+            elif value is not True:
+                report.error(f"{context}: ending_reached only supports the value true.")
+            continue
+        if group not in CONDITION_GROUPS:
+            report.error(f"{context}: unknown condition group '{group}'.")
+            continue
+        if not isinstance(value, dict):
+            report.error(f"{context}.{group} must be a mapping.")
+            continue
+        for key in value:
+            if group == "world_state":
+                path = f"world.{strip_comparison_suffix(str(key))}"
+            elif group == "player_state":
+                path = f"player.{strip_comparison_suffix(str(key))}"
+            elif group == "flags":
+                path = f"flags.{strip_comparison_suffix(str(key))}"
+            else:
+                path = str(key)
+            validate_state_path(path, known_paths, character_ids, report, f"{context}.{group}")
+
+
+def validate_exit_conditions(
+    scene_id: str,
+    exit_conditions: Any,
+    known_paths: set[str],
+    character_ids: set[str],
+    report: ValidationReport,
+) -> None:
+    context = f"scenes.{scene_id}.exit_conditions"
+    if isinstance(exit_conditions, list):
+        report.error(
+            f"{context}: expression-string lists are no longer supported; "
+            "use the structured form 'any: [<condition block>, ...]' (schema section 9.4)."
+        )
+        return
+    if not isinstance(exit_conditions, dict) or set(exit_conditions) != {"any"}:
+        report.error(f"{context} must be a mapping with a single 'any' key.")
+        return
+    blocks = exit_conditions["any"]
+    if not isinstance(blocks, list) or not blocks:
+        report.error(f"{context}.any must be a non-empty list of condition blocks.")
+        return
+    for index, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            report.error(f"{context}.any[{index}] must be a mapping.")
+            continue
+        validate_condition_block(
+            block,
+            known_paths,
+            character_ids,
+            report,
+            f"{context}.any[{index}]",
+            allow_ending_reached=True,
+        )
 
 
 def validate_scenes(
     scenes: dict[str, Any],
     characters: dict[str, Any],
     intents: dict[str, Any],
+    known_paths: set[str],
     report: ValidationReport,
 ) -> None:
     character_ids = set(characters)
@@ -244,6 +341,26 @@ def validate_scenes(
         available_objects = scene.get("available_objects")
         if not isinstance(available_objects, dict):
             report.error(f"scenes.{scene_id}.available_objects must be a mapping.")
+        else:
+            for group, values in available_objects.items():
+                context = f"scenes.{scene_id}.available_objects.{group}"
+                if isinstance(values, dict):
+                    for obj_id, label in values.items():
+                        if not isinstance(label, str) or not label:
+                            report.error(f"{context}.{obj_id}: label must be a non-empty string.")
+                elif isinstance(values, list):
+                    if group != "people":
+                        report.warn(
+                            f"{context}: bare id list has no display labels; "
+                            "players cannot tell these are actionable (use 'id: label' mapping)."
+                        )
+                else:
+                    report.error(f"{context} must be a list or an 'id: label' mapping.")
+
+        if "exit_conditions" in scene:
+            validate_exit_conditions(
+                scene_id, scene["exit_conditions"], known_paths, character_ids, report
+            )
 
 
 def validate_trigger(
@@ -309,8 +426,14 @@ def validate_effect(
     known_paths: set[str],
     character_ids: set[str],
     report: ValidationReport,
+    context: str | None = None,
 ) -> None:
-    context = f"storylets.{storylet_id}.effect"
+    context = context or f"storylets.{storylet_id}.effect"
+    if "duration_turns" in effect:
+        report.error(
+            f"{context}.duration_turns is not allowed at the effect top level; "
+            "wrap expiring changes in a 'temporary' block (schema section 10.2)."
+        )
     if "set_flags" in effect and not isinstance(effect["set_flags"], dict):
         report.error(f"{context}.set_flags must be a mapping.")
     if "set_world" in effect:
@@ -326,6 +449,27 @@ def validate_effect(
                 validate_state_path(str(path), known_paths, character_ids, report, f"{context}.state_patch")
     if "add_clues" in effect and not isinstance(effect["add_clues"], list):
         report.error(f"{context}.add_clues must be a list.")
+    if "temporary" in effect:
+        temporary = effect["temporary"]
+        if not isinstance(temporary, dict):
+            report.error(f"{context}.temporary must be a mapping.")
+            return
+        duration = temporary.get("duration_turns")
+        if not isinstance(duration, int) or duration < 1:
+            report.error(f"{context}.temporary.duration_turns must be an integer >= 1.")
+        if not any(key in temporary for key in EFFECT_MUTATION_KEYS):
+            report.error(f"{context}.temporary must contain at least one of {EFFECT_MUTATION_KEYS}.")
+        if "temporary" in temporary:
+            report.error(f"{context}.temporary must not nest another temporary block.")
+        validate_effect(
+            storylet_id,
+            {k: v for k, v in temporary.items() if k in EFFECT_MUTATION_KEYS},
+            scene_ids,
+            known_paths,
+            character_ids,
+            report,
+            context=f"{context}.temporary",
+        )
 
 
 def validate_storylets(
@@ -354,6 +498,10 @@ def validate_storylets(
         for field in sorted(REQUIRED_STORYLET_FIELDS - storylet.keys()):
             report.error(f"storylets.{storylet_id} missing required field: {field}")
 
+        storylet_type = storylet.get("type")
+        if storylet_type is not None and storylet_type not in KNOWN_STORYLET_TYPES:
+            report.warn(f"storylets.{storylet_id}.type '{storylet_type}' is not in the recommended vocabulary.")
+
         trigger = storylet.get("trigger")
         if isinstance(trigger, dict):
             validate_trigger(storylet_id, trigger, scene_ids, intent_ids, object_ids, known_paths, character_ids, report)
@@ -365,6 +513,165 @@ def validate_storylets(
             validate_effect(storylet_id, effect, scene_ids, known_paths, character_ids, report)
         elif effect is not None:
             report.error(f"storylets.{storylet_id}.effect must be a mapping.")
+
+
+def validate_resolution_limits(
+    data: dict[str, Any],
+    known_paths: set[str],
+    character_ids: set[str],
+    report: ValidationReport,
+) -> None:
+    limits = data.get("resolution_limits")
+    if limits is None:
+        if "custom" in (data.get("intents") or {}):
+            report.warn(
+                "resolution_limits is missing but the story allows the 'custom' intent; "
+                "generic resolution will not be able to change any state."
+            )
+        return
+    if not isinstance(limits, dict):
+        report.error("resolution_limits must be a mapping.")
+        return
+
+    max_paths = limits.get("max_paths_per_action")
+    if max_paths is not None and (not isinstance(max_paths, int) or max_paths < 1):
+        report.error("resolution_limits.max_paths_per_action must be an integer >= 1.")
+
+    patchable = limits.get("patchable", {})
+    if not isinstance(patchable, dict):
+        report.error("resolution_limits.patchable must be a mapping.")
+        patchable = {}
+    for path, bounds in patchable.items():
+        context = f"resolution_limits.patchable.{path}"
+        validate_state_path(str(path), known_paths, character_ids, report, "resolution_limits.patchable")
+        if not isinstance(bounds, dict):
+            report.error(f"{context} must be a mapping of bounds.")
+            continue
+        has_range = "min" in bounds or "max" in bounds or "max_step" in bounds
+        has_values = "values" in bounds
+        if has_range == has_values:
+            report.error(f"{context} must define either numeric bounds (min/max/max_step) or an enum 'values' list.")
+            continue
+        if has_values and (not isinstance(bounds["values"], list) or not bounds["values"]):
+            report.error(f"{context}.values must be a non-empty list.")
+        if has_range:
+            minimum, maximum = bounds.get("min"), bounds.get("max")
+            if minimum is not None and maximum is not None and minimum > maximum:
+                report.error(f"{context}: min ({minimum}) must not exceed max ({maximum}).")
+            step = bounds.get("max_step")
+            if step is not None and (not isinstance(step, (int, float)) or step <= 0):
+                report.error(f"{context}.max_step must be a positive number.")
+
+    protected = limits.get("protected", [])
+    if not isinstance(protected, list):
+        report.error("resolution_limits.protected must be a list.")
+        protected = []
+    for path in protected:
+        if not isinstance(path, str):
+            report.error(f"resolution_limits.protected entry {path!r} must be a string.")
+            continue
+        if path.endswith(".*"):
+            continue
+        validate_state_path(path, known_paths, character_ids, report, "resolution_limits.protected")
+        if path in patchable:
+            report.error(f"resolution_limits: '{path}' is listed as both patchable and protected.")
+
+
+def collect_effect_mutations(effect: dict[str, Any]) -> tuple[set[str], set[str]]:
+    """Return (flags set by the effect, scenes targeted via set_world.scene)."""
+    flags: set[str] = set()
+    scenes: set[str] = set()
+
+    def scan(block: dict[str, Any]) -> None:
+        set_flags = block.get("set_flags")
+        if isinstance(set_flags, dict):
+            flags.update(str(key) for key in set_flags)
+        set_world = block.get("set_world")
+        if isinstance(set_world, dict) and isinstance(set_world.get("scene"), str):
+            scenes.add(set_world["scene"])
+        state_patch = block.get("state_patch")
+        if isinstance(state_patch, dict):
+            for path in state_patch:
+                path = str(path)
+                if path.startswith("flags."):
+                    flags.add(path.split(".", 1)[1])
+                elif path == "world.scene":
+                    scenes.add(str(state_patch[path]))
+
+    scan(effect)
+    temporary = effect.get("temporary")
+    if isinstance(temporary, dict):
+        scan(temporary)
+    return flags, scenes
+
+
+def validate_content_graph(
+    data: dict[str, Any],
+    scenes: dict[str, Any],
+    storylets: list[Any],
+    report: ValidationReport,
+) -> None:
+    """Dead-flag and scene-reachability checks over the whole content graph."""
+    set_flags: set[str] = set()
+    reachable_scenes: set[str] = set()
+    for storylet in storylets:
+        if not isinstance(storylet, dict):
+            continue
+        effect = storylet.get("effect")
+        if isinstance(effect, dict):
+            flags, scene_targets = collect_effect_mutations(effect)
+            set_flags.update(flags)
+            reachable_scenes.update(scene_targets)
+
+    initial_state = data.get("initial_state", {})
+    declared_flags = initial_state.get("flags", {}) if isinstance(initial_state, dict) else {}
+    if isinstance(declared_flags, dict):
+        for flag in declared_flags:
+            if flag not in set_flags:
+                report.warn(
+                    f"initial_state.flags.{flag} is never set by any storylet effect; "
+                    "it is either dead or a storylet is missing."
+                )
+
+    world = initial_state.get("world", {}) if isinstance(initial_state, dict) else {}
+    initial_scene = world.get("scene") if isinstance(world, dict) else None
+    for scene_id in scenes:
+        if scene_id != initial_scene and scene_id not in reachable_scenes:
+            report.warn(
+                f"scenes.{scene_id} is unreachable: no storylet sets world.scene to it "
+                "and it is not the initial scene."
+            )
+
+    # A transition the scene's intent menu cannot express is invisible to the
+    # player: every intent-gated scene-changing storylet must share at least
+    # one intent with each trigger scene's suggested_intents.
+    for storylet in storylets:
+        if not isinstance(storylet, dict):
+            continue
+        effect = storylet.get("effect")
+        if not isinstance(effect, dict):
+            continue
+        _, scene_targets = collect_effect_mutations(effect)
+        if not scene_targets:
+            continue
+        trigger = storylet.get("trigger") or {}
+        if not isinstance(trigger, dict):
+            continue
+        intents = [trigger["intent"]] if "intent" in trigger else list(trigger.get("intent_any") or [])
+        if not intents:
+            continue
+        trigger_scenes = [trigger["scene"]] if "scene" in trigger else list(trigger.get("scene_any") or [])
+        for scene_id in trigger_scenes:
+            scene = scenes.get(scene_id)
+            if not isinstance(scene, dict):
+                continue
+            suggested = scene.get("suggested_intents") or []
+            if suggested and not set(intents) & set(suggested):
+                report.warn(
+                    f"storylets.{storylet.get('id')}: transition requires intents {intents} "
+                    f"but scenes.{scene_id}.suggested_intents offers none of them; "
+                    "the player cannot discover this transition from the menu."
+                )
 
 
 def validate_endings(
@@ -400,11 +707,13 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
     validate_player_role(data, characters, report)
     validate_characters(characters, report)
     validate_intents(intents, report)
-    validate_scenes(scenes, characters, intents, report)
 
     known_paths = collect_state_paths(data)
+    validate_scenes(scenes, characters, intents, known_paths, report)
     validate_storylets(storylets, scenes, intents, characters, known_paths, report)
     validate_endings(endings, known_paths, set(characters), report)
+    validate_resolution_limits(data, known_paths, set(characters), report)
+    validate_content_graph(data, scenes, storylets, report)
 
     return report
 

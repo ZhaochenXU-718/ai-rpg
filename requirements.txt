@@ -1,0 +1,3 @@
+# AIRPG MVP 依赖。当前只有阶段 1-2（内容工具 + 规则引擎）所需。
+# 阶段 3 接 LLM 时加 anthropic；阶段 4 Web 原型时加 fastapi / uvicorn。
+pyyaml>=6.0

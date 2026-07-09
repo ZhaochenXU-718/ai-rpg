@@ -54,14 +54,25 @@ MVP 应在当前 AIRPG 仓库中从头实现一个很薄的 action/state/directo
 ```text
 玩家选择意图
 -> 玩家输入执行方案
--> 系统理解方案并报价风险
+-> 输入分类（规则内 / 规则外可转化 / 越界）
+-> 系统理解方案并报价风险（低风险意图跳过报价）
 -> 玩家确认或修改
--> 规则 + LLM 判定
+-> 规则判定：优先匹配 storylet，未命中走受限兜底判定
 -> 世界状态更新
 -> 导演选择下一事件
 -> LLM 渲染叙事反馈
 -> 记录成本、延迟、公平感日志
 ```
+
+遇到体验问题时改哪一层（内容 / 校验器 / 引擎 / 留给 LLM），遵循 `docs/engine-principles.md` 的修改守则——引擎判定核心不为单个故事的体验反馈而改。
+
+输入分类改造自 Open-Theatre 导演 prompt 的"响应准则"（情节内 / 情节外-日常 / 情节外-打破）：
+
+| 分类 | 含义 | 处理 |
+|---|---|---|
+| 规则内 | 方案落在意图空间和世界规则内 | 正常报价 / 执行 |
+| 规则外可转化 | 方案有创意但超出预设，可映射到白名单状态变化 | 走兜底判定（见 6.3） |
+| 越界 | 违反 `player_role.constraints` 或 `global_rules.boundaries` | 报价返回 `can_execute: false`，用世界内语言解释（"暴风雪封死了山路"），不消耗时间 |
 
 ## 3. MVP 故事范围
 
@@ -145,7 +156,21 @@ MVP 应在当前 AIRPG 仓库中从头实现一个很薄的 action/state/directo
 
 ### 4.4 判定报价
 
-复杂行动必须先报价，再执行。
+报价按意图风险分层，不是每回合都报价——否则每回合五步交互（选意图、打字、读报价、确认、读结果）会拖垮节奏：
+
+| 意图 `quote_required` | 行为 |
+|---|---|
+| `false`（如观察） | 直接执行，结果叙事前用一句话复述系统的理解 |
+| `true`（交涉、潜入、制造混乱、威胁、自定义） | 必须先报价，玩家确认后执行 |
+
+报价的约束规则（防"报价刷单"，保护公平感）：
+
+1. 报价对判定有约束力：执行结果的恶化程度不得超出报价列出的风险与代价范围。
+2. 重新报价免费、不消耗 time_left，但同一回合最多 3 次。
+3. 重新报价次数记入日志——高频改写方案本身是"玩家觉得没被理解"的信号。
+4. 越界方案在报价阶段拦截（`can_execute: false` + 世界内解释），不进入判定。
+
+中高风险行动必须先报价，再执行。
 
 示例：
 
@@ -177,7 +202,7 @@ MVP 应在当前 AIRPG 仓库中从头实现一个很薄的 action/state/directo
 world:
   chapter: 1
   scene: great_hall
-  time_left: 6
+  time_left: 8   # 最优路线 7 回合 + 冗余，依据 walkthrough 用例
   evidence_status: intact
   current_goal: "午夜前进入档案室，找到证据"
 ```
@@ -200,17 +225,16 @@ npcs:
   butler:
     suspicion: 2
     trust: 0
-    location: corridor
     knows_player_goal: false
   maid:
     suspicion: 1
     trust: 2
-    location: great_hall
     secret: "看见管家午夜前进入过档案室"
   guard:
     alertness: 2
-    location: archive_door
 ```
+
+注意：角色在不在场由场景的 `available_characters` 声明，NPC 状态里不放静态 `location` 字段（没有事件卡更新它就是死数据），见 `docs/content-schema.md` 第 5 节。
 
 ### 5.4 场景状态
 
@@ -257,35 +281,54 @@ action:
 
 第一版尽量避免“纯失败”。
 
-## 7. 事件卡 / Storylet 设计
+### 6.1 判定优先级
 
-第一版只需要 8-12 张事件卡。
+每个确认执行的行动按以下顺序判定：
 
-事件卡格式：
+1. 匹配 storylet：按内容文件列表顺序单遍扫描，命中即应用效果（语义见 `docs/content-schema.md` 10.3，含"每回合最多一次场景切换"规则）。
+2. 未命中任何 storylet 时，走兜底判定（6.3）。
+3. 两者都由规则执行，LLM 不单独决定成败。
 
-```yaml
-id: maid_warning
-title: "侍女的低声提醒"
-trigger:
-  scene: great_hall
-  maid_trust_gte: 2
-  evidence_status: intact
-once: true
-director_intent: reveal_clue
-effect:
-  flags:
-    maid_warned_player: true
-  add_clue: "管家午夜前进入过档案室"
-narrative_hint: "侍女避开管家的视线，压低声音提醒玩家。"
+### 6.2 Storylet 判定
+
+命中 storylet 的行动，效果完全由内容文件定义，引擎只负责执行和记录。这是作者预设的因果，覆盖"作者想到的"创意空间。
+
+### 6.3 兜底判定：MVP 的真正核心
+
+**未命中 storylet 的方案才是"接住玩家"命题的主要考场**——命中预设事件卡的方案本来就不难接。兜底判定采用 Plan-Validate-Apply（参考 Orchestrated Reality 论文）：
+
+```text
+LLM 从玩家方案提议一组状态变化（Plan）
+-> 引擎按 resolution_limits 白名单过滤、按边界裁剪（Validate）
+-> 只应用通过的部分（Apply）
+-> 渲染叙事时如实反映实际生效的变化，不夸大、不虚构
 ```
 
-事件卡类型：
+规则：
 
-- 加压：时间减少、守卫警觉、管家封锁。
-- 揭示：线索、秘密、动机。
-- 奖励：获得钥匙、信任、进入机会。
-- 反转：玩家行为带来意外怀疑。
-- 收束：进入档案室、找到证据、触发结局。
+- 白名单（`resolution_limits.patchable`）覆盖软状态：NPC 信任 / 怀疑、噪音、火情、注意力等。
+- 关键剧情事实（证据、钥匙、场景切换、flags）在 `protected` 中，兜底判定永远不能触碰——玩家创意可以改变局面，但不能绕过作者设计的因果关卡。
+- 被过滤 / 裁剪的提议记入日志。高频被拒路径 = 玩家普遍想影响某个作者没想到的维度，是内容迭代的直接信号。
+
+## 7. 事件卡 / Storylet 设计
+
+第一版 15-20 张事件卡。正式格式以 `docs/content-schema.md` 第 10 节为准，当前实例见 `content/midnight_archive.yaml`。
+
+事件卡类型（对应 schema 的 `type` 词表）：
+
+- 加压（pressure / failure_pressure）：时间减少、守卫警觉、管家封锁。
+- 揭示（reveal）：线索、秘密、动机。
+- 机会（opportunity / opportunity_with_cost）：临时窗口，用 `temporary` 块自动过期。
+- 奖励（reward）：获得钥匙、信任、进入机会。
+- 反转（consequence）：玩家行为带来意外怀疑。
+- 推进 / 收束（progress / partial_progress / ending_route）：场景转场、找到证据、触发结局。
+
+两类容易漏写的事件卡（本故事第一稿都漏了，靠 walkthrough 校验才发现）：
+
+1. **转场卡**：初始场景之外的每个场景，都必须有 storylet 通过 `set_world.scene` 通向它，否则场景图不连通、故事跑不完。
+2. **flag 供给卡**：`initial_state.flags` 里的每个 flag 至少要有一张卡会设置它，否则是死变量。
+
+这两条已加入 `tools/validate_content.py` 的自动检查。
 
 ## 8. LLM 使用策略
 
@@ -295,12 +338,26 @@ narrative_hint: "侍女避开管家的视线，压低声音提醒玩家。"
 
 推荐：
 
-1. 理解与报价：把玩家自然语言转成结构化 action，并生成风险报价。
+1. 理解与报价：把玩家自然语言转成结构化 action（含输入分类和兜底判定的状态变化提议），并生成风险报价。低风险意图这一步退化为一句话理解复述，可与渲染合并。
 2. 叙事渲染：根据判定结果和状态变化生成一段文本反馈。
 
 判定本身尽量由规则承担，LLM 不单独决定成败。
 
-### 8.2 可替换为人工
+### 8.2 渲染上下文规范
+
+叙事渲染不需要 Open-Theatre 那套四层记忆系统（20-30 分钟短篇用不上），但必须明确定义喂给渲染 LLM 的最小上下文，否则文风和事实一致性会随回合数漂移：
+
+```text
+style_bible（文风约束）
++ 当前场景 entry_text
++ 最近 3-5 条叙事记录
++ 当前世界状态摘要（时间、怀疑、关键 flag）
++ 本回合判定结果与命中 storylet 的 narrative_hint
+```
+
+超出窗口的历史不滚动进 prompt，用状态变量代替记忆。
+
+### 8.3 可替换为人工（Wizard-of-Oz）
 
 第一版保留 Wizard-of-Oz 开关。
 
@@ -328,7 +385,7 @@ narrative_hint: "侍女避开管家的视线，压低声音提醒玩家。"
 | 意图面板 | 6 个固定意图按钮 |
 | 对象面板 | 当前人物、物品、环境、状态 |
 | 输入区 | 玩家自然语言方案 |
-| 报价卡 | 系统理解、收益、风险、代价、确认按钮 |
+| 报价卡 | 系统理解、收益、风险、代价、确认按钮；仅中高风险意图出现（见 4.4） |
 | 状态栏 | 时间、怀疑、信任、证据状态 |
 | 调试面板 | JSON 状态、LLM 调用、token、延迟 |
 
@@ -343,19 +400,30 @@ narrative_hint: "侍女避开管家的视线，压低声音提醒玩家。"
 ```text
 content/
   midnight_archive.yaml
+  walkthroughs/
+    midnight_archive.yaml
+
+tools/
+  validate_content.py
+  check_walkthroughs.py
 
 server/
-  main.py
+  cli.py            # 阶段 2：命令行游玩入口
+  main.py           # 阶段 4：FastAPI
   engine/
-    state.py
-    content_loader.py
-    intent.py
-    quote.py
-    resolver.py
-    director.py
-    renderer.py
-    logger.py
-    llm.py
+    state.py        # 状态模型：命名空间、路径、patch 语义
+    conditions.py   # 单一条件求值器（trigger/exit/endings 共用）
+    effects.py      # 效果应用 + temporary 过期回滚
+    content.py      # 故事加载与访问器
+    limits.py       # resolution_limits 校验与裁剪（Plan-Validate-Apply 的 V）
+    quote.py        # 报价规则版（阶段 3 由 LLM 替换理解与提议）
+    resolver.py     # 回合判定核心（10.3 语义）
+    director.py     # 场景目标 / exit_conditions 信号
+    renderer.py     # 模板叙事渲染（阶段 3 由 LLM 替换）
+    session.py      # 会话：报价流程 + 判定 + 日志
+    logger.py       # 回合 JSONL 日志
+    walkthrough.py  # walkthrough 驱动（验收用例执行器）
+    llm.py          # 阶段 3
 
 web/
   src/
@@ -412,13 +480,23 @@ POST /api/action/quote
 ```json
 {
   "quote_id": "...",
+  "classification": "in_rules | creative | out_of_bounds",
   "understanding": "...",
   "benefits": [],
   "risks": [],
   "costs": {},
-  "can_execute": true
+  "can_execute": true,
+  "rejection_reason_in_world": null,
+  "requote_count": 0
 }
 ```
+
+约定：
+
+- `quote_required: false` 的意图跳过本接口，客户端直接调用 resolve。
+- `out_of_bounds` 时 `can_execute` 为 false，`rejection_reason_in_world` 用世界内语言解释，不消耗 time_left。
+- 同一回合 `requote_count` 达到 3 后拒绝继续报价。
+- 报价中列出的 `risks` 和 `costs` 是 resolve 结果的恶化上限。
 
 ### 11.3 确认执行
 
@@ -463,12 +541,16 @@ POST /api/feedback
 ```json
 {
   "session_id": "...",
-  "turn_id": "...",
+  "scope": "scene | session",
+  "scene_id": "great_hall",
   "felt_understood": 5,
   "felt_fair": 4,
+  "unfair_turn_ids": ["..."],
   "comment": "系统理解了我的火情方案，但代价有点重"
 }
 ```
+
+反馈时机改为**每场景结束一次 + 局末一次**，不做每回合打分——每回合弹评分会打断沉浸，且样本质量低。局末反馈额外定点追问："哪一次判定让你觉得被冤枉？"（`unfair_turn_ids`），与该回合的报价、判定日志对齐分析。
 
 ## 12. 日志与指标
 
@@ -495,9 +577,19 @@ POST /api/feedback
 | 完成率 | 5-10 人测试中 >= 70% 完成 |
 | 复述率 | >= 50% 愿意复述自己的独特行动 |
 | 重玩意愿 | >= 30% 愿意尝试另一条路径 |
-| 单回合延迟 | P50 < 5 秒 |
+| 报价延迟 | P50 < 3 秒（有报价的回合玩家要等两次，必须分开测） |
+| 判定 + 渲染延迟 | P50 < 5 秒 |
 | 单局 LLM 调用成本 | 需要实测并记录 |
 | 内容生产工时 | 记录从写作到可玩版本的人时 |
+
+兜底判定专属指标（验证"接住玩家"命题）：
+
+| 指标 | 说明 |
+|---|---|
+| 兜底命中率 | 多少行动未命中 storylet、走了兜底路径 |
+| 提议裁剪率 | 兜底判定中 LLM 提议被白名单过滤 / 裁剪的比例，过高说明白名单太窄或 LLM 提议失控 |
+| 高频被拒路径 | 玩家普遍想影响但白名单没覆盖的状态维度，内容迭代信号 |
+| 重报价率 | 每回合平均重新报价次数，过高说明理解质量差 |
 
 ## 13. 实施阶段
 
@@ -516,47 +608,55 @@ POST /api/feedback
 
 如果当前目标是尽快实现 AIRPG MVP，可跳过此阶段，直接进入阶段 1。
 
-### 阶段 1：内容与状态骨架，2 天
+### 阶段 1：内容与状态骨架（已完成，2026-07-09 修订）
 
-任务：
+已产出：
 
-- 定义通用内容协议，并写入 `docs/content-schema.md`。
-- 实现 `tools/validate_content.py`，用于校验故事 YAML 是否符合协议。
-- 写 `content/midnight_archive.yaml`。
-- 定义 3-5 个场景。
-- 定义 NPC、对象、状态变量。
-- 定义 8-12 张事件卡。
-- 写 3 个结局条件。
+- `docs/content-schema.md`：通用内容协议 v1（含结构化 exit_conditions、temporary 效果、resolution_limits、quote_required）。
+- `tools/validate_content.py`：格式校验 + 场景连通性 / 死 flag / 白名单交叉检查。
+- `content/midnight_archive.yaml`：5 场景、20 张事件卡、3 结局。
+- `content/walkthroughs/midnight_archive.yaml`：每个结局一条通关路线。
+- `tools/check_walkthroughs.py`：按引擎语义逐回合模拟 walkthrough，验证三个结局都真实可达、时间预算成立。
 
-完成标准：
+完成标准（均已满足）：
 
 - `content/midnight_archive.yaml` 通过内容格式校验。
-- 不接 LLM，也能人工跑完故事流程。
+- 三条 walkthrough 全部通过模拟（等价于"不接 LLM 也能跑完故事流程"，且是自动化的）。
 - 阶段 2 的规则引擎只依赖内容协议，不依赖某个具体故事的硬编码字段。
 
-### 阶段 2：本地规则引擎，2-3 天
+### 阶段 2：本地规则引擎（已完成，2026-07-09）
 
-任务：
+已产出（`server/engine/`，模块职责见第 10 节）：
 
-- 实现 session state。
-- 实现 intent -> action 映射。
-- 实现 quote 生成的规则版。
-- 实现 resolve 判定。
-- 实现 state patch。
-- 实现 storylet trigger。
+- session state、报价流程（分层报价、约束性报价、重报价限 3 次）、回合判定、JSONL 日志。
+- resolve 判定：storylet 单遍级联优先，未命中走 resolution_limits 兜底（游玩路径裁剪、walkthrough 路径严格校验）。
+- state patch 与 temporary 效果过期调度。
+- 单一条件求值器：trigger / exit_conditions / endings 共用；每回合最多一次场景切换。
+- `server/cli.py`：命令行完整游玩（意图 + 对象 + 报价卡 + 确认 + 模板叙事）。
+- `tools/check_walkthroughs.py` 已改为引擎的薄封装，判定语义只有一份实现。
 
-完成标准：
+完成标准（均已满足）：
 
-- 命令行或 API 能跑通一个完整流程。
-- 每回合状态变化可追踪。
+- 命令行能跑通完整流程（真相曝光路线 7 回合实测通关，剩余时间 1，与 walkthrough 数学一致）。
+- 每回合状态变化可追踪（日志含 fired storylets、状态 diff、报价/判定延迟、llm_calls=0）。
+- 引擎跑三条 walkthrough 全部通过（walkthrough 即验收用例）。
+
+规则版占位（阶段 3 由 LLM 替换，接口不变）：
+
+- 理解与提议：`quote.py` 的 `default_proposal`（交涉→目标 NPC 信任 +1 等规则映射）。
+- 叙事渲染：`renderer.py` 的模板文本（entry_text + narrative_hint + 状态摘要）。
+- 输入分类：结构化输入下恒为 `in_rules`，`out_of_bounds` 留给自然语言输入。
 
 ### 阶段 3：LLM 接入，2-3 天
+
+修改边界见 `docs/engine-principles.md` 第 5 节（LLM 只做理解与渲染，判定核心接口冻结）。
 
 任务：
 
 - 接入 LLM provider 抽象。
-- 用 LLM 辅助生成理解与报价。
-- 用 LLM 渲染判定后的叙事反馈。
+- 用 LLM 辅助生成理解与报价：把自由表达映射到意图 + 对象 ID + 白名单 patch 提议（如"我看看壁炉上摆着什么"→ `observe fireplace`）。CLI 阶段的精确别名映射到此为止，模糊理解是这一层的本职。
+- 用 LLM 渲染判定后的叙事反馈，prompt 约束"只陈述状态中存在的事实"。
+- 理解接不住时显式告知玩家，不猜测执行（公平感协议）。
 - 保留规则判定为主。
 - 增加 mock provider，支持无 API 开发。
 
@@ -577,6 +677,29 @@ POST /api/feedback
 完成标准：
 
 - 内部测试者可以在浏览器中完整玩 20-30 分钟。
+
+### 阶段 4.5：LLM 玩家代理自动试玩，1-2 天
+
+真人测试者是稀缺资源，不应消耗在崩溃、死锁和剧情空转上。借鉴 Open-Theatre 的 PlayerAgent 思路（其 10 种人格中"阴谋论者""杠精辩手""情绪冲动型"正是边界测试型玩家），在真人测试前自动跑局：
+
+任务：
+
+- 写一个 LLM 玩家代理，按人格 prompt 生成意图 + 自然语言方案。
+- 3-5 种人格（配合型、边界试探型、拖延型、暴力型、创意型）。
+- 自动跑 20-50 局，导出完整日志。
+
+要筛掉的问题：
+
+- 剧情空转（连续多回合无状态变化）。
+- 状态死锁（无法到达任何结局）。
+- 结局分布异常（某结局从未出现）。
+- 兜底判定接不住的高频输入模式。
+- 单局成本 / 延迟离谱的回合。
+
+完成标准：
+
+- 自动局的完成率和结局分布合理。
+- 崩溃和死锁清零后再进入真人测试。
 
 ### 阶段 5：小样本测试，3-5 天
 
@@ -660,17 +783,25 @@ POST /api/feedback
 
 ## 17. 下一步任务清单
 
-建议从以下任务开始实现：
+已完成（阶段 1）：
 
-1. 定义内容协议：`docs/content-schema.md`。
-2. 实现内容校验：`tools/validate_content.py`。
-3. 创建项目骨架：`content/`、`server/`、`web/`、`data/sessions/`。
-4. 写 `content/midnight_archive.yaml` 的第一版故事数据，并通过校验。
-5. 实现无 LLM 的规则引擎，让故事能在命令行跑通。
-6. 实现 `/api/session`、`/api/action/quote`、`/api/action/resolve`。
-7. 做最简 Web UI。
-8. 接入 mock LLM，再接真实 LLM。
-9. 找 5-10 人测试。
+- ~~定义内容协议：`docs/content-schema.md`。~~
+- ~~实现内容校验：`tools/validate_content.py`。~~
+- ~~写 `content/midnight_archive.yaml` 的第一版故事数据，并通过校验。~~
+- ~~写 walkthrough 用例并实现 `tools/check_walkthroughs.py`，验证三个结局可达。~~
+
+已完成（阶段 2，2026-07-09）：
+
+- ~~创建 `server/` 骨架。~~
+- ~~实现无 LLM 的规则引擎（`server/engine/`），命令行可完整玩通，walkthrough 作为验收用例通过。~~
+
+接下来按顺序：
+
+1. 接入 mock LLM，再接真实 LLM（`server/engine/llm.py`）：替换 `quote.default_proposal`（自然语言 → 输入分类 + 白名单提议）与 `renderer`（叙事渲染），判定核心不动。
+2. 实现 `/api/session`、`/api/action/quote`、`/api/action/resolve`、`/api/feedback`（包一层 `GameSession`）。
+3. 做最简 Web UI（`web/`）。
+4. 写 LLM 玩家代理，自动跑 20-50 局（阶段 4.5）。
+5. 找 5-10 人测试。
 
 第一句工程目标：
 
