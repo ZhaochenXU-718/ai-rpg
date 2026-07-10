@@ -24,6 +24,7 @@ walkthroughs:
         intent: sneak
         objects: [side_stair]
         expect_storylets: [slip_into_corridor]
+        expect_world_rules: [maid_uses_service_route]
       - note: "与艾拉交涉，换来仆役侧门钥匙"
         intent: negotiate
         objects: [maid, medicine_box]
@@ -34,12 +35,12 @@ walkthroughs:
         objects: [back_stairs]
         expect_storylets: [climb_back_stairs]
       - note: "用钥匙打开仆役侧门进入档案室"
-        intent: sneak
-        objects: [archive_door]
+        intent: use
+        objects: [servant_key, service_door]
         expect_storylets: [archive_entry_with_key]
       - note: "旧徽章打开暗格，拿到证据并级联进入午夜摊牌"
-        intent: observe
-        objects: [locked_cabinet, hidden_compartment]
+        intent: use
+        objects: [old_badge, locked_cabinet]
         expect_storylets: [hidden_compartment, midnight_gathering, final_truth]
 
   - id: costly_victory_fire
@@ -59,6 +60,7 @@ walkthroughs:
         intent: sneak
         objects: [side_stair]
         expect_storylets: [slip_into_corridor]
+        expect_world_rules: [maid_uses_service_route]
       - note: "不等钥匙，直接走后楼梯到档案室门口"
         intent: sneak
         objects: [back_stairs]
@@ -67,14 +69,52 @@ walkthroughs:
         intent: create_distraction
         objects: [candle_stand]
         expect_storylets: [controlled_fire, butler_catches_player]
+        expect_world_rules: [butler_pursues_intruder]
       - note: "趁守卫离开门口的一回合窗口穿过东翼"
         intent: sneak
         objects: [archive_door]
         expect_storylets: [archive_entry_by_distraction]
+        expect_world_rules: [butler_pursues_intruder]
       - note: "打开暗格拿到证据，但已暴露，进入代价胜利"
+        intent: use
+        objects: [old_badge, locked_cabinet]
+        expect_storylets: [hidden_compartment, midnight_gathering, final_truth]
+
+  - id: costly_victory_without_badge
+    title: "补救路线：未取徽章，用仆役钥匙强开暗格"
+    target_ending: costly_victory
+    steps:
+      - note: "观察画像获得侍女便签，但不向薇拉索取徽章"
+        intent: observe
+        objects: [family_portrait]
+        expect_storylets: [opening_pressure, observe_family_portrait, maid_warning]
+      - note: "直接进入仆役走廊"
+        intent: sneak
+        objects: [side_stair]
+        expect_storylets: [slip_into_corridor]
+        expect_world_rules: [maid_uses_service_route]
+      - note: "取得仆役侧门钥匙"
+        intent: negotiate
+        objects: [maid]
+        generic_patch: { maid.trust: 1 }
+        expect_storylets: [maid_lends_key]
+      - note: "走后楼梯到档案室门口"
+        intent: sneak
+        objects: [back_stairs]
+        expect_storylets: [climb_back_stairs]
+      - note: "显式使用钥匙打开仆役窄门"
+        intent: use
+        objects: [servant_key, service_door]
+        expect_storylets: [archive_entry_with_key]
+      - note: "观察文件柜，发现没有徽章时的替代办法"
         intent: observe
         objects: [locked_cabinet]
-        expect_storylets: [hidden_compartment, midnight_gathering, final_truth]
+        expect_storylets: [evidence_without_badge]
+        expect_world_rules: [butler_pursues_intruder]
+      - note: "用仆役钥匙强行撬开暗格，带着暴露代价取得证据"
+        intent: use
+        objects: [servant_key, hidden_compartment]
+        expect_storylets: [force_compartment_with_key, midnight_gathering, final_truth]
 
   - id: evidence_destroyed_stall
     title: "拖延路线：在大厅耗尽时间，午夜焚毁证据"

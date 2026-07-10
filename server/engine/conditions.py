@@ -48,10 +48,14 @@ def check_condition_block(
     objects = objects or []
     for group, value in block.items():
         if group == "scene":
-            if state["world"].get("scene") != value:
+            player_id = (state.get("_meta") or {}).get("player_id", "player")
+            current = (state.get("positions") or {}).get(player_id, state["world"].get("scene"))
+            if current != value:
                 return False
         elif group == "scene_any":
-            if state["world"].get("scene") not in value:
+            player_id = (state.get("_meta") or {}).get("player_id", "player")
+            current = (state.get("positions") or {}).get(player_id, state["world"].get("scene"))
+            if current not in value:
                 return False
         elif group == "intent":
             if intent != value:
@@ -61,6 +65,36 @@ def check_condition_block(
                 return False
         elif group == "object_any":
             if not set(value) & set(objects):
+                return False
+        elif group == "object_all":
+            if not set(value).issubset(objects):
+                return False
+        elif group == "positions":
+            positions = state.get("positions") or {}
+            for entity_id, expected in value.items():
+                if positions.get(entity_id) != expected:
+                    return False
+        elif group == "same_location":
+            if not isinstance(value, list) or len(value) < 2:
+                raise ConditionError("same_location must contain at least two entity ids")
+            positions = state.get("positions") or {}
+            locations = [positions.get(entity_id) for entity_id in value]
+            if any(location is None for location in locations) or len(set(locations)) != 1:
+                return False
+        elif group in ("inventory_all", "inventory_any", "inventory_none"):
+            player_id = (state.get("_meta") or {}).get("player_id", "player")
+            owned = {
+                item_id for item_id, placement in (state.get("item_locations") or {}).items()
+                if isinstance(placement, dict)
+                and placement.get("type") == "carried_by"
+                and placement.get("id") == player_id
+            }
+            requested = set(value)
+            if group == "inventory_all" and not requested.issubset(owned):
+                return False
+            if group == "inventory_any" and not requested & owned:
+                return False
+            if group == "inventory_none" and requested & owned:
                 return False
         elif group in ("world_state", "player_state", "flags"):
             prefix = {"world_state": "world", "player_state": "player", "flags": "flags"}[group]

@@ -1,8 +1,8 @@
 """Walkthrough runner: drives the turn resolver with scripted steps.
 
-Walkthroughs are the acceptance cases for this engine (plan section 13,
-stage 2): every ending must stay reachable within the time budget, and each
-step's fired storylets must match the author's expectation exactly.
+    Walkthroughs are the acceptance cases for this engine: every ending must
+    stay reachable within the time budget, including inventory/use and
+    world-step movement, and each step's fired storylets must match exactly.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from .content import Story
+from .director import current_scene_id
 from .effects import TemporaryEffects
 from .resolver import run_turn
 from .state import build_initial_state
@@ -38,10 +39,11 @@ def run_walkthrough(walkthrough: dict[str, Any], story: Story) -> tuple[list[str
             errors.append(f"{label}: unknown intent '{intent}'.")
             break
         objects = [str(obj) for obj in step.get("objects") or []]
-        available = story.scene_objects(state["world"].get("scene"))
+        scene_id = current_scene_id(state)
+        available = story.actionable_objects(state)
         for obj in objects:
             if obj not in available:
-                warnings.append(f"{label}: object '{obj}' not listed in scene '{state['world'].get('scene')}'.")
+                warnings.append(f"{label}: object '{obj}' not available in scene '{scene_id}'.")
 
         result = run_turn(
             story,
@@ -59,6 +61,12 @@ def run_walkthrough(walkthrough: dict[str, Any], story: Story) -> tuple[list[str
         expected = [str(sid) for sid in step.get("expect_storylets") or []]
         if result.fired != expected:
             errors.append(f"{label}: fired storylets {result.fired} != expected {expected}.")
+        if "expect_world_rules" in step:
+            expected_rules = [str(rule_id) for rule_id in step.get("expect_world_rules") or []]
+            if result.world_rules != expected_rules:
+                errors.append(
+                    f"{label}: world rules {result.world_rules} != expected {expected_rules}."
+                )
         reached = result.ending
 
     if not errors:

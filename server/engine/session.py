@@ -15,8 +15,9 @@ from .content import Story
 from .director import current_goal, goal_achieved
 from .effects import TemporaryEffects
 from .logger import TurnLogger
-from .quote import MAX_REQUOTES_PER_TURN, build_quote
-from .resolver import TurnResult, run_turn
+from .limits import clamp_generic_patch
+from .quote import MAX_REQUOTES_PER_TURN, build_quote, default_proposal
+from .resolver import TurnResult, run_turn, validate_action
 from .state import build_initial_state
 
 
@@ -47,10 +48,43 @@ class GameSession:
             raise SessionError("session is over")
         if intent_id not in self.story.intents:
             raise SessionError(f"unknown intent '{intent_id}'")
+        proposal, _ = clamp_generic_patch(
+            default_proposal(self.story, self.state, intent_id, objects or []),
+            self.state,
+            self.story.resolution_limits,
+        )
+        errors = validate_action(
+            self.story,
+            self.state,
+            intent_id,
+            objects or [],
+            proposal,
+            self.consumed,
+        )
+        if errors:
+            self._logger.log({
+                "event": "action_rejected",
+                "stage": "quote",
+                "turn": self.turn_no + 1,
+                "intent": intent_id,
+                "objects": objects or [],
+                "errors": errors,
+            })
+            raise SessionError("；".join(errors))
         if self._requotes >= MAX_REQUOTES_PER_TURN:
             raise SessionError(f"本回合报价次数已达上限（{MAX_REQUOTES_PER_TURN}），请执行或换个回合再试。")
         started = time.monotonic()
-        quote = build_quote(self.story, self.state, intent_id, objects or [], player_text, self._requotes)
+        quote = build_quote(
+            self.story,
+            self.state,
+            intent_id,
+            objects or [],
+            player_text,
+            self._requotes,
+            temporaries=self.temporaries,
+            consumed=self.consumed,
+            turn_no=self.turn_no + 1,
+        )
         self._requotes += 1
         self._pending_quotes[quote["quote_id"]] = quote
         self._logger.log({
@@ -88,6 +122,25 @@ class GameSession:
         elif self.story.quote_required(intent_id):
             raise SessionError(f"intent '{intent_id}' requires a quote before resolving")
 
+        errors = validate_action(
+            self.story,
+            self.state,
+            intent_id,
+            objects or [],
+            generic_patch,
+            self.consumed,
+        )
+        if errors:
+            self._logger.log({
+                "event": "action_rejected",
+                "stage": "resolve",
+                "turn": self.turn_no + 1,
+                "intent": intent_id,
+                "objects": objects or [],
+                "errors": errors,
+            })
+            raise SessionError("；".join(errors))
+
         started = time.monotonic()
         self.turn_no += 1
         result = run_turn(
@@ -110,7 +163,10 @@ class GameSession:
             "objects": objects or [],
             "generic_patch": generic_patch or {},
             "fired": result.fired,
+            "world_rules": result.world_rules,
+            "world_step": self.state["world"].get("step"),
             "result_tier": result.result_tier,
+            "errors": result.errors,
             "changes": [f"{p}: {a}->{b}" for p, a, b in result.changes if a != b],
             "scene": result.scene_after,
             "time_left": self.state["world"].get("time_left"),

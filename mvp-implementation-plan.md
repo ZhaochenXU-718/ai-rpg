@@ -169,6 +169,8 @@ MVP 应在当前 AIRPG 仓库中从头实现一个很薄的 action/state/directo
 2. 重新报价免费、不消耗 time_left，但同一回合最多 3 次。
 3. 重新报价次数记入日志——高频改写方案本身是"玩家觉得没被理解"的信号。
 4. 越界方案在报价阶段拦截（`can_execute: false` + 世界内解释），不进入判定。
+5. `requires_storylet_match: true` 的结构化动作必须在报价前命中当前可用交互；参数不足、对象不可见或组合无规则时不报价、不计回合、不推进世界。
+6. 确定性引擎在私有副本预演完整回合，报价分开列出固定代价与 storylet/world step 的预计影响；预演不修改真实状态。
 
 中高风险行动必须先报价，再执行。
 
@@ -201,10 +203,19 @@ MVP 应在当前 AIRPG 仓库中从头实现一个很薄的 action/state/directo
 ```yaml
 world:
   chapter: 1
-  scene: great_hall
+  step: 0
   time_left: 8   # 最优路线 7 回合 + 冗余，依据 walkthrough 用例
   evidence_status: intact
   current_goal: "午夜前进入档案室，找到证据"
+```
+
+玩家与 NPC 的物理位置由 schema v2 世界图统一维护：
+
+```yaml
+positions:
+  player: great_hall
+  butler: great_hall
+  guard: archive_door
 ```
 
 ### 5.2 玩家状态
@@ -213,9 +224,16 @@ world:
 player:
   injury: 0
   exposed: false
-  has_key: false
-  has_evidence: false
   reputation: "unknown"
+```
+
+关键物品不再复制为 `has_*` 布尔值，而由唯一物品位置派生背包：
+
+```yaml
+item_locations:
+  servant_key: { type: carried_by, id: maid }
+  old_badge: { type: carried_by, id: heir }
+  forgery_evidence: { type: container, id: hidden_compartment }
 ```
 
 ### 5.3 NPC 状态
@@ -234,7 +252,7 @@ npcs:
     alertness: 2
 ```
 
-注意：角色在不在场由场景的 `available_characters` 声明，NPC 状态里不放静态 `location` 字段（没有事件卡更新它就是死数据），见 `docs/content-schema.md` 第 5 节。
+注意：`positions` 是角色物理位置的唯一事实来源，`item_locations` 是物品位置/背包所有权的唯一事实来源。场景不维护静态人物名单或重复物品所有权；见 `docs/content-schema.md` 第 4-5 节。
 
 ### 5.4 场景状态
 
@@ -285,9 +303,10 @@ action:
 
 每个确认执行的行动按以下顺序判定：
 
-1. 匹配 storylet：按内容文件列表顺序单遍扫描，命中即应用效果（语义见 `docs/content-schema.md` 10.3，含"每回合最多一次场景切换"规则）。
-2. 未命中任何 storylet 时，走兜底判定（6.3）。
-3. 两者都由规则执行，LLM 不单独决定成败。
+1. 应用兜底判定的白名单 patch，然后按内容顺序扫描 action storylet。
+2. 推进 world step：从同一快照计算所有 NPC 的唯一移动提案并原子应用。
+3. 扫描 after-world storylet，处理到达、相遇和追捕反应。
+4. 全部判定都由规则执行，LLM 不单独决定成败。
 
 ### 6.2 Storylet 判定
 
@@ -307,7 +326,7 @@ LLM 从玩家方案提议一组状态变化（Plan）
 规则：
 
 - 白名单（`resolution_limits.patchable`）覆盖软状态：NPC 信任 / 怀疑、噪音、火情、注意力等。
-- 关键剧情事实（证据、钥匙、场景切换、flags）在 `protected` 中，兜底判定永远不能触碰——玩家创意可以改变局面，但不能绕过作者设计的因果关卡。
+- 关键剧情事实（证据、钥匙、`positions.*`、`item_locations.*`、flags）在 `protected` 中，兜底判定永远不能触碰——玩家创意可以改变局面，但不能绕过作者设计的因果关卡。
 - 被过滤 / 裁剪的提议记入日志。高频被拒路径 = 玩家普遍想影响某个作者没想到的维度，是内容迭代的直接信号。
 
 ## 7. 事件卡 / Storylet 设计
@@ -325,7 +344,7 @@ LLM 从玩家方案提议一组状态变化（Plan）
 
 两类容易漏写的事件卡（本故事第一稿都漏了，靠 walkthrough 校验才发现）：
 
-1. **转场卡**：初始场景之外的每个场景，都必须有 storylet 通过 `set_world.scene` 通向它，否则场景图不连通、故事跑不完。
+1. **转场卡**：初始场景之外的每个场景，都必须有 storylet 通过 `move_entities` 将玩家移动进去，否则世界图虽然存在，故事仍然跑不完。
 2. **flag 供给卡**：`initial_state.flags` 里的每个 flag 至少要有一张卡会设置它，否则是死变量。
 
 这两条已加入 `tools/validate_content.py` 的自动检查。
@@ -383,7 +402,8 @@ style_bible（文风约束）
 | 主叙事区 | 当前剧情文本、NPC 反馈、判定结果 |
 | 当前目标 | 本场景必须推进的目标 |
 | 意图面板 | 6 个固定意图按钮 |
-| 对象面板 | 当前人物、物品、环境、状态 |
+| 对象面板 | 当前人物、场景物品、环境、状态和可用出口 |
+| 口袋 | 当前由玩家携带的物品，可作为“使用”意图的来源对象 |
 | 输入区 | 玩家自然语言方案 |
 | 报价卡 | 系统理解、收益、风险、代价、确认按钮；仅中高风险意图出现（见 4.4） |
 | 状态栏 | 时间、怀疑、信任、证据状态 |
@@ -414,6 +434,7 @@ server/
     state.py        # 状态模型：命名空间、路径、patch 语义
     conditions.py   # 单一条件求值器（trigger/exit/endings 共用）
     effects.py      # 效果应用 + temporary 过期回滚
+    world.py        # 抽象世界图 + 快照式 NPC 移动 + 原子 world step
     content.py      # 故事加载与访问器
     limits.py       # resolution_limits 校验与裁剪（Plan-Validate-Apply 的 V）
     quote.py        # 报价规则版（阶段 3 由 LLM 替换理解与提议）
@@ -485,6 +506,7 @@ POST /api/action/quote
   "benefits": [],
   "risks": [],
   "costs": {},
+  "expected_changes": [],
   "can_execute": true,
   "rejection_reason_in_world": null,
   "requote_count": 0
@@ -496,7 +518,7 @@ POST /api/action/quote
 - `quote_required: false` 的意图跳过本接口，客户端直接调用 resolve。
 - `out_of_bounds` 时 `can_execute` 为 false，`rejection_reason_in_world` 用世界内语言解释，不消耗 time_left。
 - 同一回合 `requote_count` 达到 3 后拒绝继续报价。
-- 报价中列出的 `risks` 和 `costs` 是 resolve 结果的恶化上限。
+- 报价中列出的 `risks`、`costs` 和 `expected_changes` 是 resolve 结果的约束；确定性部分必须与确认后的执行一致。
 
 ### 11.3 确认执行
 
@@ -612,8 +634,8 @@ POST /api/feedback
 
 已产出：
 
-- `docs/content-schema.md`：通用内容协议 v1（含结构化 exit_conditions、temporary 效果、resolution_limits、quote_required）。
-- `tools/validate_content.py`：格式校验 + 场景连通性 / 死 flag / 白名单交叉检查。
+- `docs/content-schema.md`：通用内容协议 v2（含世界图、人物/物品唯一位置、派生背包、显式使用、返回出口、world step 和判定协议）。
+- `tools/validate_content.py`：格式校验 + 世界图 / 唯一位置 / 场景连通性 / 死 flag / 白名单交叉检查。
 - `content/midnight_archive.yaml`：5 场景、20 张事件卡、3 结局。
 - `content/walkthroughs/midnight_archive.yaml`：每个结局一条通关路线。
 - `tools/check_walkthroughs.py`：按引擎语义逐回合模拟 walkthrough，验证三个结局都真实可达、时间预算成立。
@@ -621,17 +643,21 @@ POST /api/feedback
 完成标准（均已满足）：
 
 - `content/midnight_archive.yaml` 通过内容格式校验。
-- 三条 walkthrough 全部通过模拟（等价于"不接 LLM 也能跑完故事流程"，且是自动化的）。
+- 四条 walkthrough 全部通过模拟（等价于"不接 LLM 也能跑完故事流程"，且是自动化的）。
 - 阶段 2 的规则引擎只依赖内容协议，不依赖某个具体故事的硬编码字段。
 
-### 阶段 2：本地规则引擎（已完成，2026-07-09）
+### 阶段 2：本地规则引擎（已完成，2026-07-10 更新位置、对象与动作原子性）
 
 已产出（`server/engine/`，模块职责见第 10 节）：
 
 - session state、报价流程（分层报价、约束性报价、重报价限 3 次）、回合判定、JSONL 日志。
 - resolve 判定：storylet 单遍级联优先，未命中走 resolution_limits 兜底（游玩路径裁剪、walkthrough 路径严格校验）。
 - state patch 与 temporary 效果过期调度。
-- 单一条件求值器：trigger / exit_conditions / endings 共用；每回合最多一次场景切换。
+- 抽象世界图、每角色唯一位置、快照式 NPC 移动与原子 world step；在场人物和合法人物目标从位置派生。
+- 唯一物品位置、派生口袋、显式“使用物品 + 目标”、以及基于世界图出口的返回移动。
+- 状态条件对象（`visible_when` / `actionable_when`）、作者交互预检和无效动作原子拒绝。
+- 确定性报价预演：固定代价、storylet/world step 影响完整可见且不污染真实状态。
+- 单一条件求值器：trigger / exit_conditions / endings 共用；每回合最多一次玩家位置变化，NPC world step 独立结算。
 - `server/cli.py`：命令行完整游玩（意图 + 对象 + 报价卡 + 确认 + 模板叙事）。
 - `tools/check_walkthroughs.py` 已改为引擎的薄封装，判定语义只有一份实现。
 
@@ -639,7 +665,7 @@ POST /api/feedback
 
 - 命令行能跑通完整流程（真相曝光路线 7 回合实测通关，剩余时间 1，与 walkthrough 数学一致）。
 - 每回合状态变化可追踪（日志含 fired storylets、状态 diff、报价/判定延迟、llm_calls=0）。
-- 引擎跑三条 walkthrough 全部通过（walkthrough 即验收用例）。
+- 引擎跑四条 walkthrough 全部通过（walkthrough 即验收用例）。
 
 规则版占位（阶段 3 由 LLM 替换，接口不变）：
 
@@ -790,10 +816,13 @@ POST /api/feedback
 - ~~写 `content/midnight_archive.yaml` 的第一版故事数据，并通过校验。~~
 - ~~写 walkthrough 用例并实现 `tools/check_walkthroughs.py`，验证三个结局可达。~~
 
-已完成（阶段 2，2026-07-09）：
+已完成（阶段 2，2026-07-10）：
 
 - ~~创建 `server/` 骨架。~~
 - ~~实现无 LLM 的规则引擎（`server/engine/`），命令行可完整玩通，walkthrough 作为验收用例通过。~~
+- ~~升级 schema v2 世界图：唯一角色位置、快照式 world step、动态在场派生与通用校验。~~
+- ~~实现唯一物品位置与口袋、显式使用意图、玩家返回出口，并补“无徽章破局”回归路线。~~
+- ~~实现条件对象、关键交互导演提示、无匹配动作不扣时与确定性完整报价。~~
 
 接下来按顺序：
 

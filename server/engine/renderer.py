@@ -45,8 +45,8 @@ def render_status(story: Story, state: dict[str, Any]) -> str:
         f" ｜ 剩余时间：{world.get('time_left')}",
         f"当前目标：{current_goal(story, state)}",
     ]
-    # 只显示当前场景在场的人物（presence 即场景 available_characters）
-    scene_chars = story.scene(current_scene_id(state)).get("available_characters") or []
+    # Physical presence is derived from the authoritative world positions.
+    scene_chars = story.characters_at(state)
     watches = []
     for char_id in scene_chars:
         parts = []
@@ -60,31 +60,67 @@ def render_status(story: Story, state: dict[str, Any]) -> str:
         lines.append("在场：" + "  ".join(watches))
     if state["clues"]:
         lines.append(f"已获线索 {len(state['clues'])} 条（输入 clues 查看）")
+    inventory = story.inventory(state)
+    if inventory:
+        lines.append("口袋：" + "、".join(story.item_labels().get(item, item) for item in inventory))
     return "\n".join(lines)
 
 
 def render_objects(story: Story, state: dict[str, Any]) -> str:
     scene_id = current_scene_id(state)
-    groups = story.scene(scene_id).get("available_objects") or {}
+    groups = story.scene_object_groups(scene_id, state)
+    actionable = story.scene_objects(scene_id, state)
     group_names = {"people": "人物", "items": "物品", "environment": "环境", "states": "状态"}
     lines = []
+    if state.get("positions"):
+        people = story.characters_at(state, scene_id)
+        if people:
+            shown = [f"{story.character_name(obj)}[{obj}]" for obj in people]
+            lines.append(f"人物：{ '，'.join(shown) }")
+    board_items = story.items_at(state, scene_id)
+    if board_items:
+        shown = [f"{story.item_labels().get(obj, obj)}[{obj}]" for obj in board_items]
+        lines.append(f"可拾取物品：{ '，'.join(shown) }")
     for group, items in groups.items():
+        if group == "people" and state.get("positions"):
+            continue
         if not items:
             continue
         shown = []
-        for obj in items:  # list yields ids; dict yields ids (keys)
+        for obj in items:
             obj = str(obj)
-            label = story.object_label(scene_id, obj)
+            label = story.object_label(scene_id, obj, state)
+            if obj not in actionable:
+                label += "（当前不可交互）"
             shown.append(f"{label}[{obj}]" if label != obj else obj)
         lines.append(f"{group_names.get(group, group)}：{ '，'.join(shown) }")
+    exits = story.exit_labels(state)
+    if exits:
+        shown = [f"{label}[{node_id}]" for node_id, label in exits.items()]
+        lines.append(f"出口：{ '，'.join(shown) }")
     return "\n".join(lines)
+
+
+def render_inventory(story: Story, state: dict[str, Any]) -> str:
+    items = story.inventory(state)
+    if not items:
+        return "（口袋是空的。）"
+    shown = []
+    for item_id in items:
+        item = story.items.get(item_id) or {}
+        name = item.get("name", item_id)
+        description = item.get("description")
+        entry = f"◆ {name}［{item_id}］"
+        if description:
+            entry += f"：{description}"
+        shown.append(entry)
+    return "\n".join(shown)
 
 
 def render_characters(story: Story, state: dict[str, Any]) -> str:
     """`who` panel: public profiles of characters present in the scene."""
-    scene = story.scene(current_scene_id(state))
     lines = []
-    for char_id in scene.get("available_characters") or []:
+    for char_id in story.characters_at(state):
         char = story.characters.get(char_id) or {}
         profile = " ".join((char.get("public_profile") or "").split())
         lines.append(f"● {char.get('name', char_id)}［{char_id}］：{profile}")
@@ -99,6 +135,17 @@ def render_quote(quote: dict[str, Any]) -> str:
         costs = "，".join(f"{path} {value:+}" if isinstance(value, (int, float)) else f"{path}→{value}"
                           for path, value in quote["costs"].items())
         lines.append(f"预计代价：{costs}")
+    expected_changes = quote.get("expected_changes") or []
+    if expected_changes:
+        effects = "，".join(
+            f"{path} {previous}→{new}"
+            for path, previous, new in expected_changes
+        )
+        lines.append(f"预计影响：{effects}")
+    if quote.get("expected_clue_count"):
+        lines.append(f"预计收获：{quote['expected_clue_count']} 条新线索")
+    if quote.get("expected_ending"):
+        lines.append(f"预计将进入结局：{quote['expected_ending']}")
     for note in quote["notes"]:
         lines.append(f"（{note}）")
     if not quote["can_execute"]:
@@ -119,8 +166,26 @@ INTENT_FALLBACK = {
 
 
 def render_turn(story: Story, result: TurnResult) -> str:
+    if result.errors:
+        return "\n".join(
+            ["（行动未执行：" + "；".join(result.errors) + "）", "【判定：未执行】"]
+        )
+
     lines: list[str] = []
-    meaningful = [c for c in result.changes if c[0] != "world.time_left" and c[1] != c[2]]
+    by_path: dict[str, list[Any]] = {}
+    path_order: list[str] = []
+    for path, previous, new in result.changes:
+        if path not in by_path:
+            by_path[path] = [previous, new]
+            path_order.append(path)
+        else:
+            by_path[path][1] = new
+    collapsed = [
+        (path, by_path[path][0], by_path[path][1])
+        for path in path_order
+        if by_path[path][0] != by_path[path][1]
+    ]
+    meaningful = [c for c in collapsed if c[0] != "world.time_left"]
     if result.narrative_hints:
         lines.extend(result.narrative_hints)
     elif meaningful:
@@ -132,8 +197,8 @@ def render_turn(story: Story, result: TurnResult) -> str:
         lines.append(f"◇ 新线索：{clue}")
     interesting = [
         (f"{path} {previous}→{new}" if previous is not None else f"{path} = {new}")
-        for path, previous, new in result.changes
-        if previous != new and not str(path).startswith("world.current_goal")
+        for path, previous, new in collapsed
+        if not str(path).startswith("world.current_goal")
     ]
     if interesting:
         lines.append("（状态变化：" + "，".join(interesting) + "）")

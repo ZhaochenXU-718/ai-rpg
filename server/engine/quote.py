@@ -8,10 +8,12 @@ contract (binding costs, requote limit) stays the same.
 
 from __future__ import annotations
 
+import copy
 import uuid
 from typing import Any
 
 from .content import Story
+from .effects import TemporaryEffects
 from .limits import clamp_generic_patch
 from .state import get_value
 
@@ -64,11 +66,18 @@ def build_quote(
     objects: list[str],
     player_text: str = "",
     requote_count: int = 0,
+    *,
+    temporaries: TemporaryEffects | None = None,
+    consumed: set[str] | None = None,
+    turn_no: int = 1,
 ) -> dict[str, Any]:
     intent = story.intent(intent_id)
     label = intent.get("label", intent_id)
-    scene_id = state["world"].get("scene", "")
-    object_names = [story.object_label(scene_id, obj) for obj in objects]
+    scene_id = story.current_location(state)
+    exit_labels = story.exit_labels(state)
+    object_names = [
+        exit_labels.get(obj, story.object_label(scene_id, obj, state)) for obj in objects
+    ]
 
     proposal = default_proposal(story, state, intent_id, objects)
     accepted, clamp_notes = clamp_generic_patch(proposal, state, story.resolution_limits)
@@ -88,7 +97,37 @@ def build_quote(
     costs: dict[str, Any] = {}
     for key, value in (intent.get("typical_cost") or {}).items():
         costs[str(key) if "." in str(key) else f"world.{key}"] = value
-    costs.update(accepted)
+
+    # The engine is deterministic, so the quote can preview the complete
+    # state delta on private copies.  This keeps deterministic storylet costs
+    # and rewards inside the binding quote instead of surprising the player
+    # after confirmation.
+    from .resolver import run_turn
+
+    preview_state = copy.deepcopy(state)
+    preview_result = run_turn(
+        story,
+        preview_state,
+        copy.deepcopy(temporaries) if temporaries is not None else TemporaryEffects(),
+        set(consumed or set()),
+        turn_no,
+        intent_id,
+        objects,
+        accepted,
+    )
+    by_path: dict[str, list[Any]] = {}
+    path_order: list[str] = []
+    for path, previous, new in preview_result.changes:
+        if path not in by_path:
+            by_path[path] = [copy.deepcopy(previous), copy.deepcopy(new)]
+            path_order.append(path)
+        else:
+            by_path[path][1] = copy.deepcopy(new)
+    expected_changes = [
+        (path, by_path[path][0], by_path[path][1])
+        for path in path_order
+        if path not in costs and by_path[path][0] != by_path[path][1]
+    ]
 
     return {
         "quote_id": uuid.uuid4().hex[:12],
@@ -100,6 +139,10 @@ def build_quote(
         "benefits": [intent.get("description", "")],
         "risks": risks,
         "costs": costs,
+        "expected_changes": expected_changes,
+        "expected_storylets": list(preview_result.fired),
+        "expected_clue_count": len(preview_result.new_clues),
+        "expected_ending": preview_result.ending,
         "proposal": accepted,
         "notes": clamp_notes,
         "can_execute": True,

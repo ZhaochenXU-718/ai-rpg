@@ -14,6 +14,7 @@ Commands: objects / state / clues / help / quit
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from server.engine.renderer import (
     render_characters,
     render_ending,
     render_intro,
+    render_inventory,
     render_objects,
     render_quote,
     render_status,
@@ -40,11 +42,20 @@ from server.engine.session import GameSession, SessionError
 PROMPT = "> "
 
 
+def tokenize_action_line(line: str) -> list[str]:
+    """Split a command while accepting common Chinese target separators."""
+    normalized = re.sub(r"[、，,]+", " ", line.strip())
+    normalized = re.sub(r"^(\d+)(?=\D)", r"\1 ", normalized)
+    return normalized.split()
+
+
 def print_help() -> None:
     print(
         "输入格式：意图编号或 ID + 目标对象，例如 `1 全家画像`（观察）、`2 薇拉小姐`（交涉）。\n"
-        "目标一律来自【可用对象】面板——面板里列出的中文名或 ID 都可以直接用。\n"
-        "命令：objects 对象面板；who 人物介绍；state 状态；clues 线索；help 帮助；quit 退出。"
+        "使用物品时同时输入口袋物品和目标，例如 `使用 仆役侧门钥匙 仆役窄门`；\n"
+        "移动时选择【出口】中的名称或 ID，例如 `移动 返回仆役走廊`。\n"
+        "目标来自【可用对象】、【出口】或【口袋】——中文名或 ID 都可以直接用。\n"
+        "命令：objects 对象面板；inventory 口袋；who 人物介绍；state 状态；clues 线索；help 帮助；quit 退出。"
     )
 
 
@@ -55,13 +66,22 @@ def resolve_objects(story: Story, state, tokens: list[str]) -> list[str]:
     for char_id in story.characters:
         aliases[char_id] = char_id
         aliases[story.character_name(char_id)] = char_id
-    for obj_id, label in story.object_labels(scene_id).items():
+    for obj_id, label in story.object_labels(scene_id, state).items():
         aliases.setdefault(label, obj_id)
-    scene_objects = story.scene_objects(scene_id)
+    item_labels = story.item_labels()
+    for item_id in story.inventory(state) + story.items_at(state):
+        aliases.setdefault(item_labels.get(item_id, item_id), item_id)
+    for node_id, label in story.exit_labels(state).items():
+        aliases.setdefault(label, node_id)
+    scene_objects = story.actionable_objects(state)
+    visible_objects = story.visible_scene_objects(scene_id, state)
 
     valid: list[str] = []
     for token in tokens:
         cleaned = "".join(ch for ch in token if ch.isprintable()).strip()
+        for prefix in ("在场：", "口袋："):
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
         if not cleaned:
             continue
         obj = aliases.get(cleaned, cleaned)
@@ -69,6 +89,12 @@ def resolve_objects(story: Story, state, tokens: list[str]) -> list[str]:
             valid.append(obj)
         elif obj in story.characters:
             print(f"（{story.character_name(obj)} 不在当前场景，已忽略。）")
+        elif obj in story.items:
+            print(f"（物品 {story.item_labels().get(obj, obj)} 当前未持有或不可见，已忽略。）")
+        elif obj in story.world_nodes:
+            print(f"（当前不能从这里前往 {story.world_nodes[obj].get('name', obj)}，已忽略。）")
+        elif obj in visible_objects:
+            print(f"（{story.object_label(scene_id, obj, state)} 当前可见但不可交互。）")
         else:
             print(f"（未识别对象 '{cleaned}'，已忽略；输入 objects 查看当前场景对象。）")
     return valid
@@ -99,6 +125,8 @@ def confirm_quote(session: GameSession, intent_id: str, objects: list[str]) -> b
             print(f"({exc})")
             return False
         print(render_quote(quote))
+        if not quote.get("can_execute", True):
+            return False
         answer = read_line("执行？[y=确认 / n=放弃 / r=重新报价] ")
         if answer is None or answer.lower() in ("n", "no", "放弃"):
             print("（已放弃，本次不消耗时间。）")
@@ -132,6 +160,8 @@ def main() -> int:
             print(render_characters(story, session.state))
             print("【可用对象】")
             print(render_objects(story, session.state))
+            print("【口袋】")
+            print(render_inventory(story, session.state))
             print()
             last_scene = scene_now
         print(render_status(story, session.state))
@@ -142,7 +172,8 @@ def main() -> int:
             intent_labels = "/".join(story.intent(i).get("label", i) for i in option["intents"])
             hint = f"（可尝试：{option['title']}——意图［{intent_labels}］"
             if option["objects"]:
-                hint += f"，相关对象：{ '、'.join(option['objects']) }"
+                labels = [story.object_label(scene_now, obj, session.state) for obj in option["objects"]]
+                hint += f"，相关对象：{ '、'.join(labels) }"
             print(hint + "）")
         intent_ids = suggested_intents(story, session.state)
         print_intents(story, intent_ids)
@@ -159,6 +190,9 @@ def main() -> int:
         if line.lower() == "objects":
             print(render_objects(story, session.state))
             continue
+        if line.lower() in ("inventory", "inv", "bag", "口袋", "背包"):
+            print(render_inventory(story, session.state))
+            continue
         if line.lower() == "who":
             print(render_characters(story, session.state))
             continue
@@ -172,16 +206,28 @@ def main() -> int:
                 print(f"◇ {clue}")
             continue
 
-        tokens = line.split()
+        tokens = tokenize_action_line(line)
         head, raw_objects = tokens[0], tokens[1:]
+        intent_aliases = {
+            intent.get("label"): candidate_id
+            for candidate_id, intent in story.intents.items()
+            if isinstance(intent, dict) and intent.get("label")
+        }
         if head.isdigit() and 1 <= int(head) <= len(intent_ids):
             intent_id = intent_ids[int(head) - 1]
         elif head in story.intents:
             intent_id = head
+        elif head in intent_aliases:
+            intent_id = intent_aliases[head]
         else:
             print(f"（未知意图 '{head}'，输入 help 查看格式。）")
             continue
         objects = resolve_objects(story, session.state, raw_objects)
+
+        # Explicit but wholly invalid targets are rejected before quoting or
+        # resolution, so an absent entity never costs a world step.
+        if raw_objects and len(objects) != len(raw_objects):
+            continue
 
         # 低风险意图没有报价环节兜底，不带目标几乎必然打空：给提示，不消耗回合。
         if not objects and not story.quote_required(intent_id):

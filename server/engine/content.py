@@ -52,38 +52,223 @@ class Story:
         return self.data.get("characters") or {}
 
     @property
+    def items(self) -> dict[str, Any]:
+        return self.data.get("items") or {}
+
+    @property
+    def player_id(self) -> str:
+        return (self.data.get("player_role") or {}).get("id", "player")
+
+    @property
+    def world_board(self) -> dict[str, Any]:
+        return self.data.get("world_board") or {}
+
+    @property
+    def world_nodes(self) -> dict[str, Any]:
+        return self.world_board.get("nodes") or {}
+
+    @property
+    def world_edges(self) -> list[dict[str, Any]]:
+        return self.world_board.get("edges") or []
+
+    @property
+    def world_rules(self) -> list[dict[str, Any]]:
+        return self.data.get("world_rules") or []
+
+    @property
     def resolution_limits(self) -> dict[str, Any] | None:
         return self.data.get("resolution_limits")
 
     def scene(self, scene_id: str) -> dict[str, Any]:
         return self.scenes.get(scene_id) or {}
 
-    def scene_objects(self, scene_id: str) -> set[str]:
-        objects: set[str] = set()
-        for group in (self.scene(scene_id).get("available_objects") or {}).values():
+    def current_location(self, state: dict[str, Any]) -> str:
+        return (state.get("positions") or {}).get(
+            self.player_id, (state.get("world") or {}).get("scene", "")
+        )
+
+    def characters_at(self, state: dict[str, Any], node_id: str | None = None) -> list[str]:
+        """Physical presence derived from the authoritative positions map."""
+        node_id = node_id or self.current_location(state)
+        positions = state.get("positions") or {}
+        if positions:
+            return [
+                char_id for char_id in self.characters
+                if char_id != self.player_id and positions.get(char_id) == node_id
+            ]
+        # v1 compatibility only; schema v2 forbids this duplicate source.
+        return list(self.scene(node_id).get("available_characters") or [])
+
+    def inventory(self, state: dict[str, Any], owner_id: str | None = None) -> list[str]:
+        owner_id = owner_id or self.player_id
+        owned = []
+        for item_id in self.items:
+            placement = (state.get("item_locations") or {}).get(item_id)
+            if (
+                isinstance(placement, dict)
+                and placement.get("type") == "carried_by"
+                and placement.get("id") == owner_id
+            ):
+                owned.append(item_id)
+        return owned
+
+    def items_at(self, state: dict[str, Any], node_id: str | None = None) -> list[str]:
+        node_id = node_id or self.current_location(state)
+        found = []
+        for item_id in self.items:
+            placement = (state.get("item_locations") or {}).get(item_id)
+            if (
+                isinstance(placement, dict)
+                and placement.get("type") == "board"
+                and placement.get("id") == node_id
+            ):
+                found.append(item_id)
+        return found
+
+    def available_exits(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        """Authored player exits whose state conditions currently hold."""
+        from .conditions import check_condition_block
+
+        exits = []
+        for exit_spec in self.scene(self.current_location(state)).get("exits") or []:
+            if isinstance(exit_spec, dict) and check_condition_block(
+                state, exit_spec.get("when") or {}
+            ):
+                exits.append(exit_spec)
+        return exits
+
+    def exit_labels(self, state: dict[str, Any]) -> dict[str, str]:
+        return {
+            str(exit_spec["to"]): str(exit_spec.get("label") or exit_spec["to"])
+            for exit_spec in self.available_exits(state)
+            if isinstance(exit_spec.get("to"), str)
+        }
+
+    def exit_for_target(self, state: dict[str, Any], target: str) -> dict[str, Any] | None:
+        return next(
+            (exit_spec for exit_spec in self.available_exits(state) if exit_spec.get("to") == target),
+            None,
+        )
+
+    def scene_object_groups(
+        self,
+        scene_id: str,
+        state: dict[str, Any] | None = None,
+        *,
+        actionable_only: bool = False,
+    ) -> dict[str, list[str]]:
+        """Return authored scene objects filtered by visibility/actionability.
+
+        A mapping entry may remain the compact ``id: label`` form or use the
+        conditional form::
+
+            hidden_panel:
+              label: "Hidden panel"
+              visible_when: {flags: {panel_found: true}}
+              actionable_when: {flags: {panel_unlocked: true}}
+
+        Missing conditions default to true.  An invisible object is never
+        actionable.  Physical characters and tracked board items are added by
+        ``scene_objects`` rather than duplicated in authored object groups.
+        """
+        from .conditions import check_condition_block
+
+        groups: dict[str, list[str]] = {}
+        for group_name, group in (self.scene(scene_id).get("available_objects") or {}).items():
+            if group_name == "people" and state is not None and state.get("positions"):
+                continue
+            entries: list[tuple[str, Any]] = []
             if isinstance(group, list):
-                objects.update(str(item) for item in group)
+                entries = [(str(item), None) for item in group]
             elif isinstance(group, dict):
-                objects.update(str(key) for key in group)
+                entries = [(str(obj_id), spec) for obj_id, spec in group.items()]
+
+            selected: list[str] = []
+            for obj_id, spec in entries:
+                visible_when = spec.get("visible_when") if isinstance(spec, dict) else None
+                actionable_when = spec.get("actionable_when") if isinstance(spec, dict) else None
+                visible = state is None or check_condition_block(state, visible_when or {})
+                actionable = visible and (
+                    state is None or check_condition_block(state, actionable_when or {})
+                )
+                if visible and (not actionable_only or actionable):
+                    selected.append(obj_id)
+            if selected:
+                groups[str(group_name)] = selected
+        return groups
+
+    def visible_scene_objects(self, scene_id: str, state: dict[str, Any]) -> set[str]:
+        objects = {
+            obj_id
+            for group in self.scene_object_groups(scene_id, state).values()
+            for obj_id in group
+        }
+        objects.update(self.characters_at(state, scene_id))
+        objects.update(self.items_at(state, scene_id))
         return objects
 
-    def object_labels(self, scene_id: str) -> dict[str, str]:
+    def scene_objects(self, scene_id: str, state: dict[str, Any] | None = None) -> set[str]:
+        groups = self.scene_object_groups(scene_id, state, actionable_only=state is not None)
+        objects = {obj_id for group in groups.values() for obj_id in group}
+        if state is not None:
+            objects.update(self.characters_at(state, scene_id))
+            objects.update(self.items_at(state, scene_id))
+        return objects
+
+    def actionable_objects(self, state: dict[str, Any]) -> set[str]:
+        scene_id = self.current_location(state)
+        return (
+            self.scene_objects(scene_id, state)
+            | set(self.inventory(state))
+            | set(self.exit_labels(state))
+        )
+
+    def object_labels(
+        self,
+        scene_id: str,
+        state: dict[str, Any] | None = None,
+        *,
+        actionable_only: bool = False,
+    ) -> dict[str, str]:
         """Display labels for the scene's objects; ids double as targets."""
         labels: dict[str, str] = {}
-        for group in (self.scene(scene_id).get("available_objects") or {}).values():
+        selected = self.scene_object_groups(
+            scene_id, state, actionable_only=actionable_only
+        ) if state is not None else None
+        for group_name, group in (self.scene(scene_id).get("available_objects") or {}).items():
+            allowed = set(selected.get(group_name, [])) if selected is not None else None
             if isinstance(group, dict):
-                for obj_id, label in group.items():
+                for obj_id, spec in group.items():
+                    if allowed is not None and str(obj_id) not in allowed:
+                        continue
+                    label = spec.get("label") if isinstance(spec, dict) else spec
                     if isinstance(label, str) and label:
                         labels[str(obj_id)] = label
             elif isinstance(group, list):
                 for obj_id in group:
+                    if allowed is not None and str(obj_id) not in allowed:
+                        continue
                     labels.setdefault(str(obj_id), self.character_name(str(obj_id)))
         return labels
 
-    def object_label(self, scene_id: str, object_id: str) -> str:
+    def item_labels(self) -> dict[str, str]:
+        return {
+            str(item_id): str(item.get("name", item_id))
+            for item_id, item in self.items.items()
+            if isinstance(item, dict)
+        }
+
+    def object_label(
+        self,
+        scene_id: str,
+        object_id: str,
+        state: dict[str, Any] | None = None,
+    ) -> str:
         if object_id in self.characters:
             return self.character_name(object_id)
-        return self.object_labels(scene_id).get(object_id, object_id)
+        if object_id in self.items:
+            return self.item_labels().get(object_id, object_id)
+        return self.object_labels(scene_id, state).get(object_id, object_id)
 
     def intent(self, intent_id: str) -> dict[str, Any]:
         return self.intents.get(intent_id) or {}

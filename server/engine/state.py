@@ -17,10 +17,13 @@ class StatePathError(Exception):
 def build_initial_state(story: dict[str, Any]) -> dict[str, Any]:
     initial = copy.deepcopy(story.get("initial_state", {}))
     state = {
+        "_meta": {"player_id": (story.get("player_role") or {}).get("id", "player")},
         "world": initial.get("world", {}),
         "player": initial.get("player", {}),
         "scene": initial.get("scene", {}),
         "flags": initial.get("flags", {}),
+        "positions": initial.get("positions", {}),
+        "item_locations": initial.get("item_locations", {}),
         "characters": {},
         "clues": [],
     }
@@ -33,7 +36,7 @@ def resolve_path(state: dict[str, Any], path: str) -> tuple[dict[str, Any], str]
     """Return (container, leaf_key) for a dotted state path, creating containers."""
     parts = path.split(".")
     root = parts[0]
-    if root in ("world", "player", "scene", "flags"):
+    if root in ("world", "player", "scene", "flags", "positions", "item_locations"):
         container = state[root]
         parts = parts[1:]
     elif root == "characters":

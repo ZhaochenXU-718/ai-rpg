@@ -1,7 +1,7 @@
 id: midnight_archive
 title: "午夜前的档案室"
-version: 0.1.0
-schema_version: 1
+version: 0.3.0
+schema_version: 2
 language: zh-CN
 genre: mystery_infiltration
 target_duration_minutes: 20-30
@@ -53,24 +53,95 @@ global_rules:
     - "午夜后核心文件会被销毁。"
     - "管家是主要阻力，但不能在前半段直接暴露为反派。"
 
+# Schema v2：空间图是静态内容，positions 是所有角色位置的唯一事实来源。
+# 场景不再重复维护 available_characters / people 名单。
+world_board:
+  nodes:
+    great_hall: { name: "大理石大厅", kind: room }
+    servant_corridor: { name: "仆役走廊", kind: corridor }
+    archive_door: { name: "档案室门口", kind: area }
+    archive_room: { name: "二楼档案室", kind: room }
+    final_confrontation: { name: "午夜摊牌", kind: encounter }
+  edges:
+    - { from: great_hall, to: servant_corridor, bidirectional: true }
+    - { from: servant_corridor, to: archive_door, bidirectional: true }
+    - { from: great_hall, to: archive_door, bidirectional: true }
+    - { from: archive_door, to: archive_room, bidirectional: true }
+
+world_rules:
+  - id: maid_uses_service_route
+    actor: maid
+    priority: 20
+    when:
+      scene: servant_corridor
+      positions:
+        maid: great_hall
+      flags:
+        maid_warned_player: true
+    move:
+      to: servant_corridor
+
+  - id: butler_pursues_intruder
+    actor: butler
+    priority: 100
+    when:
+      scene_any:
+        - archive_door
+        - archive_room
+      state_gte:
+        butler.suspicion: 5
+    move:
+      toward: player
+    narrative_hint: "远处传来管家不紧不慢的脚步声，他正在循着动静靠近。"
+
+items:
+  servant_key:
+    name: "仆役侧门钥匙"
+    description: "艾拉交给你的小钥匙，可以打开档案室的仆役窄门。"
+    portable: true
+    consumable: false
+  old_badge:
+    name: "旧徽章"
+    description: "薇拉保管的家族旧徽章，背面纹路像某种机关钥匙。"
+    portable: true
+    consumable: false
+  maid_note:
+    name: "侍女便签"
+    description: "背面画着侧梯路线，并记录了艾拉闻到的纸灰味。"
+    portable: true
+    consumable: false
+  forgery_evidence:
+    name: "遗嘱篡改证据"
+    description: "旧遗嘱、火漆差异和管家账本组成的关键证据。"
+    portable: true
+    consumable: false
+
 initial_state:
   world:
     chapter: 1
-    scene: great_hall
-    # 预算依据：最优钥匙路线 6 回合（见 walkthroughs），留 2 回合试错冗余。
+    step: 0
+    # 预算依据：最优钥匙路线 7 回合（见 walkthroughs），留 1 回合试错冗余。
     time_left: 8
     current_goal: "午夜前进入二楼档案室，找到能证明遗嘱被篡改的证据"
     evidence_status: intact
     archive_access: locked
     archive_door_unwatched: false
     storm_level: severe
+  positions:
+    player: great_hall
+    butler: great_hall
+    maid: great_hall
+    guard: archive_door
+    heir: great_hall
+    drunk_guest: great_hall
+  item_locations:
+    servant_key: { type: carried_by, id: maid }
+    old_badge: { type: carried_by, id: heir }
+    maid_note: { type: carried_by, id: maid }
+    forgery_evidence: { type: container, id: hidden_compartment }
   player:
     injury: 0
     exposed: false
-    has_key: false
-    has_evidence: false
-    has_old_badge: false
-    has_maid_note: false
     reputation: unknown
   scene:
     fire_risk: 0
@@ -83,6 +154,7 @@ initial_state:
     butler_suspects_goal: false
     side_door_found: false
     hidden_compartment_found: false
+    cabinet_weakness_found: false
     will_forgery_confirmed: false
 
 characters:
@@ -137,7 +209,6 @@ characters:
     initial_state:
       suspicion: 2
       trust: 0
-      has_old_badge: true
   drunk_guest:
     name: "费恩先生"
     role: volatile_tool
@@ -171,6 +242,7 @@ intents:
     description: "绕开视线、靠近限制区域或进入档案室。"
     base_risk: high
     quote_required: true
+    requires_storylet_match: true
     typical_cost:
       time_left: -1
   create_distraction:
@@ -192,6 +264,23 @@ intents:
     description: "玩家提出非预设行动，由系统映射为最接近的结构化 action。"
     base_risk: variable
     quote_required: true
+    typical_cost:
+      time_left: -1
+  use:
+    label: "使用"
+    description: "使用口袋中的物品作用于当前人物、物品或环境。"
+    base_risk: variable
+    quote_required: true
+    requires_storylet_match: true
+    min_objects: 2
+    typical_cost:
+      time_left: -1
+  move:
+    label: "移动"
+    description: "沿当前可用出口前往相邻区域。"
+    base_risk: low
+    quote_required: false
+    engine_action: move
     typical_cost:
       time_left: -1
 
@@ -216,15 +305,12 @@ resolution_limits:
     scene.crowd_attention: { values: [low, medium, high] }
     player.injury: { min: 0, max: 3, max_step: 1 }
   protected:
-    - world.scene
+    - positions.*
+    - item_locations.*
     - world.time_left
     - world.evidence_status
     - world.archive_access
     - world.archive_door_unwatched
-    - player.has_evidence
-    - player.has_key
-    - player.has_old_badge
-    - player.has_maid_note
     - player.exposed
     - flags.*
 
@@ -237,17 +323,7 @@ scenes:
       暴风雪把窗玻璃拍得发白。大厅中央的壁炉烧得很旺，
       但每个人都像坐在另一种寒意里。洛维尔管家宣布午夜前任何人不得离开大厅，
       二楼档案室将按老规矩封存。你知道，所谓封存意味着证据会消失。
-    available_characters:
-      - butler
-      - maid
-      - heir
-      - drunk_guest
     available_objects:
-      people:
-        - butler
-        - maid
-        - heir
-        - drunk_guest
       items:
         oil_lamp: "油灯"
         curtains: "窗帘"
@@ -286,18 +362,14 @@ scenes:
       仆役走廊比大厅窄得多，墙上的煤油灯一盏接一盏向深处退去。
       风从某扇没关严的小窗钻进来，吹得门缝发出细声。这里没有宾客，
       但每一步都像会传到管家耳中。
-    available_characters:
-      - maid
-      - guard
+    exits:
+      - to: great_hall
+        label: "返回大理石大厅"
+        narrative_hint: "你沿侧梯退回大厅，重新混入宾客之间。"
     available_objects:
-      people:
-        - maid
-        - guard
       items:
         medicine_box: "药箱"
         laundry_cart: "洗衣推车"
-        servant_keys: "仆役钥匙串"
-        old_badge: "旧徽章"
       environment:
         side_door: "仆役侧门"
         narrow_window: "窄窗"
@@ -310,11 +382,12 @@ scenes:
       - observe
       - negotiate
       - sneak
+      - move
       - custom
     exit_conditions:
       any:
-        - player_state:
-            has_key: true
+        - inventory_all:
+            - servant_key
         - flags:
             guard_pattern_known: true
         - world_state:
@@ -329,13 +402,17 @@ scenes:
       布兰特守卫站在门边，手按在腰侧。走廊尽头的阴影里，
       还有一扇供仆役搬运旧箱子的窄门，守卫的视线并不常落在那里。
       楼下大厅的声音在这里变得遥远，只剩钟摆一下一下敲着午夜。
-    available_characters:
-      - guard
-      - butler
+    exits:
+      - to: servant_corridor
+        label: "返回仆役走廊"
+        narrative_hint: "你沿后楼梯退回仆役走廊。"
+      - to: archive_room
+        label: "进入已打开的档案室"
+        when:
+          world_state:
+            archive_access: open
+        narrative_hint: "仆役窄门仍然开着，你重新进入档案室。"
     available_objects:
-      people:
-        - guard
-        - butler
       items:
         key_ring: "钥匙环"
         sealed_notice: "封存告示"
@@ -356,6 +433,8 @@ scenes:
       - sneak
       - create_distraction
       - threaten
+      - use
+      - move
       - custom
     exit_conditions:
       any:
@@ -372,18 +451,20 @@ scenes:
       档案室里有陈木、墨水和潮纸的气味。旧文件柜贴着年份标签，
       壁炉旁已经堆好一只铁皮焚烧箱。这里不是被封存的房间，
       而是一间等着被清空的房间。
-    available_characters:
-      - butler
-      - heir
+    exits:
+      - to: archive_door
+        label: "退出档案室"
+        narrative_hint: "你从仆役窄门退回档案室门口。"
     available_objects:
-      people:
-        - butler
-        - heir
       items:
         old_will: "旧遗嘱"
         burned_edges: "烧焦的纸边"
         locked_cabinet: "上锁的文件柜"
-        hidden_compartment: "暗格"
+        hidden_compartment:
+          label: "暗格"
+          visible_when:
+            flags:
+              cabinet_weakness_found: true
         wax_seal: "火漆印"
       environment:
         archive_shelves: "档案架"
@@ -391,16 +472,18 @@ scenes:
         tall_window: "高窗"
       states:
         evidence_nearby: "证据就在附近"
-        butler_approaching: "管家正在逼近"
+        butler_pursuit_risk: "管家可能循声赶来"
     suggested_intents:
       - observe
       - negotiate
       - threaten
+      - use
+      - move
       - custom
     exit_conditions:
       any:
-        - player_state:
-            has_evidence: true
+        - inventory_all:
+            - forgery_evidence
         - world_state:
             evidence_status: destroyed
 
@@ -411,23 +494,7 @@ scenes:
     entry_text: |
       午夜钟声穿过整座庄园。所有人重新聚到大厅，火光把每张脸都切成明暗两半。
       现在问题不再是你能不能找到证据，而是谁会相信你，以及你为此付出了什么。
-    available_characters:
-      - butler
-      - maid
-      - guard
-      - heir
-      - drunk_guest
     available_objects:
-      people:
-        - butler
-        - maid
-        - guard
-        - heir
-        - drunk_guest
-      items:
-        forged_will: "伪造的遗嘱"
-        old_badge: "旧徽章"
-        maid_note: "侍女便签"
       environment:
         fireplace: "壁炉"
         family_portrait: "全家画像"
@@ -493,8 +560,8 @@ storylets:
       set_flags:
         maid_warned_player: true
         side_door_found: true
-      state_patch:
-        player.has_maid_note: true
+      move_items:
+        maid_note: { type: carried_by, id: player }
       add_clues:
         - "艾拉看见管家在傍晚进入档案室。"
         - "她没看见管家出来时手里拿着什么，但闻到纸灰味。"
@@ -532,8 +599,8 @@ storylets:
       flags:
         side_door_found: true
     effect:
-      set_world:
-        scene: servant_corridor
+      move_entities:
+        player: servant_corridor
       state_patch:
         butler.suspicion: +1
     narrative_hint: "玩家借上茶的间隙退到侧梯阴影里，大厅的谈话声在身后合拢。"
@@ -632,8 +699,8 @@ storylets:
         - sneak
         - custom
     effect:
-      set_world:
-        scene: archive_door
+      move_entities:
+        player: archive_door
     narrative_hint: "后楼梯的木板会响，玩家踩着雨声的间隙一步步靠近二楼东翼。"
 
   - id: maid_lends_key
@@ -645,35 +712,38 @@ storylets:
       intent_any:
         - negotiate
         - observe
+      object_any:
+        - maid
+        - medicine_box
       npc_state:
         maid.trust_gte: 3
       flags:
         maid_warned_player: true
     effect:
-      state_patch:
-        player.has_key: true
-        maid.trust: -1
+      move_items:
+        servant_key: { type: carried_by, id: player }
       add_clues:
         - "这不是档案室正门钥匙，但能打开仆役侧门。"
-    narrative_hint: "艾拉把钥匙放进药箱夹层里，没有直接递给玩家。"
+    narrative_hint: "艾拉从药箱夹层取出小钥匙，避开视线塞进玩家掌心。"
 
   - id: heir_badge
     title: "薇拉的旧徽章"
     type: reward
     once: true
     trigger:
-      scene_any:
-        - great_hall
-        - archive_room
+      scene: great_hall
       intent_any:
         - negotiate
         - observe
+      object_any:
+        - heir
       npc_state:
         heir.trust_gte: 2
     effect:
       state_patch:
-        player.has_old_badge: true
         heir.trust: +1
+      move_items:
+        old_badge: { type: carried_by, id: player }
       add_clues:
         - "旧徽章背面的纹路像是某种暗格钥匙。"
     narrative_hint: "薇拉没有说相信玩家，只把徽章放在桌边，像是遗忘在那里。"
@@ -683,18 +753,18 @@ storylets:
     type: progress
     once: true
     trigger:
-      scene_any:
-        - servant_corridor
-        - archive_door
-      intent_any:
-        - sneak
-        - custom
-      player_state:
-        has_key: true
+      scene: archive_door
+      intent: use
+      object_all:
+        - servant_key
+        - service_door
+      inventory_all:
+        - servant_key
     effect:
       set_world:
         archive_access: open
-        scene: archive_room
+      move_entities:
+        player: archive_room
       state_patch:
         guard.alertness: +1
     narrative_hint: "钥匙不是正门钥匙，却能打开一扇给仆役搬运旧箱子的窄门。"
@@ -715,8 +785,9 @@ storylets:
     effect:
       set_world:
         archive_access: open
-        scene: archive_room
         archive_door_unwatched: false
+      move_entities:
+        player: archive_room
       state_patch:
         butler.suspicion: +1
     narrative_hint: "守卫离开门边的时间短得几乎不算机会，但足够一个决心明确的人通过。"
@@ -727,20 +798,21 @@ storylets:
     once: true
     trigger:
       scene: archive_room
-      intent: observe
+      intent: use
+      object_all:
+        - old_badge
       object_any:
         - locked_cabinet
         - hidden_compartment
+      inventory_all:
         - old_badge
-      player_state:
-        has_old_badge: true
     effect:
       set_flags:
         hidden_compartment_found: true
-      state_patch:
-        player.has_evidence: true
       set_world:
         evidence_status: secured
+      move_items:
+        forgery_evidence: { type: carried_by, id: player }
       add_clues:
         - "旧遗嘱上的火漆和新遗嘱不一致。"
         - "管家的账本记录了销毁档案的报酬。"
@@ -753,28 +825,64 @@ storylets:
     trigger:
       scene: archive_room
       intent: observe
+      object_any:
+        - locked_cabinet
       flags:
         hidden_compartment_found: false
-      player_state:
-        has_old_badge: false
+      inventory_none:
+        - old_badge
     effect:
+      set_flags:
+        cabinet_weakness_found: true
       state_patch:
-        world.time_left: -1
         butler.suspicion: +1
       add_clues:
-        - "玩家发现文件柜有暗格，但缺少能打开它的东西。"
-    narrative_hint: "证据近在眼前，但机关没有打开；这不是终点，而是新的压力。"
+        - "暗格锁舌已经老化，细小坚硬的钥匙也许能把它撬开。"
+    narrative_hint: "徽章不在手边，但玩家发现暗格锁舌已经松动；仆役钥匙或许能勉强撬开它。"
+
+  - id: force_compartment_with_key
+    title: "用仆役钥匙撬开暗格"
+    type: opportunity_with_cost
+    once: true
+    trigger:
+      scene: archive_room
+      intent: use
+      object_all:
+        - servant_key
+        - hidden_compartment
+      inventory_all:
+        - servant_key
+      flags:
+        cabinet_weakness_found: true
+    director_hint: true
+    effect:
+      set_flags:
+        hidden_compartment_found: true
+      set_world:
+        evidence_status: secured
+      state_patch:
+        player.exposed: true
+        butler.suspicion: +1
+      move_items:
+        forgery_evidence: { type: carried_by, id: player }
+      add_clues:
+        - "变形的钥匙撬开暗格，也在锁舌上留下了明显划痕。"
+    narrative_hint: "仆役钥匙在锁缝里弯了一下，暗格终于弹开；声音和划痕也暴露了玩家的行动。"
 
   - id: butler_catches_player
     title: "管家赶到"
     type: pressure
     once: true
+    phase: after_world
     trigger:
       state_gte:
         butler.suspicion: 5
       scene_any:
         - archive_door
         - archive_room
+      same_location:
+        - butler
+        - player
     effect:
       state_patch:
         player.exposed: true
@@ -789,12 +897,20 @@ storylets:
     trigger:
       state_lte:
         world.time_left: 0
-      player_state:
-        has_evidence: false
+      inventory_none:
+        - forgery_evidence
     effect:
       set_world:
         evidence_status: destroyed
-        scene: final_confrontation
+      move_items:
+        forgery_evidence: { type: removed }
+      move_entities:
+        player: final_confrontation
+        butler: final_confrontation
+        maid: final_confrontation
+        guard: final_confrontation
+        heir: final_confrontation
+        drunk_guest: final_confrontation
     narrative_hint: "午夜钟声响起时，档案室方向传来纸张卷曲的焦味。"
 
   # 必须排在 hidden_compartment 之后、final_truth 之前：
@@ -805,11 +921,16 @@ storylets:
     once: true
     trigger:
       scene: archive_room
-      player_state:
-        has_evidence: true
+      inventory_all:
+        - forgery_evidence
     effect:
-      set_world:
-        scene: final_confrontation
+      move_entities:
+        player: final_confrontation
+        butler: final_confrontation
+        maid: final_confrontation
+        guard: final_confrontation
+        heir: final_confrontation
+        drunk_guest: final_confrontation
     narrative_hint: "证据到手的同时，午夜钟声把所有人重新召回大厅，没有人能再假装无事发生。"
 
   - id: final_truth
@@ -818,8 +939,8 @@ storylets:
     once: true
     trigger:
       scene: final_confrontation
-      player_state:
-        has_evidence: true
+      inventory_all:
+        - forgery_evidence
     effect:
       set_flags:
         will_forgery_confirmed: true
@@ -830,8 +951,8 @@ endings:
     title: "真相曝光"
     priority: 1
     conditions:
-      world.scene: final_confrontation
-      player.has_evidence: true
+      positions.player: final_confrontation
+      item_locations.forgery_evidence.id: player
       player.exposed: false
       heir.trust_gte: 2
     outcome: |
@@ -842,8 +963,8 @@ endings:
     title: "代价胜利"
     priority: 2
     conditions:
-      world.scene: final_confrontation
-      player.has_evidence: true
+      positions.player: final_confrontation
+      item_locations.forgery_evidence.id: player
     outcome: |
       玩家拿到了证据，但过程留下了火情、怀疑或公开冲突。
       真相没有被毁掉，可玩家也成为庄园里被记住的人。
@@ -852,9 +973,9 @@ endings:
     title: "证据被毁"
     priority: 3
     conditions:
-      world.scene: final_confrontation
+      positions.player: final_confrontation
       world.evidence_status: destroyed
-      player.has_evidence: false
+      item_locations.forgery_evidence.id_ne: player
     outcome: |
       核心档案在午夜被烧毁。玩家没能阻止这件事，
       但仍可能带走侍女便签、醉客证词或暗格线索，为坏结局后的续章留下希望。
@@ -862,7 +983,7 @@ endings:
 authoring_notes:
   content_scope:
     scenes: 5
-    storylets: 20
+    storylets: 21
     endings: 3
   production_log:
     stage_1_started_at: "2026-07-08"
@@ -872,5 +993,7 @@ authoring_notes:
       climb_back_stairs / midnight_gathering，此前场景图不连通）；
       exit_conditions 改结构化条件；临时效果改 temporary 块；
       新增 resolution_limits 与 quote_required；time_left 6 -> 8
-      （最优路线 6 回合 + 2 回合冗余）；结局条件加入 world.scene 防止提前触发。
+      （最优路线 7 回合 + 1 回合冗余）；schema v2 用世界图和唯一 positions
+      取代静态在场名单；新增唯一 item_locations、显式使用、返回出口，
+      以及无徽章时用仆役钥匙强开暗格的有代价补救路线。
     source: "原创短篇；只参考 Open-Theatre 的场景/角色/动机组织方式，不使用其已有 IP 内容。"

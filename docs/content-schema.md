@@ -1,6 +1,6 @@
-# AIRPG 内容格式协议 v1
+# AIRPG 内容格式协议 v2
 
-日期：2026-07-08
+日期：2026-07-10
 
 本文档定义 AIRPG 故事 YAML 的通用格式。后续新故事应优先遵守这份协议，而不是为每个故事修改引擎。
 
@@ -28,8 +28,8 @@
 ```yaml
 id: midnight_archive
 title: "午夜前的档案室"
-version: 0.1.0
-schema_version: 1
+version: 0.2.0
+schema_version: 2
 language: zh-CN
 genre: mystery_infiltration
 target_duration_minutes: 20-30
@@ -47,6 +47,15 @@ style_bible:
   ...
 
 global_rules:
+  ...
+
+world_board:
+  ...
+
+world_rules:
+  ...
+
+items:
   ...
 
 initial_state:
@@ -84,13 +93,14 @@ authoring_notes:
 | `id` | string | 故事唯一 ID，建议 snake_case |
 | `title` | string | 故事标题 |
 | `version` | string | 内容版本 |
-| `schema_version` | number | 内容协议版本，当前为 `1` |
+| `schema_version` | number | 内容协议版本，当前为 `2`；引擎仍兼容读取 v1 |
 | `language` | string | 内容语言，例如 `zh-CN` |
 | `genre` | string | 类型标识，例如 `mystery_infiltration` |
 | `premise` | string | 故事前提 |
 | `player_role` | map | 玩家身份、目标与限制 |
 | `style_bible` | map | 文风和表现约束 |
 | `global_rules` | map | 全局规则和边界 |
+| `world_board` | map | v2 抽象空间图，定义节点与连接 |
 | `initial_state` | map | 初始世界状态 |
 | `characters` | map | 角色定义 |
 | `intents` | map | 玩家意图空间 |
@@ -105,6 +115,8 @@ authoring_notes:
 | `design_goal` | string | 本故事用于验证什么体验 |
 | `target_duration_minutes` | string / number | 目标体验时长 |
 | `resolution_limits` | map | 兜底判定允许改写的状态白名单与边界，见第 11 节 |
+| `world_rules` | list | 每个 world step 执行的通用实体移动规则，缺省为空 |
+| `items` | map | 可携带物品定义；使用时必须同时提供 `initial_state.item_locations` |
 | `genre_system` | map | 类型专属扩展 |
 | `authoring_notes` | map | 创作备注、生产记录 |
 
@@ -132,15 +144,22 @@ player_role:
 
 ## 4. `initial_state`
 
-`initial_state` 是运行时状态的初始值。第一版约定四个核心命名空间：
+`initial_state` 是运行时状态的初始值。v2 约定六个核心命名空间：
 
 ```yaml
 initial_state:
   world:
-    scene: great_hall
+    step: 0
     time_left: 6
+  positions:
+    player: great_hall
+    butler: great_hall
+    guard: archive_door
+  item_locations:
+    servant_key: { type: carried_by, id: maid }
+    old_badge: { type: carried_by, id: heir }
   player:
-    has_key: false
+    injury: 0
   scene:
     fire_risk: 0
   flags:
@@ -151,12 +170,83 @@ initial_state:
 
 | 命名空间 | 用途 |
 |---|---|
-| `world` | 全局剧情状态，例如章节、当前场景、证据状态 |
+| `world` | 全局剧情状态，例如章节、world step、证据状态 |
+| `positions` | 所有角色当前所在的世界图节点，是物理位置的唯一事实来源 |
+| `item_locations` | 所有可携带物品的位置，是场景物品、容器和背包所有权的唯一事实来源 |
 | `player` | 玩家状态，例如伤势、物品、暴露程度 |
 | `scene` | 当前场景状态，例如火势、噪音、人群注意力 |
 | `flags` | 布尔或轻量剧情标记 |
 
 NPC 初始状态写在 `characters.<id>.initial_state` 中，不放在 `initial_state` 里。
+
+### 4.1 `world_board`：抽象世界图
+
+世界棋盘是有向图，不要求是二维方格。节点可以表示房间、走廊、区域或叙事遭遇；边表示实体可以在一个 world step 内通过的连接。
+
+```yaml
+world_board:
+  nodes:
+    great_hall: { name: "大理石大厅", kind: room }
+    servant_corridor: { name: "仆役走廊", kind: corridor }
+    archive_door: { name: "档案室门口", kind: area }
+  edges:
+    - { from: great_hall, to: servant_corridor, bidirectional: true }
+    - { from: servant_corridor, to: archive_door, bidirectional: true }
+```
+
+规则：
+
+- `scenes` 中每个玩家可进入的场景必须有同 ID 的棋盘节点；棋盘可以额外包含只供 NPC 使用的节点。
+- 每个 `characters` 实体必须在 `initial_state.positions` 中恰有一个节点。
+- v2 禁止同时填写 `initial_state.world.scene`；玩家位置读取 `positions.<player_role.id>`。
+- 位置不能通过 `state_patch` 或 LLM 兜底判定修改，只能通过 `move_entities` 或 world step 移动系统改变。
+
+### 4.2 `world_rules` 与 world step
+
+```yaml
+world_rules:
+  - id: butler_pursues_intruder
+    actor: butler
+    priority: 100
+    when:
+      scene_any: [archive_door, archive_room]
+      state_gte:
+        butler.suspicion: 5
+    move:
+      toward: player
+```
+
+- `move.to` 移动到相邻的固定节点。
+- `move.toward` 沿世界图最短路径向目标角色移动一格。
+- 同一角色同一 step 最多采用一个命中规则，`priority` 高者优先；同优先级按内容顺序优先。
+- 所有角色的规则都读取 step 开始时的同一状态快照，再原子应用移动，禁止因规则执行顺序产生二次移动。
+- 无规则命中时角色保持原位。报价、帮助、查看对象和放弃行动不推进 world step；确认执行的行动推进一次。
+
+### 4.3 `items`、物品位置与背包
+
+```yaml
+items:
+  servant_key:
+    name: "仆役侧门钥匙"
+    description: "可以打开仆役窄门。"
+    portable: true
+    consumable: false
+
+initial_state:
+  item_locations:
+    servant_key: { type: carried_by, id: maid }
+```
+
+每个物品同一时刻必须且只能有一个位置：
+
+| `type` | `id` 含义 |
+|---|---|
+| `board` | 世界图节点，物品显示为当前地点的可拾取物品 |
+| `carried_by` | 角色 ID；`id` 等于玩家 ID 时显示在口袋中 |
+| `container` | 场景对象 ID，例如 `hidden_compartment`；默认不直接显示 |
+| `removed` | 已消耗或离开世界，不填写 `id` |
+
+物品所有权只能通过受信任的 `move_items` 效果改变。v2 禁止同时用 `player.has_key` 之类布尔值复制同一个所有权事实，也禁止在 `available_objects` 中重复声明受跟踪物品。
 
 ## 5. `characters`
 
@@ -190,9 +280,10 @@ characters:
 
 在场模型（presence）：
 
-- MVP 中"角色在不在场"由**场景的 `available_characters`** 声明：它表示"玩家在这个场景里能接触到谁"，同一角色可以出现在多个场景（例如侍女既在大厅侍应，也会回到仆役走廊）。
-- **不要**在 `initial_state` 里写 `location` 之类没有任何事件卡会更新的字段——死数据会误导创作者和后续的 LLM 渲染。若未来需要动态位置（NPC 被调走、被引开），应设计成由 storylet 效果显式改变的状态，并让引擎据此过滤在场角色。
-- UI 的在场人物栏、`who` 面板、状态栏都以当前场景的 `available_characters` 为准。
+- 物理在场由 `positions.<character_id> == positions.<player_role.id>` 唯一推导。
+- UI 的人物面板、`who`、状态栏和人物目标词都读取这个派生结果，场景内容不能再声明静态人物名单。
+- 不在场人物不能成为行动目标；请求会在扣除时间和推进 world step 之前被拒绝。
+- “相邻、逼近、隐藏、可听见”等感知关系应在位置之上继续派生，不能通过把同一角色重复塞进多个场景来模拟。
 
 ## 6. `intents`
 
@@ -207,6 +298,23 @@ intents:
     quote_required: true
     typical_cost:
       time_left: -1
+  use:
+    label: "使用"
+    description: "使用口袋物品作用于当前目标。"
+    base_risk: variable
+    quote_required: true
+    requires_storylet_match: true
+    min_objects: 2
+    typical_cost:
+      time_left: -1
+  move:
+    label: "移动"
+    description: "沿当前可用出口移动。"
+    base_risk: low
+    quote_required: false
+    engine_action: move
+    typical_cost:
+      time_left: -1
 ```
 
 必填：
@@ -219,6 +327,9 @@ intents:
 - `base_risk`: `low`、`medium`、`high`、`variable`
 - `quote_required`: 是否必须先报价再执行，见下方规则
 - `typical_cost`: 常见代价，通常包含 `time_left: -1`
+- `min_objects` / `max_objects`: 行动需要的目标数量边界
+- `requires_storylet_match`: `true` 时，本次行动必须能命中一张显式声明该意图的 action storylet；否则在报价、扣时和 world step 前拒绝
+- `engine_action`: 通用内建动作；当前仅支持 `move`
 
 规则：
 
@@ -232,6 +343,7 @@ intents:
 - `true`：必须先返回报价卡（理解、收益、风险、代价），玩家确认后才执行。
 - 缺省按 `base_risk` 推导：`low` 为 `false`，其余为 `true`。
 - 报价对判定有约束力：执行结果的恶化程度不得超出报价列出的风险与代价范围。
+- 规则引擎会在私有状态副本上预演确定性结果；报价分别展示固定代价和 storylet/world step 造成的预计影响，预演不得修改真实状态。
 - 重新报价免费且不消耗 `time_left`，但同一回合最多 3 次，次数计入日志用于公平感分析。
 
 ## 7. `scenes`
@@ -246,15 +358,21 @@ scenes:
     goal: "找到进入二楼档案室的第一条机会。"
     entry_text: |
       暴风雪把窗玻璃拍得发白。
-    available_characters:
-      - butler
-      - maid
+    exits:
+      - to: servant_corridor
+        label: "前往仆役走廊"
+        narrative_hint: "你沿侧梯进入仆役走廊。"
     available_objects:
-      people:
-        - butler
-        - maid
       items:
         oil_lamp: "油灯"
+        hidden_compartment:
+          label: "暗格"
+          visible_when:
+            flags:
+              compartment_found: true
+          actionable_when:
+            flags:
+              compartment_unlocked: true
       environment:
         fireplace: "壁炉"
       states:
@@ -276,20 +394,21 @@ scenes:
 - `purpose`
 - `goal`
 - `entry_text`
-- `available_characters`
 - `available_objects`
 - `suggested_intents`
 
 规则：
 
-- `available_characters` 必须引用 `characters` 中已有 ID。
 - `suggested_intents` 必须引用 `intents` 中已有 ID。
-- `available_objects` 可包含 `people`、`items`、`environment`、`states`。
-- 每个对象组可以是 ID 列表，也可以是 `ID: 显示名` 映射。**除 `people` 外（人物显示名取自 `characters.<id>.name`），一律推荐映射形式**：对象面板是玩家的合法目标词表，没有显示名的裸 ID（`oil_lamp`）会让玩家无法判断哪些是可操作的"叙事积木"。
+- `exits` 是玩家可主动选择的相邻移动出口；`to` 必须有世界图边和场景定义，可选 `when` 使用统一条件语法。
+- `engine_action: move` 只允许移动到当前场景经过条件过滤后仍可用的出口；非法出口在扣时和 world step 前拒绝。
+- v2 的 `available_objects` 可包含 `items`、`environment`、`states`；禁止 `people`，人物由 `positions` 动态派生。
+- 每个对象组可以是 ID 列表，也可以是 `ID: 显示名` 映射，一律推荐映射形式：对象面板是玩家的合法目标词表，没有显示名的裸 ID（`oil_lamp`）会让玩家无法判断哪些是可操作的"叙事积木"。
+- 需要动态感知的对象使用对象规格映射：`label` 必填，`visible_when` 和 `actionable_when` 使用第 9 节统一条件块。缺省条件为真；不可见对象一定不可交互，可见但暂不可交互的对象可以显示在面板但不能成为行动目标。
 - 引擎匹配（`object_any`）永远使用 ID；显示名只用于展示和输入别名。
 - `exit_conditions` 使用第 9 节的结构化条件语法，不允许使用表达式字符串——引擎只实现一种条件求值器，trigger、exit_conditions 和 endings 共用。
 - `exit_conditions.any` 是条件块列表，任一块满足即视为场景目标达成（块之间 OR，块内 AND）。
-- 场景目标达成本身不自动切换场景；场景切换必须由 storylet 的 `set_world.scene` 显式表达。`exit_conditions` 是给导演层的信号：目标已达成，应调度收束或转场事件。
+- 场景目标达成本身不自动移动玩家；位置变化必须由 storylet 的 `move_entities` 显式表达。`exit_conditions` 是给导演层的信号：目标已达成，应调度收束或转场事件。
 
 ## 8. 状态路径
 
@@ -299,8 +418,9 @@ scenes:
 
 ```text
 world.time_left
-world.scene
-player.has_key
+positions.player
+item_locations.servant_key.id
+player.injury
 scene.fire_risk
 flags.maid_warned_player
 characters.maid.trust
@@ -343,7 +463,7 @@ world_state:
   evidence_status: intact
 
 player_state:
-  has_key: true
+  exposed: false
 
 flags:
   maid_warned_player: true
@@ -353,7 +473,7 @@ flags:
 
 ```yaml
 conditions:
-  player.has_evidence: true
+  item_locations.forgery_evidence.id: player
   world.evidence_status: secured
 ```
 
@@ -398,6 +518,12 @@ intent_any:
 object_any:
   - oil_lamp
   - curtains
+
+inventory_all:
+  - servant_key
+
+inventory_none:
+  - old_badge
 ```
 
 ### 9.4 条件块组合
@@ -407,8 +533,8 @@ object_any:
 ```yaml
 exit_conditions:
   any:
-    - player_state:
-        has_key: true
+    - inventory_all:
+        - servant_key
     - flags:
         guard_pattern_known: true
       world_state:
@@ -419,7 +545,7 @@ exit_conditions:
 
 - `any` 的每个元素是一个条件块，块内所有条件组是 AND 关系。
 - 块之间是 OR 关系。
-- 条件块内允许的字段与 storylet trigger 的状态类字段一致（`world_state`、`player_state`、`npc_state`、`flags`、`state_gte`、`state_lte`）。
+- 条件块内允许的字段与 storylet trigger 的状态类字段一致（`world_state`、`player_state`、`npc_state`、`flags`、`state_gte`、`state_lte`、`positions`、`same_location`、`inventory_all`、`inventory_any`、`inventory_none`）。
 
 ### 9.5 派生条件
 
@@ -452,8 +578,8 @@ storylets:
     effect:
       set_flags:
         maid_warned_player: true
-      state_patch:
-        player.has_maid_note: true
+      move_items:
+        maid_note: { type: carried_by, id: player }
       add_clues:
         - "艾拉看见管家进入档案室。"
     narrative_hint: "侍女避开管家的视线，把便签塞给玩家。"
@@ -469,6 +595,10 @@ storylets:
 - `effect`
 - `narrative_hint`
 
+可选的 `phase` 取 `action`（默认）或 `after_world`。只有需要读取本回合 NPC 移动结果的到达、相遇、追捕事件才使用 `after_world`。
+
+可选的 `director_hint` 取布尔值或提示标题字符串。场景切换事件默认会成为导演提示；非转场但必须向玩家显式暴露的关键交互使用 `director_hint: true`。导演只在状态前置满足且所需对象当前可交互时展示它。
+
 ### 10.1 `trigger`
 
 推荐字段：
@@ -480,6 +610,12 @@ storylets:
 | `intent` | 当前玩家意图必须等于某 intent ID |
 | `intent_any` | 当前玩家意图在列表中任一匹配 |
 | `object_any` | 玩家方案或目标对象命中列表中任一对象 |
+| `object_all` | 玩家方案必须同时包含列表中的全部对象，适合“物品 + 使用目标” |
+| `positions` | 指定实体必须位于指定棋盘节点，例如 `{ butler: archive_door }` |
+| `same_location` | 列表中的两个或多个实体必须位于同一节点 |
+| `inventory_all` | 玩家必须持有列表中的全部物品 |
+| `inventory_any` | 玩家必须持有列表中的至少一个物品 |
+| `inventory_none` | 玩家不能持有列表中的任何物品 |
 | `world_state` | 匹配 `world` 命名空间状态 |
 | `player_state` | 匹配 `player` 命名空间状态 |
 | `npc_state` | 匹配角色状态，允许角色简写 |
@@ -496,6 +632,8 @@ storylets:
 | `set_flags` | 设置 `flags` |
 | `set_world` | 设置 `world` 命名空间状态 |
 | `state_patch` | 通用状态变化 |
+| `move_entities` | 原子设置一个或多个实体的位置 |
+| `move_items` | 原子设置一个或多个物品的位置/所有者 |
 | `add_clues` | 添加玩家已知线索 |
 | `temporary` | 临时效果块，到期自动回滚，见下 |
 
@@ -510,13 +648,33 @@ storylets:
 ```yaml
 state_patch:
   scene.fire_risk: +1
-  player.has_key: true
+  player.exposed: true
   world.evidence_status: secured
 ```
 
+移动示例：
+
+```yaml
+effect:
+  move_entities:
+    player: archive_room
+```
+
+`move_entities` 是 storylet 的显式、受信任移动效果，可用于玩家转场或剧情集合；普通 world step 的 NPC 移动应优先使用 `world_rules`。v2 禁止 `set_world.scene` 和 `state_patch.positions.*`。
+
+物品转移示例：
+
+```yaml
+effect:
+  move_items:
+    servant_key: { type: carried_by, id: player }
+```
+
+`move_items` 是获得、交付、丢弃和消耗物品的唯一修改入口；v2 禁止 `state_patch.item_locations.*`。
+
 `temporary` 语义：
 
-`effect` 顶层的 `set_flags` / `set_world` / `state_patch` 都是永久变化。会自动过期的变化必须写进 `temporary` 块，避免"哪些部分会回滚"的歧义：
+`effect` 顶层的 `set_flags` / `set_world` / `state_patch` / `move_entities` / `move_items` 都是永久变化。会自动过期的变化必须写进 `temporary` 块，避免"哪些部分会回滚"的歧义：
 
 ```yaml
 effect:
@@ -538,14 +696,16 @@ effect:
 引擎每回合按以下顺序处理，内容创作时按此推演因果：
 
 1. 应用玩家行动的意图代价（`typical_cost`）。
-2. 应用判定产生的状态变化（storylet 命中效果，或兜底判定的受限 patch，见第 11 节）。
-3. 按 `storylets` 列表顺序做一次单遍扫描：逐个检查 trigger，命中即立刻应用 effect，列表中靠后的 storylet 能看到靠前 storylet 刚产生的状态变化（单遍级联，不做多轮回扫）。
-4. 处理临时效果过期。
-5. 求值 `endings`，任一结局条件成立则本局结束。
+2. 应用兜底判定的受限 patch（如有，见第 11 节）。
+3. 若 intent 声明 `engine_action: move`，先沿已校验的 `scenes.<id>.exits` 移动玩家；随后对默认 `phase: action` 的 storylet 做一次有序单遍扫描。
+4. 推进一个 world step：递增 `world.step`，从同一快照计算 NPC 移动提案并原子应用。
+5. 对显式 `phase: after_world` 的 storylet 做一次单遍扫描，用于到达、相遇和追捕反应。
+6. 处理临时效果过期。
+7. 求值 `endings`，任一结局条件成立则本局结束。
 
 两条附加规则：
 
-- **每回合最多一次场景切换。** 本回合已有 storylet 改变了 `world.scene` 时，后续会再次改变 `world.scene` 的 storylet 一律跳过（不消耗 `once`，下回合仍可触发）。否则两张都由"潜入"触发的转场卡会级联，让玩家一个行动连穿两个场景。
+- **每回合最多一次玩家位置变化。** 本回合已有 storylet 通过 `move_entities` 移动玩家时，后续会再次移动玩家的 storylet 一律跳过（不消耗 `once`，下回合仍可触发）。NPC 的 world step 移动不计入这条限制。
 - storylet 在列表中的顺序是有语义的：转场类 storylet（如"拿到证据后进入终幕"）应放在产出其前置状态的 storylet 之后。
 
 ### 10.4 `type` 词表
@@ -576,9 +736,9 @@ resolution_limits:
     scene.noise_level: { min: 0, max: 5, max_step: 2 }
     scene.crowd_attention: { values: [low, medium, high] }
   protected:
-    - world.scene
+    - positions.*
+    - item_locations.*
     - world.evidence_status
-    - player.has_evidence
     - flags.*
 ```
 
@@ -595,7 +755,8 @@ resolution_limits:
 
 规则：
 
-- 关键剧情事实（证据、钥匙、场景切换、结局条件涉及的状态）必须列入 `protected`，只能由 storylet 改变。这保证玩家创意可以影响局面（信任、怀疑、噪音、机会），但不能绕过作者设计的因果关卡。
+- 关键剧情事实（证据、钥匙、位置、结局条件涉及的状态）必须列入 `protected`，只能由 storylet 或 world step 改变。schema v2 强制要求 `positions.*` 受保护；声明了 `items` 时也强制要求 `item_locations.*` 受保护。
+- `requires_storylet_match: true` 的意图不走“空动作”兜底：若当前意图、对象与状态不能命中作者交互，整次操作原子拒绝，不消耗时间、不增加回合数、不推进 world step。
 - 白名单之外、未列入 `protected` 的路径默认拒绝，并记入日志——高频被拒绝的路径是内容迭代信号（说明玩家普遍想影响某个作者没想到的维度）。
 - 违反 `player_role.constraints` 或 `global_rules.boundaries` 的方案不进入兜底判定，报价阶段直接返回 `can_execute: false`，并附用世界内语言表述的原因（例如"暴风雪封死了山路"，而不是"系统不允许"）。
 
@@ -609,7 +770,8 @@ endings:
     title: "真相曝光"
     priority: 1
     conditions:
-      player.has_evidence: true
+      positions.player: final_confrontation
+      item_locations.forgery_evidence.id: player
       player.exposed: false
       heir.trust_gte: 2
     outcome: |
@@ -628,7 +790,8 @@ endings:
 - `priority` 数字越小，优先级越高。
 - 多个结局同时满足时，取 `priority` 最小者。
 - `conditions` 使用第 9 节条件语法。
-- 结局条件建议显式包含 `world.scene`（通常是收束场景），避免玩家在中途场景意外触发结局、跳过收束演出。
+- 结局条件建议显式包含 `positions.<player_role.id>`（通常是收束场景），避免玩家在中途场景意外触发结局、跳过收束演出。
+- 持有关键物品的结局条件应检查 `item_locations.<item_id>.id: <player_role.id>`，不再维护重复的 `has_*` 布尔值。
 
 ## 13. `genre_system`
 
@@ -705,15 +868,17 @@ walkthroughs:
 | `steps[].objects` | 玩家方案涉及的对象，用于 `object_any` 匹配 |
 | `steps[].generic_patch` | 该回合兜底判定授予的状态变化（模拟"交涉成功 +1 信任"这类引擎行为），必须符合 `resolution_limits` |
 | `steps[].expect_storylets` | 该回合应触发的 storylet 及顺序 |
+| `steps[].expect_world_rules` | 可选；该回合应实际移动实体的 world rule 及顺序 |
 | `steps[].note` | 人类可读说明 |
 
-校验器 `tools/check_walkthroughs.py` 按第 10.3 节的执行语义逐回合模拟：应用意图代价和 `generic_patch`、扫描 storylet、处理临时效果、求值结局，任何一步与 `expect_storylets` 或 `target_ending` 不符即失败。
+校验器 `tools/check_walkthroughs.py` 按第 10.3 节的执行语义逐回合模拟：应用意图代价和 `generic_patch`、扫描 action storylet、推进 world step、扫描 after-world storylet、处理临时效果并求值结局。任何一步与 `expect_storylets` 或 `target_ending` 不符即失败。
 
 规则：
 
 - 每个结局至少要有一条 walkthrough 覆盖。
 - 修改故事内容后必须重跑 walkthrough 校验，两者一起提交。
 - walkthrough 同时是阶段 2 规则引擎的验收用例：引擎实现后跑同一批用例，结果必须一致。
+- 对允许玩家提前进入关键区域的故事，必须增加“缺少首选道具后的补救路线”或明确失败路线，防止只覆盖最优解而漏掉胜利软锁。
 
 ## 15. 文件组织
 
@@ -746,10 +911,19 @@ python3 tools/check_walkthroughs.py content/walkthroughs/midnight_archive.yaml
 当前版本：
 
 ```yaml
-schema_version: 1
+schema_version: 2
 ```
 
-如果未来发生不兼容变更，例如：
+v2 是位置模型的不兼容升级：
+
+- 新增 `world_board`、`world_rules` 和 `initial_state.positions`。
+- 删除场景中的静态 `available_characters` / `available_objects.people`。
+- 玩家场景从 `positions.<player_role.id>` 派生，转场使用 `move_entities`。
+- 新增 `phase: after_world`、`positions` 和 `same_location` 条件。
+- 新增唯一 `item_locations`、派生背包、`move_items`、`inventory_*` 条件和显式 `use` 内容协议。
+- 新增 `scenes.<id>.exits` 与 `engine_action: move`，玩家可以沿已声明的世界图出口返回。
+
+如果未来继续发生不兼容变更，例如：
 
 - `storylets` trigger 语法变化。
 - `state_patch` 语义变化。
@@ -757,7 +931,7 @@ schema_version: 1
 
 应升级 `schema_version`，并在 validator 中同时支持旧版本或提供迁移脚本。
 
-已发生的 v1 内部修订（引擎开工前，不另升版本）：
+已发生的 v1 内部修订：
 
 - `exit_conditions` 从表达式字符串改为结构化 `any` 条件块（2026-07-09）。
 - 临时效果从 `effect.duration_turns` 改为 `effect.temporary` 块（2026-07-09）。
@@ -772,19 +946,21 @@ schema_version: 1
 新增故事前检查：
 
 1. 是否有唯一 `id`。
-2. 是否填写 `schema_version: 1`。
+2. 是否填写 `schema_version: 2`。
 3. `player_role.id` 是否存在于 `characters`。
-4. 每个场景的角色是否都存在。
-5. 每个场景的意图是否都存在。
-6. 每个 storylet 的 `id` 是否唯一。
-7. 每个 storylet 是否有 `trigger`、`effect` 和 `narrative_hint`。
-8. 每个结局是否有 `priority` 和 `conditions`。
-9. 重要剧情事实是否写入状态，而不是只写在文本里。
-10. 场景图是否连通：初始场景之外的每个场景，都有 storylet 通过 `set_world.scene` 通向它。
-11. 每个 `flags` 是否至少被一个 storylet 设置（没有就是死变量或缺事件卡）。
-12. `resolution_limits` 是否覆盖了 NPC 信任/怀疑等兜底判定需要的路径，关键剧情事实是否列入 `protected`。
-13. 每个结局是否有 walkthrough 覆盖，且 `check_walkthroughs.py` 通过。
-14. 关键路径回合数加上合理冗余是否在 `time_left` 预算内。
+4. 每个角色是否在 `initial_state.positions` 中有且只有一个合法节点。
+5. 每个物品是否在 `initial_state.item_locations` 中有且只有一个合法位置，且未在场景对象里重复声明。
+6. 每个场景的意图是否都存在，出口是否连接合法相邻节点。
+7. 每个 storylet 的 `id` 是否唯一。
+8. 每个 storylet 是否有 `trigger`、`effect` 和 `narrative_hint`。
+9. 每个结局是否有 `priority` 和 `conditions`。
+10. 重要剧情事实是否写入状态，而不是只写在文本里。
+11. 世界图节点和边是否合法；初始场景之外的每个场景，是否有 storylet 通过 `move_entities` 将玩家移入。
+12. 每个 `flags` 是否至少被一个 storylet 设置（没有就是死变量或缺事件卡）。
+13. `resolution_limits` 是否覆盖软状态，`positions.*` 与 `item_locations.*` 是否列入 `protected`。
+14. 每个结局是否有 walkthrough 覆盖，关键区域是否覆盖“缺少首选物品”的补救/失败路线。
+15. world rule 是否只引用通用实体/节点、从同一快照可确定地得到唯一移动提案。
+16. 关键路径回合数加上合理冗余是否在 `time_left` 预算内。
 
 一句话总结：
 
