@@ -823,10 +823,11 @@ POST /api/feedback
 - ~~升级 schema v2 世界图：唯一角色位置、快照式 world step、动态在场派生与通用校验。~~
 - ~~实现唯一物品位置与口袋、显式使用意图、玩家返回出口，并补“无徽章破局”回归路线。~~
 - ~~实现条件对象、关键交互导演提示、无匹配动作不扣时与确定性完整报价。~~
+- ~~定义 LLM ActionPlan Protocol 0.1：玩家感知、能力步骤、状态提议、验证结果、提交结果与世界权限边界。~~
 
 接下来按顺序：
 
-1. 接入 mock LLM，再接真实 LLM（`server/engine/llm.py`）：替换 `quote.default_proposal`（自然语言 → 输入分类 + 白名单提议）与 `renderer`（叙事渲染），判定核心不动。
+1. 按 `docs/llm-action-plan-protocol.md` 实现 PlayerPerception 构建器、LLMClient、Mock/Replay 与静态 CapabilityRouter，先从 `custom` 自由方案打通“计划—验证—一次重规划—报价—提交—导演反应”；现有规则模式保留为测试与降级路径。
 2. 实现 `/api/session`、`/api/action/quote`、`/api/action/resolve`、`/api/feedback`（包一层 `GameSession`）。
 3. 做最简 Web UI（`web/`）。
 4. 写 LLM 玩家代理，自动跑 20-50 局（阶段 4.5）。
