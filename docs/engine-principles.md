@@ -55,6 +55,8 @@
 | 无匹配的“使用/潜入”仍扣时推进世界 | C（动作原子性） | `requires_storylet_match`；报价前验证，失败不扣时、不计回合、不推进 world step |
 | 参数不足的错误被普通失败文案吞掉 | C（反馈协议） | Session 在计回合前校验；renderer 显示 errors；日志记录 errors |
 | 报价只写通用 patch，漏掉确定性事件效果 | C（报价约束） | 在私有副本预演完整确定性回合，分开展示固定代价和预计影响 |
+| 全量预演直接上报价卡，执行前剧透结局与暗格 | C（感知协议） | 感知墙（`perception.py` + 内容 `perception` 块）：报价卡只披露玩家已可感知的公开状态变化，全量预演仅供约束力校验与日志 |
+| 报价提议规则、风险阈值、状态栏标签硬编码悬疑词汇 | C（守则 #4 违例） | `fallback_proposal` / `quote_warnings` / `perception` 全部下放到故事 YAML，引擎只认识形状不认识词汇 |
 | 侧门直通档案室缺空间铺垫 | B（内容） | 档案室门口 entry_text 补一句窄门描写，加 `service_door` 对象 |
 | 玩家全程不敢用"观察"：目标词表不透明 | B + C | 对象显示名成为协议字段（`id: 标签` 映射）；CLI 裸观察给提示不扣时间 |
 | 噪音值无上限反复堆叠 | B（内容，待收口） | 白名单不约束作者事件卡是设计使然；应在内容里限制可重复卡 |
@@ -67,8 +69,14 @@
 
 ## 5. 阶段 3 接入 LLM 时的边界检查清单
 
-- LLM 只承担两件事：**理解**（自然语言 → 意图 + 对象 ID + 白名单 patch 提议 + 输入分类）和**渲染**（判定结果 → 叙事文本）。
-- 判定核心（resolver / conditions / effects / limits）接口冻结，LLM 不参与成败判定。
+已落地的两道结构性门（2026-07-12）：
+
+- **感知墙**（`server/engine/perception.py`）：`PlayerPerception` 是 LLM 理解层的唯一输入，报价卡与状态栏的唯一披露依据。不在感知里的事实，结构上进不了 prompt 和 UI。
+- **静态能力路由器**（`server/engine/capabilities.py`）：ActionPlan 只有经 `validate_plan` 产出的执行载荷才能到达 resolver；soft 提议过白名单裁剪，canon/mechanical 提议剥离，无效计划不扣时、不计回合。v0.1 承兑范围见 `docs/llm-action-plan-protocol.md` 10.1。
+
+其余边界不变：
+
+- LLM 只承担理解、规划与渲染，判定核心（resolver / conditions / effects / limits / world）接口冻结，LLM 不参与成败判定。
 - 渲染 prompt 必须约束：**只能陈述状态与事实清单中存在的东西**，不得发明空间结构、物品或角色行为（侧门教训的反面）。
 - 理解层接不住时，沿用阶段 2 的公平感协议：显式告知玩家哪里没接住，而不是猜一个执行。
 - 报价的约束力、重报价上限、白名单裁剪在 LLM 路径上原样生效——这套公平感机制本来就是为 LLM 的不确定性准备的。

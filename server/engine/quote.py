@@ -12,22 +12,13 @@ import copy
 import uuid
 from typing import Any
 
+from .conditions import check_condition_block
 from .content import Story
 from .effects import TemporaryEffects
 from .limits import clamp_generic_patch
-from .state import get_value
+from .perception import filter_changes_for_player
 
 MAX_REQUOTES_PER_TURN = 3
-
-# Which soft state a bare intent nudges when no storylet catches the action.
-# NPC-targeted intents pick the first NPC among the chosen objects.
-NPC_PROPOSALS = {
-    "negotiate": ("trust", 1),
-    "threaten": ("suspicion", 1),
-}
-SCENE_PROPOSALS = {
-    "create_distraction": {"scene.noise_level": 1},
-}
 
 RISK_TEXT = {
     "low": "低风险：最多消耗时间。",
@@ -38,24 +29,32 @@ RISK_TEXT = {
 
 
 def default_proposal(story: Story, state: dict[str, Any], intent_id: str, objects: list[str]) -> dict[str, Any]:
-    npc_rule = NPC_PROPOSALS.get(intent_id)
-    if npc_rule:
-        key, step = npc_rule
+    """Fallback soft-state proposal declared by the story, not the engine.
+
+    Content declares e.g. ``fallback_proposal: {npc_state: {key: trust,
+    step: 1}}`` (applies to the first character among the targets) or a
+    literal ``state_patch``.  The engine knows the shapes, never the story's
+    vocabulary; the stage-3 LLM replaces this entirely.
+    """
+    fallback = story.intent(intent_id).get("fallback_proposal") or {}
+    npc_rule = fallback.get("npc_state")
+    if isinstance(npc_rule, dict) and npc_rule.get("key"):
         for obj in objects:
             if obj in story.characters:
-                return {f"{obj}.{key}": step}
+                return {f"{obj}.{npc_rule['key']}": npc_rule.get("step", 1)}
         return {}
-    return dict(SCENE_PROPOSALS.get(intent_id, {}))
+    patch = fallback.get("state_patch")
+    return dict(patch) if isinstance(patch, dict) else {}
 
 
 def hazard_notes(story: Story, state: dict[str, Any]) -> list[str]:
+    """Story-declared quote warnings whose conditions currently hold."""
     notes = []
-    if (get_value(state, "scene.fire_risk") or 0) >= 1:
-        notes.append("火势风险已存在，再生事端可能失控。")
-    for char_id in story.characters:
-        suspicion = get_value(state, f"{char_id}.suspicion")
-        if isinstance(suspicion, (int, float)) and suspicion >= 4:
-            notes.append(f"{story.character_name(char_id)}已经高度怀疑你。")
+    for warning in story.data.get("quote_warnings") or []:
+        if not isinstance(warning, dict) or not warning.get("text"):
+            continue
+        if check_condition_block(state, warning.get("when") or {}):
+            notes.append(str(warning["text"]))
     return notes
 
 
@@ -81,7 +80,8 @@ def build_quote(
 
     proposal = default_proposal(story, state, intent_id, objects)
     accepted, clamp_notes = clamp_generic_patch(proposal, state, story.resolution_limits)
-    if intent_id in NPC_PROPOSALS and not any(obj in story.characters for obj in objects):
+    npc_targeted = isinstance((intent.get("fallback_proposal") or {}).get("npc_state"), dict)
+    if npc_targeted and not any(obj in story.characters for obj in objects):
         clamp_notes.append("未指定人物对象，这次行动难以改变任何人的态度；输入 who 查看在场人物。")
 
     understanding = f"你打算以「{label}」的方式行动"
@@ -128,6 +128,13 @@ def build_quote(
         for path in path_order
         if path not in costs and by_path[path][0] != by_path[path][1]
     ]
+    # Disclosure wall: the player-facing card may only state consequences on
+    # state the player can already perceive (story `perception` block).
+    # Everything else — reveals, acquisitions, movements, endings — stays a
+    # full preview for binding enforcement and logs, never for the card.
+    # The filter reads the *pre-action* state on purpose: a quote must not
+    # become an oracle for what is about to be discovered.
+    disclosed_changes = filter_changes_for_player(story, state, expected_changes)
 
     return {
         "quote_id": uuid.uuid4().hex[:12],
@@ -139,6 +146,8 @@ def build_quote(
         "benefits": [intent.get("description", "")],
         "risks": risks,
         "costs": costs,
+        "disclosed_changes": disclosed_changes,
+        # Internal preview (binding enforcement + logs); never rendered.
         "expected_changes": expected_changes,
         "expected_storylets": list(preview_result.fired),
         "expected_clue_count": len(preview_result.new_clues),

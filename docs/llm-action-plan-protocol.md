@@ -250,7 +250,7 @@ CommittedOutcome 记录实际结果：
 ```text
 custom player_text
 → ActionPlan
-→ CapabilityRouter
+→ CapabilityRouter（server/engine/capabilities.py）
 → ValidationResult
 → 报价与确认
 → 适配到现有 resolver/事务
@@ -258,6 +258,22 @@ custom player_text
 ```
 
 `requires_storylet_match`暂时继续保护无 LLM 的严格结构化动作；创造性 LLM 路径不以 storylet 是否预写作为唯一执行条件。
+
+### 10.1 v0.1 引擎承兑范围
+
+协议表达能力大于当前引擎，写 prompt 时以本表为准，不要教 LLM 使用引擎不认的功能：
+
+| 协议特性 | v0.1 引擎行为 |
+|---|---|
+| `steps`（多步计划） | 只接受**恰好一个** `intent.*` 步骤；多步返回 `plan.single_intent_step_required`（retryable）。一个计划 = 一个回合 = 一份意图代价，按步计价待真实 trace 后再定 |
+| `capability` 词表 | 仅 `intent`（由内容意图派生，含 `intent.move`/`intent.use`）；工具列表来自 `PlayerPerception.capability_tools` |
+| `proposed_changes` + `SOFT_STATE` | 经 `resolution_limits` 裁剪后并入兜底 patch；`SET`/`INCREMENT` 支持 |
+| `proposed_changes` + `PRESENTATION` | 叙事层内容，不进状态，返回 adjustment |
+| `proposed_changes` + `MECHANICAL` / `CANON` | 一律剥离（adjustment）：机械变化由引擎从步骤推导，canon 只能由作者事件卡产生 |
+| `ChangeOperation.APPEND` / `REMOVE` | 不支持，adjustment 忽略 |
+| `StateChangeProposal.duration_turns` | 不支持，按永久变化处理并附 adjustment |
+| `perception_revision` 过期 | `plan.stale_perception` 错误（retryable），必须基于最新感知重规划 |
+| `CommittedChange.authority` | 由引擎按路径推导：`positions.*`/`item_locations.*` → mechanical，白名单路径 → soft_state，其余 → canon |
 
 ## 11. Trace 最低要求
 

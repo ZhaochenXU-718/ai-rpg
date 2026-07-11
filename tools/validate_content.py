@@ -511,6 +511,31 @@ def validate_intents(intents: dict[str, Any], report: ValidationReport) -> None:
             report.error(
                 f"intents.{intent_id}.engine_action '{engine_action}' is not supported."
             )
+        fallback = intent.get("fallback_proposal")
+        if fallback is not None:
+            if not isinstance(fallback, dict) or not (
+                set(fallback) <= {"npc_state", "state_patch"}
+            ):
+                report.error(
+                    f"intents.{intent_id}.fallback_proposal must be a mapping "
+                    "with 'npc_state' and/or 'state_patch'."
+                )
+            else:
+                npc_rule = fallback.get("npc_state")
+                if npc_rule is not None and (
+                    not isinstance(npc_rule, dict) or not npc_rule.get("key")
+                ):
+                    report.error(
+                        f"intents.{intent_id}.fallback_proposal.npc_state needs a 'key'."
+                    )
+                patch = fallback.get("state_patch")
+                if patch is not None and not isinstance(patch, dict):
+                    report.error(
+                        f"intents.{intent_id}.fallback_proposal.state_patch must be a mapping."
+                    )
+        narrative = intent.get("fallback_narrative")
+        if narrative is not None and not isinstance(narrative, str):
+            report.error(f"intents.{intent_id}.fallback_narrative must be a string.")
         for field in ("min_objects", "max_objects"):
             value = intent.get(field)
             if value is not None and (
@@ -1024,6 +1049,60 @@ def validate_storylets(
             )
 
 
+def validate_perception_block(
+    data: dict[str, Any],
+    known_paths: set[str],
+    character_ids: set[str],
+    report: ValidationReport,
+) -> None:
+    """Validate the story-declared public-state wall and quote warnings."""
+    perception = data.get("perception")
+    if perception is not None:
+        if not isinstance(perception, dict):
+            report.error("perception must be a mapping.")
+        else:
+            allowed = {"world_state", "scene_state", "character_state"}
+            for group, entries in perception.items():
+                context = f"perception.{group}"
+                if group not in allowed:
+                    report.error(f"{context}: unknown group (allowed: {sorted(allowed)}).")
+                    continue
+                if not isinstance(entries, dict):
+                    report.error(f"{context} must be a mapping of state key to label.")
+                    continue
+                for key, label in entries.items():
+                    if not isinstance(label, str) or not label:
+                        report.error(f"{context}.{key}: label must be a non-empty string.")
+                    if group == "world_state":
+                        validate_state_path(f"world.{key}", known_paths, character_ids, report, context)
+                    elif group == "scene_state":
+                        validate_state_path(f"scene.{key}", known_paths, character_ids, report, context)
+    elif data.get("schema_version") == 2:
+        report.warn(
+            "perception block is missing: the status bar and quote card will "
+            "disclose nothing beyond narration."
+        )
+
+    warnings_block = data.get("quote_warnings")
+    if warnings_block is None:
+        return
+    if not isinstance(warnings_block, list):
+        report.error("quote_warnings must be a list.")
+        return
+    for index, warning in enumerate(warnings_block):
+        context = f"quote_warnings[{index}]"
+        if not isinstance(warning, dict):
+            report.error(f"{context} must be a mapping.")
+            continue
+        if not isinstance(warning.get("text"), str) or not warning.get("text"):
+            report.error(f"{context}.text must be a non-empty string.")
+        when = warning.get("when")
+        if not isinstance(when, dict) or not when:
+            report.error(f"{context}.when must be a non-empty condition mapping.")
+            continue
+        validate_condition_block(when, known_paths, character_ids, report, f"{context}.when")
+
+
 def validate_resolution_limits(
     data: dict[str, Any],
     known_paths: set[str],
@@ -1254,6 +1333,7 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
     )
     validate_endings(endings, known_paths, set(characters), report)
     validate_resolution_limits(data, known_paths, set(characters), report)
+    validate_perception_block(data, known_paths, set(characters), report)
     validate_content_graph(data, scenes, storylets, report)
 
     return report

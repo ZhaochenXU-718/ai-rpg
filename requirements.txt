@@ -1,3 +1,6 @@
 # AIRPG MVP 依赖。真实 LLM provider SDK 在选型后按需增加。
 pyyaml>=6.0
 pydantic>=2.0,<3
+
+# 开发与测试
+pytest>=8.0

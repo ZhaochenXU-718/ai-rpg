@@ -222,12 +222,41 @@ characters:
       trust: 0
       drunk_level: 3
 
+# 玩家可感知的公开状态及其展示标签。
+# 这是感知墙的内容侧声明：报价卡"预计影响"、状态栏、LLM 感知快照
+# 只允许披露这里列出的键；未列出的状态（flags、他人位置、结局条件）
+# 对玩家和理解 LLM 一律不可见。
+perception:
+  world_state:
+    time_left: "剩余时间"
+  scene_state:
+    fire_risk: "火势风险"
+    noise_level: "动静"
+    crowd_attention: "人群注意力"
+  character_state:
+    suspicion: "疑"
+    alertness: "警"
+    trust: "信"
+
+# 报价卡上的世界内风险提示，条件语法与 storylet trigger 一致。
+quote_warnings:
+  - when:
+      state_gte: { scene.fire_risk: 1 }
+    text: "火势风险已存在，再生事端可能失控。"
+  - when:
+      state_gte: { butler.suspicion: 4 }
+    text: "洛维尔管家已经高度怀疑你。"
+  - when:
+      state_gte: { guard.alertness: 4 }
+    text: "布兰特守卫的警觉已经绷到极限。"
+
 intents:
   observe:
     label: "观察"
     description: "调查人物、物品、环境或异常细节。"
     base_risk: low
     quote_required: false
+    fallback_narrative: "你看得很仔细，暂时没有发现新的异常。"
     typical_cost:
       time_left: -1
   negotiate:
@@ -235,6 +264,9 @@ intents:
     description: "说服、套话、安抚、交易或建立信任。"
     base_risk: medium
     quote_required: true
+    fallback_proposal:
+      npc_state: { key: trust, step: 1 }
+    fallback_narrative: "对话在试探中结束。没有立刻的突破，但对方记住了你的态度。"
     typical_cost:
       time_left: -1
   sneak:
@@ -243,6 +275,7 @@ intents:
     base_risk: high
     quote_required: true
     requires_storylet_match: true
+    fallback_narrative: "你悄悄换了位置，没有引起注意，也还没找到突破口。"
     typical_cost:
       time_left: -1
   create_distraction:
@@ -250,6 +283,9 @@ intents:
     description: "转移注意力、制造声响、引发争执或局部事故。"
     base_risk: medium
     quote_required: true
+    fallback_proposal:
+      state_patch: { scene.noise_level: 1 }
+    fallback_narrative: "动静起来了，但还没有形成真正的机会。"
     typical_cost:
       time_left: -1
   threaten:
@@ -257,6 +293,9 @@ intents:
     description: "施压、摊牌、用证据或风险迫使对方退让。"
     base_risk: high
     quote_required: true
+    fallback_proposal:
+      npc_state: { key: suspicion, step: 1 }
+    fallback_narrative: "你的施压没有得到想要的反应。"
     typical_cost:
       time_left: -1
   custom:
@@ -264,6 +303,7 @@ intents:
     description: "玩家提出非预设行动，由系统映射为最接近的结构化 action。"
     base_risk: variable
     quote_required: true
+    fallback_narrative: "你的尝试产生了一些影响，但没有引出新的事件。"
     typical_cost:
       time_left: -1
   use:

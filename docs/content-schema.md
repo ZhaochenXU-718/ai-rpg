@@ -115,6 +115,8 @@ authoring_notes:
 | `design_goal` | string | 本故事用于验证什么体验 |
 | `target_duration_minutes` | string / number | 目标体验时长 |
 | `resolution_limits` | map | 兜底判定允许改写的状态白名单与边界，见第 11 节 |
+| `perception` | map | 玩家可感知的公开状态键与展示标签（感知墙），见 6.1 |
+| `quote_warnings` | list | 报价卡上的世界内风险提示（条件 + 文案），见 6.1 |
 | `world_rules` | list | 每个 world step 执行的通用实体移动规则，缺省为空 |
 | `items` | map | 可携带物品定义；使用时必须同时提供 `initial_state.item_locations` |
 | `genre_system` | map | 类型专属扩展 |
@@ -330,6 +332,8 @@ intents:
 - `min_objects` / `max_objects`: 行动需要的目标数量边界
 - `requires_storylet_match`: `true` 时，本次行动必须能命中一张显式声明该意图的 action storylet；否则在报价、扣时和 world step 前拒绝
 - `engine_action`: 通用内建动作；当前仅支持 `move`
+- `fallback_proposal`: 无 LLM 模式下，行动未命中事件卡时的默认软状态提议。`npc_state: {key, step}` 作用于目标中的第一个人物；或直接给 `state_patch`。提议仍要过 `resolution_limits` 裁剪。阶段 3 由 LLM 提议替代
+- `fallback_narrative`: 未命中事件卡但有状态变化时的反馈文案；不填时引擎用无类型色彩的通用句
 
 规则：
 
@@ -343,8 +347,41 @@ intents:
 - `true`：必须先返回报价卡（理解、收益、风险、代价），玩家确认后才执行。
 - 缺省按 `base_risk` 推导：`low` 为 `false`，其余为 `true`。
 - 报价对判定有约束力：执行结果的恶化程度不得超出报价列出的风险与代价范围。
-- 规则引擎会在私有状态副本上预演确定性结果；报价分别展示固定代价和 storylet/world step 造成的预计影响，预演不得修改真实状态。
+- 规则引擎会在私有状态副本上预演确定性结果；预演不得修改真实状态。
+- **报价披露受感知墙约束（见 6.1）**：预演的全量结果只用于约束力校验和日志；报价卡上只允许出现玩家已可感知的公开状态变化。揭示、获得物品、位置变化和结局一律不上卡——报价是风险估计，不是预言机。
 - 重新报价免费且不消耗 `time_left`，但同一回合最多 3 次，次数计入日志用于公平感分析。
+
+### 6.1 `perception`：感知墙
+
+`perception` 声明玩家（以及替玩家理解输入的 LLM）可以看到哪些状态键，及其展示标签。状态栏、报价卡"预计影响"、`PlayerPerception` 快照都以它为唯一依据；未声明的状态（flags、他人位置、结局条件、未发现的物品）在结构上不可见。
+
+```yaml
+perception:
+  world_state:
+    time_left: "剩余时间"
+  scene_state:
+    fire_risk: "火势风险"
+  character_state:        # 只对与玩家同一位置的角色生效
+    suspicion: "疑"
+    trust: "信"
+```
+
+规则：
+
+- 引擎只认识 `world_state` / `scene_state` / `character_state` 三个组，键名和标签全部由故事声明——引擎代码不包含任何故事词汇（如 trust、fire_risk）。
+- `character_state` 只披露**在场**角色的对应键；角色离开玩家所在节点后即不可见。
+- schema v2 故事缺少 `perception` 时校验器给警告：状态栏和报价卡将没有任何数值可显示。
+
+`quote_warnings` 是报价卡上的世界内风险提示，`when` 使用第 9 节条件语法：
+
+```yaml
+quote_warnings:
+  - when:
+      state_gte: { butler.suspicion: 4 }
+    text: "洛维尔管家已经高度怀疑你。"
+```
+
+这是确定性引擎下"风险感"的合法来源：告诉玩家局势的紧张程度（他已经在怀疑你），而不是预告行动的精确后果。
 
 ## 7. `scenes`
 

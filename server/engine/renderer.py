@@ -39,18 +39,22 @@ def render_intro(story: Story, state: dict[str, Any]) -> str:
 
 
 def render_status(story: Story, state: dict[str, Any]) -> str:
-    world = state["world"]
-    lines = [
-        f"场景：{story.scene(current_scene_id(state)).get('name', current_scene_id(state))}"
-        f" ｜ 剩余时间：{world.get('time_left')}",
-        f"当前目标：{current_goal(story, state)}",
-    ]
+    # What may be shown and how it is labelled comes from the story's
+    # `perception` block; the engine carries no genre vocabulary here.
+    from .perception import perception_config
+
+    config = perception_config(story)
+    header = f"场景：{story.scene(current_scene_id(state)).get('name', current_scene_id(state))}"
+    for key, label in config["world_state"].items():
+        value = get_value(state, f"world.{key}")
+        if value is not None:
+            header += f" ｜ {label}：{value}"
+    lines = [header, f"当前目标：{current_goal(story, state)}"]
     # Physical presence is derived from the authoritative world positions.
-    scene_chars = story.characters_at(state)
     watches = []
-    for char_id in scene_chars:
+    for char_id in story.characters_at(state):
         parts = []
-        for key, tag in (("suspicion", "疑"), ("alertness", "警"), ("trust", "信")):
+        for key, tag in config["character_state"].items():
             value = get_value(state, f"{char_id}.{key}")
             if value is not None:
                 parts.append(f"{tag}{value}")
@@ -135,17 +139,16 @@ def render_quote(quote: dict[str, Any]) -> str:
         costs = "，".join(f"{path} {value:+}" if isinstance(value, (int, float)) else f"{path}→{value}"
                           for path, value in quote["costs"].items())
         lines.append(f"预计代价：{costs}")
-    expected_changes = quote.get("expected_changes") or []
-    if expected_changes:
+    # Disclosure wall (perception.py): only consequences on already-visible
+    # public state reach the card. The full preview stays internal — a quote
+    # is a risk estimate, not an oracle of reveals and endings.
+    disclosed = quote.get("disclosed_changes") or []
+    if disclosed:
         effects = "，".join(
             f"{path} {previous}→{new}"
-            for path, previous, new in expected_changes
+            for path, previous, new in disclosed
         )
         lines.append(f"预计影响：{effects}")
-    if quote.get("expected_clue_count"):
-        lines.append(f"预计收获：{quote['expected_clue_count']} 条新线索")
-    if quote.get("expected_ending"):
-        lines.append(f"预计将进入结局：{quote['expected_ending']}")
     for note in quote["notes"]:
         lines.append(f"（{note}）")
     if not quote["can_execute"]:
@@ -153,16 +156,17 @@ def render_quote(quote: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-# Engine-default fallback lines for turns where no storylet fired.
-# Generic on purpose; stage 3 replaces this whole layer with LLM rendering.
-INTENT_FALLBACK = {
-    "negotiate": "对话在试探中结束。没有立刻的突破，但对方记住了你的态度。",
-    "observe": "你看得很仔细，暂时没有发现新的异常。",
-    "sneak": "你悄悄换了位置，没有引起注意，也还没找到突破口。",
-    "create_distraction": "动静起来了，但还没有形成真正的机会。",
-    "threaten": "你的施压没有得到想要的反应。",
-    "custom": "你的尝试产生了一些影响，但没有引出新的事件。",
-}
+# Engine-default fallback lines for turns where no storylet fired. Stories
+# override per intent via `intents.<id>.fallback_narrative`; these generic
+# lines carry no genre vocabulary. Stage 3 replaces this layer with LLM
+# rendering.
+FALLBACK_WITH_EFFECT = "行动产生了影响，但没有引出新的事件。"
+FALLBACK_NO_EFFECT = "这一步没有改变任何事，但时间仍在流逝。"
+
+
+def intent_fallback_line(story: Story, intent_id: str) -> str:
+    line = story.intent(intent_id).get("fallback_narrative")
+    return str(line) if line else FALLBACK_WITH_EFFECT
 
 
 def render_turn(story: Story, result: TurnResult) -> str:
@@ -189,9 +193,9 @@ def render_turn(story: Story, result: TurnResult) -> str:
     if result.narrative_hints:
         lines.extend(result.narrative_hints)
     elif meaningful:
-        lines.append(INTENT_FALLBACK.get(result.intent, "行动产生了影响，但没有引出新的事件。"))
+        lines.append(intent_fallback_line(story, result.intent))
     else:
-        lines.append("这一步没有掀起波澜，但庄园的钟摆没有停。")
+        lines.append(FALLBACK_NO_EFFECT)
         lines.append("（提示：把意图和具体对象组合起来，例如 `observe family_portrait`；输入 objects 查看当前场景对象。）")
     for clue in result.new_clues:
         lines.append(f"◇ 新线索：{clue}")

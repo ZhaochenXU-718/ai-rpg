@@ -11,14 +11,19 @@ import time
 import uuid
 from typing import Any
 
+from .capabilities import build_committed_outcome, validate_plan
 from .content import Story
 from .director import current_goal, goal_achieved
 from .effects import TemporaryEffects
+from .llm_protocol import ActionPlan, CommittedOutcome, ValidationResult
 from .logger import TurnLogger
 from .limits import clamp_generic_patch
+from .perception import build_player_perception
 from .quote import MAX_REQUOTES_PER_TURN, build_quote, default_proposal
 from .resolver import TurnResult, run_turn, validate_action
 from .state import build_initial_state
+
+RECENT_EVENT_WINDOW = 5
 
 
 class SessionError(Exception):
@@ -34,14 +39,88 @@ class GameSession:
         self.consumed: set[str] = set()
         self.turn_no = 0
         self.ending: str | None = None
+        # Committed-turn counter; ActionPlans must be validated against it.
+        self.state_revision = 0
+        self._recent_events: list[str] = []
         self._requotes = 0
         self._pending_quotes: dict[str, dict[str, Any]] = {}
+        self._plan_payloads: dict[str, dict[str, Any]] = {}
         self._logger = TurnLogger(log_dir, self.session_id)
         self._logger.log({"event": "session_start", "story": story.id, "session": self.session_id})
 
     @property
     def is_over(self) -> bool:
         return self.ending is not None
+
+    def perception(self):
+        """The player-visible snapshot (also the LLM understanding input)."""
+        return build_player_perception(
+            self.story,
+            self.state,
+            session_id=self.session_id,
+            turn_no=self.turn_no,
+            state_revision=self.state_revision,
+            recent_events=tuple(self._recent_events),
+        )
+
+    def validate_plan(self, plan: ActionPlan) -> ValidationResult:
+        """Adjudicate an ActionPlan without touching live state."""
+        validation, payload = validate_plan(
+            self.story,
+            self.state,
+            self.consumed,
+            plan,
+            state_revision=self.state_revision,
+        )
+        if validation.can_execute:
+            self._plan_payloads[validation.validation_id] = payload
+        self._logger.log({
+            "event": "plan_validated",
+            "turn": self.turn_no + 1,
+            "plan_id": plan.plan_id,
+            "validation_id": validation.validation_id,
+            "can_execute": validation.can_execute,
+            "can_replan": validation.can_replan,
+            "issues": [issue.to_dict() for issue in validation.issues],
+        })
+        return validation
+
+    def resolve_plan(self, plan: ActionPlan, validation: ValidationResult) -> CommittedOutcome:
+        """Commit a validated plan through the deterministic resolver."""
+        if self.is_over:
+            raise SessionError("session is over")
+        if not validation.can_execute:
+            raise SessionError("plan was not validated as executable")
+        if validation.state_revision != self.state_revision:
+            raise SessionError(
+                f"validation is stale: revision {validation.state_revision} != {self.state_revision}"
+            )
+        payload = self._plan_payloads.get(validation.validation_id)
+        if payload is None:
+            raise SessionError(f"unknown validation '{validation.validation_id}'")
+        revision_before = self.state_revision
+        result = self.resolve(
+            intent_id=payload["intent_id"],
+            objects=payload["objects"],
+            generic_patch=payload["generic_patch"],
+            _allow_quoted=True,
+        )
+        outcome = build_committed_outcome(
+            self.story,
+            plan,
+            validation,
+            result,
+            revision_before=revision_before,
+            revision_after=self.state_revision,
+        )
+        self._logger.log({
+            "event": "plan_committed",
+            "turn": result.turn_no,
+            "plan_id": plan.plan_id,
+            "outcome_id": outcome.outcome_id,
+            "committed_paths": [change.path for change in outcome.committed_changes],
+        })
+        return outcome
 
     def quote(self, intent_id: str, objects: list[str] | None = None, player_text: str = "") -> dict[str, Any]:
         if self.is_over:
@@ -105,6 +184,7 @@ class GameSession:
         objects: list[str] | None = None,
         quote_id: str | None = None,
         generic_patch: dict[str, Any] | None = None,
+        _allow_quoted: bool = False,
     ) -> TurnResult:
         if self.is_over:
             raise SessionError("session is over")
@@ -119,7 +199,7 @@ class GameSession:
             generic_patch = quote["proposal"]
         elif intent_id is None:
             raise SessionError("resolve needs an intent or a quote_id")
-        elif self.story.quote_required(intent_id):
+        elif not _allow_quoted and self.story.quote_required(intent_id):
             raise SessionError(f"intent '{intent_id}' requires a quote before resolving")
 
         errors = validate_action(
@@ -154,8 +234,12 @@ class GameSession:
             generic_patch,
         )
         self.ending = result.ending
+        self.state_revision += 1
+        self._recent_events.extend(result.narrative_hints)
+        del self._recent_events[:-RECENT_EVENT_WINDOW]
         self._requotes = 0
         self._pending_quotes.clear()
+        self._plan_payloads.clear()
         self._logger.log({
             "event": "resolve",
             "turn": self.turn_no,
