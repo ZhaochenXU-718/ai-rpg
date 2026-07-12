@@ -51,7 +51,7 @@ class TurnResult:
     changes: list[tuple[str, Any, Any]] = field(default_factory=list)
     expired: list[tuple[str, Any]] = field(default_factory=list)
     narrative_hints: list[str] = field(default_factory=list)
-    new_clues: list[str] = field(default_factory=list)
+    new_facts: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     world_rules: list[str] = field(default_factory=list)
@@ -272,7 +272,7 @@ def run_turn(
         player_moved = True
 
     # 3. ordered action-storylet pass, cascading, max one player move per turn
-    clue_count = len(state["clues"])
+    fact_count = len(state["facts"])
     player_moved = _run_storylet_phase(
         story, state, temporaries, consumed, turn_no, "action",
         intent_id, objects, result, player_moved,
@@ -291,7 +291,7 @@ def run_turn(
         story, state, temporaries, consumed, turn_no, "after_world",
         intent_id, objects, result, player_moved,
     )
-    result.new_clues = state["clues"][clue_count:]
+    result.new_facts = state["facts"][fact_count:]
 
     # 5. temporary effect expiry
     result.expired = temporaries.expire(state, turn_no)

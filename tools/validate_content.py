@@ -929,8 +929,13 @@ def validate_effect(
                     report,
                     f"{context}.move_items.{item_id}",
                 )
-    if "add_clues" in effect and not isinstance(effect["add_clues"], list):
-        report.error(f"{context}.add_clues must be a list.")
+    if "add_clues" in effect:
+        report.error(
+            f"{context}.add_clues was renamed to add_facts "
+            "(the display label comes from perception.facts_label)."
+        )
+    if "add_facts" in effect and not isinstance(effect["add_facts"], list):
+        report.error(f"{context}.add_facts must be a list.")
     if "temporary" in effect:
         temporary = effect["temporary"]
         if not isinstance(temporary, dict):
@@ -1064,6 +1069,10 @@ def validate_perception_block(
             allowed = {"world_state", "scene_state", "character_state"}
             for group, entries in perception.items():
                 context = f"perception.{group}"
+                if group == "facts_label":
+                    if not isinstance(entries, str) or not entries:
+                        report.error(f"{context} must be a non-empty string.")
+                    continue
                 if group not in allowed:
                     report.error(f"{context}: unknown group (allowed: {sorted(allowed)}).")
                     continue

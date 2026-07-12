@@ -46,7 +46,7 @@ SYSTEM_PROMPT = """\
 硬性规则：
 1. 只能引用【感知快照】中出现的实体 ID、意图和工具。玩家看不到的东西，你也不知道。
 2. steps 恰好一个元素：{"capability": "intent", "action": "<意图ID>", "arguments": {"objects": ["<实体ID>", ...]}, "purpose": "<这一步的作用>"}。
-3. 意图从 available_intents 里选最贴近玩家做法的一个，各意图的含义见 capability_tools 的描述（例如与人交谈、说服、打听消息应选描述为"交涉"的意图）。"custom" 是最后手段，只有当所有具体意图都无法承载玩家的做法时才使用。
+3. 意图从 available_intents 里选：每个意图的适用范围以 capability_tools 中该工具的描述为准，只要有某个具体意图的描述覆盖了玩家的做法，就必须选它。"custom" 是最后手段，只有当所有具体意图的描述都无法承载玩家的做法时才使用。
 4. proposed_changes 只能提议【可提议状态空间】patchable 里列出的路径：authority 一律 "soft_state"；数字用 operation "increment" 且幅度不超过该路径的 max_step，枚举值用 "set"。提议应是方案的合理直接后果；不确定就留空数组。
 5. 以下情况输出 needs_clarification=true、steps=[]，并在 clarification_question 里用世界内的口吻向玩家解释或提问：
    - 方案违反【世界边界】（例如凭空造物、离开被封锁的区域）——解释为什么行不通；

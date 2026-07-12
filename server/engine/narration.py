@@ -57,6 +57,7 @@ def build_turn_facts(
     """Assemble the renderer's whole world: committed, player-visible facts."""
     scene_after = story.scene(result.scene_after)
     intent = story.intent(result.intent)
+    facts_label = perception_config(story)["facts_label"]
     facts: dict[str, Any] = {
         "玩家行动": player_text or f"以「{intent.get('label', result.intent)}」方式行动",
         "行动目标": [
@@ -64,7 +65,7 @@ def build_turn_facts(
         ],
         "判定档位": result.result_tier,
         "作者叙事提示": list(result.narrative_hints),
-        "新线索": list(result.new_clues),
+        f"新{facts_label}": list(result.new_facts),
         "当前场景": scene_after.get("name", result.scene_after),
         "当前目标": current_goal(story, state),
         "可见状态变化": [

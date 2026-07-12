@@ -348,6 +348,6 @@ def build_committed_outcome(
         committed_changes=committed,
         fired_storylets=tuple(result.fired),
         world_events=tuple(result.world_rules),
-        new_facts=tuple(result.new_clues),
+        new_facts=tuple(result.new_facts),
         ending=result.ending,
     )

@@ -31,13 +31,17 @@ GROUP_KINDS = {
 }
 
 
-def perception_config(story: Story) -> dict[str, dict[str, str]]:
+def perception_config(story: Story) -> dict[str, Any]:
     """Story-declared public state keys with display labels."""
     config = story.data.get("perception") or {}
     return {
         "character_state": dict(config.get("character_state") or {}),
         "world_state": dict(config.get("world_state") or {}),
         "scene_state": dict(config.get("scene_state") or {}),
+        # What the player's accumulated knowledge log is called in this
+        # story ("线索" in a mystery, "回忆" in a romance, ...). The engine
+        # concept is just "facts"; the word belongs to the story.
+        "facts_label": str(config.get("facts_label") or "发现"),
     }
 
 
@@ -200,7 +204,7 @@ def build_player_perception(
         current_goal=current_goal(story, state),
         visible_entities=tuple(entities),
         inventory=inventory,
-        known_facts=tuple(dict.fromkeys(str(clue) for clue in state.get("clues") or [])),
+        known_facts=tuple(dict.fromkeys(str(fact) for fact in state.get("facts") or [])),
         available_intents=tuple(suggested_intents(story, state)),
         capability_tools=available_tools(story, state),
         recent_events=tuple(event for event in recent_events if event),

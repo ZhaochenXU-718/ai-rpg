@@ -8,7 +8,7 @@ Each turn: pick an intent (number or id), optionally followed by object ids,
 e.g. `2 heir` or `observe family_portrait`. Medium/high-risk intents show a
 quote card first and ask for confirmation.
 
-Commands: objects / state / clues / help / quit
+Commands: objects / state / facts / help / quit
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ def print_help() -> None:
         "使用物品时同时输入口袋物品和目标，例如 `使用 仆役侧门钥匙 仆役窄门`；\n"
         "移动时选择【出口】中的名称或 ID，例如 `移动 返回仆役走廊`。\n"
         "目标来自【可用对象】、【出口】或【口袋】——中文名或 ID 都可以直接用。\n"
-        "命令：objects 对象面板；inventory 口袋；who 人物介绍；state 状态；clues 线索；help 帮助；quit 退出。"
+        "命令：objects 对象面板；inventory 口袋；who 人物介绍；state 状态；facts 已知记录；help 帮助；quit 退出。"
     )
 
 
@@ -262,9 +262,12 @@ def main() -> int:
 
             print(json.dumps(session.state, ensure_ascii=False, indent=2, default=str))
             continue
-        if line.lower() == "clues":
-            for clue in session.state["clues"] or ["（还没有线索）"]:
-                print(f"◇ {clue}")
+        if line.lower() in ("facts", "clues"):
+            from server.engine.perception import perception_config
+
+            label = perception_config(story)["facts_label"]
+            for fact in session.state["facts"] or [f"（还没有{label}）"]:
+                print(f"◇ {fact}")
             continue
 
         tokens = tokenize_action_line(line)
@@ -327,7 +330,15 @@ def main() -> int:
     if session.ending:
         print()
         print(render_ending(story, session.ending))
-        print(f"（本局回合数：{session.turn_no}，剩余时间：{session.state['world'].get('time_left')}）")
+        from server.engine.perception import perception_config
+
+        closing = [f"本局回合数：{session.turn_no}"]
+        config = perception_config(story)
+        for key, label in config["world_state"].items():
+            value = session.state["world"].get(key)
+            if value is not None:
+                closing.append(f"{label}：{value}")
+        print(f"（{'，'.join(closing)}）")
     return 0
 
 

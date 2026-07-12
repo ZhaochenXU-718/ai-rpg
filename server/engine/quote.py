@@ -171,7 +171,7 @@ def build_quote(
         # Internal preview (binding enforcement + logs); never rendered.
         "expected_changes": expected_changes,
         "expected_storylets": list(preview_result.fired),
-        "expected_clue_count": len(preview_result.new_clues),
+        "expected_fact_count": len(preview_result.new_facts),
         "expected_ending": preview_result.ending,
         "proposal": accepted,
         "notes": clamp_notes,

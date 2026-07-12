@@ -227,6 +227,8 @@ characters:
 # 只允许披露这里列出的键；未列出的状态（flags、他人位置、结局条件）
 # 对玩家和理解 LLM 一律不可见。
 perception:
+  # 玩家知识日志在本故事中的称呼（引擎概念是 facts，词汇属于故事）。
+  facts_label: "线索"
   world_state:
     time_left: "剩余时间"
   scene_state:
@@ -261,7 +263,8 @@ intents:
       time_left: -1
   negotiate:
     label: "交涉"
-    description: "说服、套话、安抚、交易或建立信任。"
+    # 描述是理解 LLM 选择意图的唯一依据：任何"与人说话"类做法都应命中这里。
+    description: "与人交谈、打听消息、说服、套话、安抚、交易或建立信任。"
     base_risk: medium
     quote_required: true
     fallback_proposal:
@@ -602,7 +605,7 @@ storylets:
         side_door_found: true
       move_items:
         maid_note: { type: carried_by, id: player }
-      add_clues:
+      add_facts:
         - "艾拉看见管家在傍晚进入档案室。"
         - "她没看见管家出来时手里拿着什么，但闻到纸灰味。"
         - "便签背面画了一道侧梯的位置，通向仆役走廊。"
@@ -623,7 +626,7 @@ storylets:
     effect:
       set_flags:
         side_door_found: true
-      add_clues:
+      add_facts:
         - "侧梯通向仆役走廊，晚宴期间几乎无人使用。"
     narrative_hint: "玩家注意到侍女每次都从侧梯的阴影里消失，那条路不经过大厅正门。"
 
@@ -769,7 +772,7 @@ storylets:
     effect:
       move_items:
         servant_key: { type: carried_by, id: player }
-      add_clues:
+      add_facts:
         - "这不是档案室正门钥匙，但能打开仆役侧门。"
     narrative_hint: "艾拉从药箱夹层取出小钥匙，避开视线塞进玩家掌心。"
 
@@ -791,7 +794,7 @@ storylets:
         heir.trust: +1
       move_items:
         old_badge: { type: carried_by, id: player }
-      add_clues:
+      add_facts:
         - "旧徽章背面的纹路像是某种暗格钥匙。"
     narrative_hint: "薇拉没有说相信玩家，只把徽章放在桌边，像是遗忘在那里。"
 
@@ -864,7 +867,7 @@ storylets:
         evidence_status: secured
       move_items:
         forgery_evidence: { type: carried_by, id: player }
-      add_clues:
+      add_facts:
         - "旧遗嘱上的火漆和新遗嘱不一致。"
         - "管家的账本记录了销毁档案的报酬。"
     narrative_hint: "旧徽章嵌入柜门凹槽时，暗格发出细小的弹响。"
@@ -887,7 +890,7 @@ storylets:
         cabinet_weakness_found: true
       state_patch:
         butler.suspicion: +1
-      add_clues:
+      add_facts:
         - "暗格锁舌已经老化，细小坚硬的钥匙也许能把它撬开。"
     narrative_hint: "徽章不在手边，但玩家发现暗格锁舌已经松动；仆役钥匙或许能勉强撬开它。"
 
@@ -916,7 +919,7 @@ storylets:
         butler.suspicion: +1
       move_items:
         forgery_evidence: { type: carried_by, id: player }
-      add_clues:
+      add_facts:
         - "变形的钥匙撬开暗格，也在锁舌上留下了明显划痕。"
     narrative_hint: "仆役钥匙在锁缝里弯了一下，暗格终于弹开；声音和划痕也暴露了玩家的行动。"
 

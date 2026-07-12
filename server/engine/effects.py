@@ -96,8 +96,8 @@ def apply_effect(
 ) -> list[tuple[str, Any, Any]]:
     """Apply a full storylet effect; return permanent+temporary change records."""
     changes = apply_mutations(state, effect)
-    for clue in effect.get("add_clues") or []:
-        state["clues"].append(clue)
+    for fact in effect.get("add_facts") or []:
+        state["facts"].append(fact)
     temporary = effect.get("temporary")
     if isinstance(temporary, dict):
         touched = apply_mutations(state, temporary)

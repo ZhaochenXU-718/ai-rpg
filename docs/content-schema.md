@@ -357,6 +357,7 @@ intents:
 
 ```yaml
 perception:
+  facts_label: "线索"       # 玩家知识日志的故事内称呼，缺省为"发现"
   world_state:
     time_left: "剩余时间"
   scene_state:
@@ -369,6 +370,7 @@ perception:
 规则：
 
 - 引擎只认识 `world_state` / `scene_state` / `character_state` 三个组，键名和标签全部由故事声明——引擎代码不包含任何故事词汇（如 trust、fire_risk）。
+- `facts_label` 是 `add_facts` 累积的玩家知识日志的展示称呼：悬疑故事叫"线索"，情感剧可以叫"回忆"。引擎概念只有 facts，词汇属于故事。
 - `character_state` 只披露**在场**角色的对应键；角色离开玩家所在节点后即不可见。
 - schema v2 故事缺少 `perception` 时校验器给警告：状态栏和报价卡将没有任何数值可显示。
 
@@ -617,7 +619,7 @@ storylets:
         maid_warned_player: true
       move_items:
         maid_note: { type: carried_by, id: player }
-      add_clues:
+      add_facts:
         - "艾拉看见管家进入档案室。"
     narrative_hint: "侍女避开管家的视线，把便签塞给玩家。"
 ```
@@ -671,7 +673,7 @@ storylets:
 | `state_patch` | 通用状态变化 |
 | `move_entities` | 原子设置一个或多个实体的位置 |
 | `move_items` | 原子设置一个或多个物品的位置/所有者 |
-| `add_clues` | 添加玩家已知线索 |
+| `add_facts` | 追加玩家知识日志条目（展示称呼由 `perception.facts_label` 声明） |
 | `temporary` | 临时效果块，到期自动回滚，见下 |
 
 `state_patch` 语义：

@@ -62,8 +62,8 @@ def render_status(story: Story, state: dict[str, Any]) -> str:
             watches.append(f"{story.character_name(char_id)}({'/'.join(parts)})")
     if watches:
         lines.append("在场：" + "  ".join(watches))
-    if state["clues"]:
-        lines.append(f"已获线索 {len(state['clues'])} 条（输入 clues 查看）")
+    if state["facts"]:
+        lines.append(f"已获{config['facts_label']} {len(state['facts'])} 条（输入 facts 查看）")
     inventory = story.inventory(state)
     if inventory:
         lines.append("口袋：" + "、".join(story.item_labels().get(item, item) for item in inventory))
@@ -174,7 +174,7 @@ def intent_fallback_line(story: Story, intent_id: str) -> str:
 
 def render_turn(story: Story, result: TurnResult, prose: str | None = None) -> str:
     """Render one committed turn. ``prose`` (LLM narration) replaces the
-    template text when provided; mechanical lines (clues, state changes,
+    template text when provided; mechanical lines (facts, state changes,
     tier) always print — they are the fairness receipt, not flavour."""
     if result.errors:
         return "\n".join(
@@ -195,7 +195,13 @@ def render_turn(story: Story, result: TurnResult, prose: str | None = None) -> s
         for path in path_order
         if by_path[path][0] != by_path[path][1]
     ]
-    meaningful = [c for c in collapsed if c[0] != "world.time_left"]
+    # "Did anything change beyond the action's declared cost?" — the cost
+    # paths come from the intent's typical_cost, not a hardcoded clock key.
+    cost_paths = {
+        str(key) if "." in str(key) else f"world.{key}"
+        for key in (story.intent(result.intent).get("typical_cost") or {})
+    }
+    meaningful = [c for c in collapsed if c[0] not in cost_paths]
     if prose:
         lines.append(prose)
     elif result.narrative_hints:
@@ -205,8 +211,11 @@ def render_turn(story: Story, result: TurnResult, prose: str | None = None) -> s
     else:
         lines.append(FALLBACK_NO_EFFECT)
         lines.append("（提示：把意图和具体对象组合起来，例如 `observe family_portrait`；输入 objects 查看当前场景对象。）")
-    for clue in result.new_clues:
-        lines.append(f"◇ 新线索：{clue}")
+    from .perception import perception_config
+
+    facts_label = perception_config(story)["facts_label"]
+    for fact in result.new_facts:
+        lines.append(f"◇ 新{facts_label}：{fact}")
     interesting = [
         (f"{path} {previous}→{new}" if previous is not None else f"{path} = {new}")
         for path, previous, new in collapsed
