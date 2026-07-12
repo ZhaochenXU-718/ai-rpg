@@ -249,13 +249,17 @@ CommittedOutcome 记录实际结果：
 
 ```text
 custom player_text
+→ PlayerPerception（server/engine/perception.py）
+→ LLMProvider.propose_plan（server/engine/llm.py：Scripted / HeuristicMock / Replay）
 → ActionPlan
 → CapabilityRouter（server/engine/capabilities.py）
-→ ValidationResult
-→ 报价与确认
-→ 适配到现有 resolver/事务
+→ ValidationResult（错误且可重试 → 一次重规划）
+→ 报价与确认（提议即验证载荷，披露过感知墙）
+→ 适配到现有 resolver/事务（server/engine/llm_loop.py + session.resolve_plan）
 → CommittedOutcome
 ```
+
+以上链路已实现并有 trace 落盘（`server/engine/trace.py`，§11 字段），CLI 以 `--llm mock` 默认启用。真实 provider 只需实现 `propose_plan` 并注册进 `PROVIDERS`。
 
 `requires_storylet_match`暂时继续保护无 LLM 的严格结构化动作；创造性 LLM 路径不以 storylet 是否预写作为唯一执行条件。
 

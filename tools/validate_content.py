@@ -1249,6 +1249,30 @@ def validate_content_graph(
                 "and it is not the initial scene."
             )
 
+    # With an LLM understanding layer, `custom` carries every free-text
+    # action. A heavy-effect storylet triggered by custom without any object
+    # constraint fires on unrelated actions ("chat with the heir" walking the
+    # player out of the hall). Require object grounding on such triggers.
+    heavy_keys = ("move_entities", "move_items", "set_world")
+    for storylet in storylets:
+        if not isinstance(storylet, dict):
+            continue
+        trigger = storylet.get("trigger")
+        effect = storylet.get("effect")
+        if not isinstance(trigger, dict) or not isinstance(effect, dict):
+            continue
+        intents = [trigger["intent"]] if "intent" in trigger else list(trigger.get("intent_any") or [])
+        if "custom" not in intents:
+            continue
+        if trigger.get("object_any") or trigger.get("object_all"):
+            continue
+        blocks = [effect] + ([effect["temporary"]] if isinstance(effect.get("temporary"), dict) else [])
+        if any(key in block for block in blocks for key in heavy_keys):
+            report.warn(
+                f"storylets.{storylet.get('id')}: triggered by 'custom' with heavy effects "
+                "but no object_any/object_all constraint; any free-text action would fire it."
+            )
+
     # A transition the scene's intent menu cannot express is invisible to the
     # player: every intent-gated scene-changing storylet must share at least
     # one intent with each trigger scene's suggested_intents.

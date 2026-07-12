@@ -636,6 +636,11 @@ storylets:
       intent_any:
         - sneak
         - custom
+      # custom 承载所有自由文本行动，转场必须要求玩家指涉路线本身，
+      # 否则"和薇拉聊天"这类无关自由行动也会触发离场。
+      object_any:
+        - side_stair
+        - side_door
       flags:
         side_door_found: true
     effect:
@@ -738,6 +743,8 @@ storylets:
       intent_any:
         - sneak
         - custom
+      object_any:
+        - back_stairs
     effect:
       move_entities:
         player: archive_door
@@ -820,6 +827,10 @@ storylets:
       intent_any:
         - sneak
         - custom
+      object_any:
+        - archive_door
+        - service_door
+        - shadowed_corner
       world_state:
         archive_door_unwatched: true
     effect:

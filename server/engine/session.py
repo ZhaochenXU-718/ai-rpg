@@ -41,6 +41,10 @@ class GameSession:
         self.ending: str | None = None
         # Committed-turn counter; ActionPlans must be validated against it.
         self.state_revision = 0
+        self.last_result: TurnResult | None = None
+        # Unanswered clarification from the understanding loop: the next
+        # free-text input is read as a reply to it (cleared on commit).
+        self.pending_clarification: dict[str, Any] | None = None
         self._recent_events: list[str] = []
         self._requotes = 0
         self._pending_quotes: dict[str, dict[str, Any]] = {}
@@ -51,6 +55,10 @@ class GameSession:
     @property
     def is_over(self) -> bool:
         return self.ending is not None
+
+    @property
+    def recent_events(self) -> tuple[str, ...]:
+        return tuple(self._recent_events)
 
     def perception(self):
         """The player-visible snapshot (also the LLM understanding input)."""
@@ -85,6 +93,11 @@ class GameSession:
         })
         return validation
 
+    def plan_payload(self, validation: ValidationResult) -> dict[str, Any] | None:
+        """The resolver payload a validated plan would execute (read-only)."""
+        payload = self._plan_payloads.get(validation.validation_id)
+        return dict(payload) if payload is not None else None
+
     def resolve_plan(self, plan: ActionPlan, validation: ValidationResult) -> CommittedOutcome:
         """Commit a validated plan through the deterministic resolver."""
         if self.is_over:
@@ -104,6 +117,7 @@ class GameSession:
             objects=payload["objects"],
             generic_patch=payload["generic_patch"],
             _allow_quoted=True,
+            _allow_unauthored=bool(payload.get("allow_unauthored")),
         )
         outcome = build_committed_outcome(
             self.story,
@@ -185,6 +199,7 @@ class GameSession:
         quote_id: str | None = None,
         generic_patch: dict[str, Any] | None = None,
         _allow_quoted: bool = False,
+        _allow_unauthored: bool = False,
     ) -> TurnResult:
         if self.is_over:
             raise SessionError("session is over")
@@ -209,6 +224,7 @@ class GameSession:
             objects or [],
             generic_patch,
             self.consumed,
+            allow_unauthored=_allow_unauthored,
         )
         if errors:
             self._logger.log({
@@ -232,9 +248,12 @@ class GameSession:
             intent_id,
             objects,
             generic_patch,
+            allow_unauthored=_allow_unauthored,
         )
         self.ending = result.ending
         self.state_revision += 1
+        self.last_result = result
+        self.pending_clarification = None
         self._recent_events.extend(result.narrative_hints)
         del self._recent_events[:-RECENT_EVENT_WINDOW]
         self._requotes = 0

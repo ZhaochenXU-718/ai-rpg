@@ -38,7 +38,7 @@ from .llm_protocol import (
     ValidationResult,
     new_protocol_id,
 )
-from .resolver import TurnResult, validate_action
+from .resolver import TurnResult, _has_matching_action_storylet, validate_action
 
 INTENT_CAPABILITY = "intent"
 
@@ -226,8 +226,12 @@ def validate_plan(
         step = plan.steps[step_index]
         intent_id = step.action
         objects = [str(obj) for obj in (step.arguments.get("objects") or [])]
+        # LLM-path policy: a well-formed attempt with no authored interaction
+        # is executable as a costed fail-forward turn, never a free rejection
+        # (free rejections let players probe the authored surface for free).
         action_errors = validate_action(
-            story, state, intent_id, objects, accepted_patch, consumed
+            story, state, intent_id, objects, accepted_patch, consumed,
+            allow_unauthored=True,
         )
         for message in action_errors:
             issues.append(_issue(
@@ -239,11 +243,25 @@ def validate_plan(
             ))
         has_error = bool(action_errors)
         if not has_error:
+            unauthored = bool(
+                story.intent(intent_id).get("requires_storylet_match")
+            ) and not _has_matching_action_storylet(
+                story, state, set(consumed), intent_id, objects, accepted_patch
+            )
+            if unauthored:
+                issues.append(_issue(
+                    "action.unauthored_attempt",
+                    IssueSeverity.ADJUSTMENT,
+                    "这不是一条已知可行的路径：尝试会消耗时间，可能一无所获。",
+                    retryable=False,
+                    step_index=step_index,
+                ))
             accepted_steps = (step_index,)
             payload = {
                 "intent_id": intent_id,
                 "objects": objects,
                 "generic_patch": accepted_patch,
+                "allow_unauthored": unauthored,
             }
             for path, value in accepted_patch.items():
                 accepted_changes.append(StateChangeProposal(

@@ -69,6 +69,8 @@ def build_quote(
     temporaries: TemporaryEffects | None = None,
     consumed: set[str] | None = None,
     turn_no: int = 1,
+    proposal: dict[str, Any] | None = None,
+    allow_unauthored: bool = False,
 ) -> dict[str, Any]:
     intent = story.intent(intent_id)
     label = intent.get("label", intent_id)
@@ -78,7 +80,10 @@ def build_quote(
         exit_labels.get(obj, story.object_label(scene_id, obj, state)) for obj in objects
     ]
 
-    proposal = default_proposal(story, state, intent_id, objects)
+    # A caller-supplied proposal (the validated plan payload) takes priority
+    # over the story's rule fallback; both pass the same whitelist clamp.
+    if proposal is None:
+        proposal = default_proposal(story, state, intent_id, objects)
     accepted, clamp_notes = clamp_generic_patch(proposal, state, story.resolution_limits)
     npc_targeted = isinstance((intent.get("fallback_proposal") or {}).get("npc_state"), dict)
     if npc_targeted and not any(obj in story.characters for obj in objects):
@@ -114,6 +119,7 @@ def build_quote(
         intent_id,
         objects,
         accepted,
+        allow_unauthored=allow_unauthored,
     )
     by_path: dict[str, list[Any]] = {}
     path_order: list[str] = []
@@ -130,11 +136,25 @@ def build_quote(
     ]
     # Disclosure wall: the player-facing card may only state consequences on
     # state the player can already perceive (story `perception` block).
-    # Everything else — reveals, acquisitions, movements, endings — stays a
-    # full preview for binding enforcement and logs, never for the card.
+    # Everything else — reveals, acquisitions, endings — stays a full
+    # preview for binding enforcement and logs, never for the card.
     # The filter reads the *pre-action* state on purpose: a quote must not
     # become an oracle for what is about to be discovered.
     disclosed_changes = filter_changes_for_player(story, state, expected_changes)
+
+    # Exception to the wall: the player's OWN movement is a first-class
+    # consequence of their own action, not a hidden world fact — hiding it
+    # broke quote binding ("我只是想聊天，怎么走出大厅了？").
+    expected_move = None
+    move_path = f"positions.{story.player_id}"
+    if move_path in by_path and by_path[move_path][0] != by_path[move_path][1]:
+        origin, destination = by_path[move_path]
+
+        def node_name(node_id: Any) -> str:
+            node = story.world_nodes.get(str(node_id)) or {}
+            return node.get("name") or story.scene(str(node_id)).get("name", str(node_id))
+
+        expected_move = {"from": node_name(origin), "to": node_name(destination)}
 
     return {
         "quote_id": uuid.uuid4().hex[:12],
@@ -147,6 +167,7 @@ def build_quote(
         "risks": risks,
         "costs": costs,
         "disclosed_changes": disclosed_changes,
+        "expected_move": expected_move,
         # Internal preview (binding enforcement + logs); never rendered.
         "expected_changes": expected_changes,
         "expected_storylets": list(preview_result.fired),

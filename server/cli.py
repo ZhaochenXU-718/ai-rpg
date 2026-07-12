@@ -37,9 +37,58 @@ from server.engine.renderer import (
     render_status,
     render_turn,
 )
+from server.engine.llm import LLMProviderError, create_provider
+from server.engine.llm_loop import commit_action, run_action_loop
+from server.engine.narration import narrate_rejection, narrate_turn
 from server.engine.session import GameSession, SessionError
+from server.engine.trace import TraceRecorder
 
 PROMPT = "> "
+
+
+def extract_free_text(line: str, head: str) -> str:
+    """The raw remainder after the intent token, kept verbatim for the LLM."""
+    stripped = line.strip()
+    if stripped.startswith(head):
+        return stripped[len(head):].strip()
+    match = re.match(r"^\s*\d+\s*(.*)$", stripped)
+    return (match.group(1) if match else "").strip()
+
+
+def print_turn(session: GameSession, provider, recorder, result, player_text: str = "") -> None:
+    """LLM 叙事优先，失败静默回退模板；机械行（线索/状态/判定）恒显示。"""
+    prose = narrate_turn(session, provider, result, recorder, player_text)
+    print(render_turn(session.story, result, prose=prose))
+
+
+def handle_free_action(session: GameSession, provider, recorder, free_text: str) -> None:
+    """理解 → 验证 →（一次重规划）→ 报价 → 确认 → 提交。"""
+    loop_result = run_action_loop(session, provider, free_text, recorder)
+    if loop_result.clarification:
+        print(f"（系统想先确认：{loop_result.clarification}）")
+        print("（本次不消耗时间，请补充后重试。）")
+        return
+    if not loop_result.can_execute:
+        reasons = loop_result.rejection_messages()
+        prose = narrate_rejection(session, provider, reasons, free_text, recorder)
+        if prose:
+            print(prose)
+        print("（方案未被接受，本次不消耗时间：）")
+        for message in reasons:
+            print(f"  - {message}")
+        if loop_result.replanned:
+            print("（系统已自动调整过一次方案，仍未通过；请换一种做法。）")
+        return
+    print(render_quote(loop_result.quote))
+    for message in loop_result.adjustment_messages():
+        print(f"（{message}）")
+    answer = read_line("执行？[y=确认 / n=放弃] ")
+    if answer is None or answer.lower() not in ("y", "yes", "确认", "执行"):
+        print("（已放弃，本次不消耗时间。）")
+        return
+    commit_action(session, loop_result, recorder)
+    if session.last_result is not None:
+        print_turn(session, provider, recorder, session.last_result, free_text)
 
 
 def tokenize_action_line(line: str) -> list[str]:
@@ -116,7 +165,7 @@ def read_line(prompt: str) -> str | None:
         return None
 
 
-def confirm_quote(session: GameSession, intent_id: str, objects: list[str]) -> bool:
+def confirm_quote(session: GameSession, intent_id: str, objects: list[str], provider=None, recorder=None) -> bool:
     """Quote-confirm loop; returns True if the action was executed."""
     while True:
         try:
@@ -134,7 +183,7 @@ def confirm_quote(session: GameSession, intent_id: str, objects: list[str]) -> b
         if answer.lower() in ("r", "requote", "重新报价"):
             continue
         result = session.resolve(quote_id=quote["quote_id"])
-        print(render_turn(session.story, result))
+        print_turn(session, provider, recorder, result)
         return True
 
 
@@ -142,10 +191,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Play an AIRPG story in the terminal.")
     parser.add_argument("story", nargs="?", default="content/midnight_archive.yaml")
     parser.add_argument("--no-log", action="store_true", help="Do not write session logs.")
+    parser.add_argument(
+        "--llm",
+        choices=["mock", "deepseek", "off"],
+        default="mock",
+        help="自由方案（custom）的理解 provider；deepseek 需设置 DEEPSEEK_API_KEY；off 退回结构化对象输入。",
+    )
     args = parser.parse_args()
 
     story = Story.load(args.story)
     session = GameSession(story, log_dir=None if args.no_log else "data/sessions")
+    try:
+        provider = create_provider(args.llm) if args.llm != "off" else None
+    except LLMProviderError as exc:
+        print(f"（{exc}）")
+        return 1
+    recorder = TraceRecorder(None if args.no_log else "data/traces", session.session_id)
 
     print(render_intro(story, session.state))
     print()
@@ -222,6 +283,22 @@ def main() -> int:
         else:
             print(f"（未知意图 '{head}'，输入 help 查看格式。）")
             continue
+
+        # 自由方案走 LLM 纵向链路：理解 → 验证 → 报价 → 提交。
+        if intent_id == "custom" and provider is not None:
+            free_text = extract_free_text(line, head)
+            if not free_text:
+                free_text = (read_line("描述你的方案：") or "").strip()
+                if not free_text:
+                    continue
+            try:
+                handle_free_action(session, provider, recorder, free_text)
+            except LLMProviderError as exc:
+                print(f"（理解服务暂时不可用：{exc}；可用结构化输入继续，或稍后重试。）")
+            except SessionError as exc:
+                print(f"({exc})")
+            continue
+
         objects = resolve_objects(story, session.state, raw_objects)
 
         # Explicit but wholly invalid targets are rejected before quoting or
@@ -238,12 +315,14 @@ def main() -> int:
 
         try:
             if story.quote_required(intent_id):
-                confirm_quote(session, intent_id, objects)
+                confirm_quote(session, intent_id, objects, provider, recorder)
             else:
                 result = session.resolve(intent_id=intent_id, objects=objects)
-                print(render_turn(story, result))
+                print_turn(session, provider, recorder, result)
         except SessionError as exc:
             print(f"({exc})")
+        except LLMProviderError as exc:
+            print(f"（叙事服务暂时不可用，已用模板文本继续：{exc}）")
 
     if session.ending:
         print()

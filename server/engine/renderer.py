@@ -149,6 +149,9 @@ def render_quote(quote: dict[str, Any]) -> str:
             for path, previous, new in disclosed
         )
         lines.append(f"预计影响：{effects}")
+    move = quote.get("expected_move")
+    if move:
+        lines.append(f"预计移动：{move['from']} → {move['to']}")
     for note in quote["notes"]:
         lines.append(f"（{note}）")
     if not quote["can_execute"]:
@@ -169,7 +172,10 @@ def intent_fallback_line(story: Story, intent_id: str) -> str:
     return str(line) if line else FALLBACK_WITH_EFFECT
 
 
-def render_turn(story: Story, result: TurnResult) -> str:
+def render_turn(story: Story, result: TurnResult, prose: str | None = None) -> str:
+    """Render one committed turn. ``prose`` (LLM narration) replaces the
+    template text when provided; mechanical lines (clues, state changes,
+    tier) always print — they are the fairness receipt, not flavour."""
     if result.errors:
         return "\n".join(
             ["（行动未执行：" + "；".join(result.errors) + "）", "【判定：未执行】"]
@@ -190,7 +196,9 @@ def render_turn(story: Story, result: TurnResult) -> str:
         if by_path[path][0] != by_path[path][1]
     ]
     meaningful = [c for c in collapsed if c[0] != "world.time_left"]
-    if result.narrative_hints:
+    if prose:
+        lines.append(prose)
+    elif result.narrative_hints:
         lines.extend(result.narrative_hints)
     elif meaningful:
         lines.append(intent_fallback_line(story, result.intent))

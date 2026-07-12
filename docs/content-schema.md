@@ -330,7 +330,7 @@ intents:
 - `quote_required`: 是否必须先报价再执行，见下方规则
 - `typical_cost`: 常见代价，通常包含 `time_left: -1`
 - `min_objects` / `max_objects`: 行动需要的目标数量边界
-- `requires_storylet_match`: `true` 时，本次行动必须能命中一张显式声明该意图的 action storylet；否则在报价、扣时和 world step 前拒绝
+- `requires_storylet_match`: `true` 时，本次行动必须能命中一张显式声明该意图的 action storylet；否则在报价、扣时和 world step 前拒绝。**该严格模式只约束结构化（无 LLM）路径**：LLM 计划路径上，目标合法但未预写的尝试按 fail-forward 执行（扣时、软代价过白名单、无 canon 效果、报价明示"没有把握"），防止零成本探测作者预写面
 - `engine_action`: 通用内建动作；当前仅支持 `move`
 - `fallback_proposal`: 无 LLM 模式下，行动未命中事件卡时的默认软状态提议。`npc_state: {key, step}` 作用于目标中的第一个人物；或直接给 `state_patch`。提议仍要过 `resolution_limits` 裁剪。阶段 3 由 LLM 提议替代
 - `fallback_narrative`: 未命中事件卡但有状态变化时的反馈文案；不填时引擎用无类型色彩的通用句

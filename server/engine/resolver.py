@@ -141,8 +141,16 @@ def validate_action(
     objects: list[str] | None = None,
     generic_patch: dict[str, Any] | None = None,
     consumed: set[str] | None = None,
+    allow_unauthored: bool = False,
 ) -> list[str]:
-    """Validate an action atomically before it can spend time or a turn."""
+    """Validate an action atomically before it can spend time or a turn.
+
+    ``allow_unauthored`` is the LLM-path policy switch: a well-formed attempt
+    with no authored interaction is not an error there — it becomes a costed
+    fail-forward turn instead of a free rejection (free rejections would let
+    players probe the authored surface at zero cost). Structured no-LLM play
+    keeps the strict stage-2 behaviour.
+    """
     objects = [str(obj) for obj in objects or []]
     intent = story.intent(intent_id)
     if not intent:
@@ -169,8 +177,12 @@ def validate_action(
         if selected_exit is None:
             return ["移动需要且只能指定一个当前可用出口"]
 
-    if intent.get("requires_storylet_match") and not _has_matching_action_storylet(
-        story, state, consumed or set(), intent_id, objects, generic_patch
+    if (
+        intent.get("requires_storylet_match")
+        and not allow_unauthored
+        and not _has_matching_action_storylet(
+            story, state, consumed or set(), intent_id, objects, generic_patch
+        )
     ):
         scene_id = story.current_location(state)
         targets = "、".join(
@@ -191,6 +203,7 @@ def run_turn(
     objects: list[str] | None = None,
     generic_patch: dict[str, Any] | None = None,
     strict_patch: bool = False,
+    allow_unauthored: bool = False,
 ) -> TurnResult:
     """Resolve one confirmed action. Mutates state / temporaries / consumed."""
     objects = [str(obj) for obj in objects or []]
@@ -203,7 +216,10 @@ def run_turn(
     )
 
     result.errors.extend(
-        validate_action(story, state, intent_id, objects, generic_patch, consumed)
+        validate_action(
+            story, state, intent_id, objects, generic_patch, consumed,
+            allow_unauthored=allow_unauthored,
+        )
     )
     if result.errors:
         return result

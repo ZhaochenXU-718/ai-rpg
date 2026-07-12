@@ -824,10 +824,12 @@ POST /api/feedback
 - ~~实现唯一物品位置与口袋、显式使用意图、玩家返回出口，并补“无徽章破局”回归路线。~~
 - ~~实现条件对象、关键交互导演提示、无匹配动作不扣时与确定性完整报价。~~
 - ~~定义 LLM ActionPlan Protocol 0.1：玩家感知、能力步骤、状态提议、验证结果、提交结果与世界权限边界。~~
+- ~~实现感知墙（`perception.py`）与静态能力路由器（`capabilities.py`）：报价披露过滤、权限映射、v0.1 承兑范围（2026-07-12）。~~
+- ~~实现 LLMClient 抽象、Mock/Replay provider、trace 落盘（协议 §11），在 `custom` 自由文本上打通"理解—验证—一次重规划—报价—提交"纵向闭环（`llm.py` / `llm_loop.py` / `trace.py`，CLI `--llm mock`）；规则模式保留为测试与降级路径（2026-07-12）。~~
 
 接下来按顺序：
 
-1. 按 `docs/llm-action-plan-protocol.md` 实现 PlayerPerception 构建器、LLMClient、Mock/Replay 与静态 CapabilityRouter，先从 `custom` 自由方案打通“计划—验证—一次重规划—报价—提交—导演反应”；现有规则模式保留为测试与降级路径。
+1. ~~选型并接入第一个真实 LLM provider：DeepSeek（`llm_deepseek.py`，OpenAI 兼容 + JSON 模式，默认 `deepseek-v4-flash`），含输入分类（越界→世界内澄清）与基于 ValidationResult 的重规划反馈；离线测试 9 项（2026-07-12）。~~ 设置 `DEEPSEEK_API_KEY` 做真实冒烟并收集第一批创造性方案 trace。
 2. 实现 `/api/session`、`/api/action/quote`、`/api/action/resolve`、`/api/feedback`（包一层 `GameSession`）。
 3. 做最简 Web UI（`web/`）。
 4. 写 LLM 玩家代理，自动跑 20-50 局（阶段 4.5）。
