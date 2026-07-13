@@ -77,7 +77,7 @@ world_rules:
       positions:
         maid: great_hall
       flags:
-        maid_warned_player: true
+        side_door_found: true
     move:
       to: servant_corridor
 
@@ -558,6 +558,7 @@ storylets:
   - id: opening_pressure
     title: "管家的午夜规矩"
     type: pressure
+    attribution: world_beat
     once: true
     trigger:
       scene: great_hall
@@ -590,11 +591,15 @@ storylets:
   - id: maid_warning
     title: "侍女的低声提醒"
     type: reveal
+    attribution: action_response
     once: true
     trigger:
       scene_any:
         - great_hall
         - servant_corridor
+      intent: negotiate
+      object_any:
+        - maid
       npc_state:
         maid.trust_gte: 2
       world_state:
@@ -644,9 +649,9 @@ storylets:
       object_any:
         - side_stair
         - side_door
-      flags:
-        side_door_found: true
     effect:
+      set_flags:
+        side_door_found: true
       move_entities:
         player: servant_corridor
       state_patch:
@@ -705,6 +710,7 @@ storylets:
   - id: fire_gets_worse
     title: "火势失控边缘"
     type: consequence
+    attribution: world_beat
     once: true
     trigger:
       state_gte:
@@ -926,6 +932,7 @@ storylets:
   - id: butler_catches_player
     title: "管家赶到"
     type: pressure
+    attribution: world_beat
     once: true
     phase: after_world
     trigger:
@@ -947,6 +954,7 @@ storylets:
   - id: midnight_destruction
     title: "午夜焚毁"
     type: failure_pressure
+    attribution: world_beat
     once: true
     trigger:
       state_lte:
@@ -972,6 +980,7 @@ storylets:
   - id: midnight_gathering
     title: "午夜集合"
     type: progress
+    attribution: world_beat
     once: true
     trigger:
       scene: archive_room
@@ -990,6 +999,7 @@ storylets:
   - id: final_truth
     title: "证据摊牌"
     type: ending_route
+    attribution: world_beat
     once: true
     trigger:
       scene: final_confrontation

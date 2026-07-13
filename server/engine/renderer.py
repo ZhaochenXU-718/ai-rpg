@@ -172,7 +172,13 @@ def intent_fallback_line(story: Story, intent_id: str) -> str:
     return str(line) if line else FALLBACK_WITH_EFFECT
 
 
-def render_turn(story: Story, result: TurnResult, prose: str | None = None) -> str:
+def render_turn(
+    story: Story,
+    result: TurnResult,
+    prose: str | None = None,
+    *,
+    free_text_mode: bool = False,
+) -> str:
     """Render one committed turn. ``prose`` (LLM narration) replaces the
     template text when provided; mechanical lines (facts, state changes,
     tier) always print — they are the fairness receipt, not flavour."""
@@ -204,13 +210,28 @@ def render_turn(story: Story, result: TurnResult, prose: str | None = None) -> s
     meaningful = [c for c in collapsed if c[0] not in cost_paths]
     if prose:
         lines.append(prose)
+    elif (
+        result.action_response_hints
+        or result.world_beat_hints
+        or result.world_reaction_hints
+    ):
+        # Preserve the same attribution contract when LLM narration is empty:
+        # the player's action is always answered first; concurrent director
+        # beats and autonomous world reactions are explicitly separated.
+        lines.extend(result.action_response_hints)
+        lines.extend(f"与此同时，{hint}" for hint in result.world_beat_hints)
+        lines.extend(f"随后，{hint}" for hint in result.world_reaction_hints)
     elif result.narrative_hints:
+        # Compatibility for results produced before attribution was tracked.
         lines.extend(result.narrative_hints)
     elif meaningful:
         lines.append(intent_fallback_line(story, result.intent))
     else:
         lines.append(FALLBACK_NO_EFFECT)
-        lines.append("（提示：把意图和具体对象组合起来，例如 `observe family_portrait`；输入 objects 查看当前场景对象。）")
+        if free_text_mode:
+            lines.append("（提示：可以继续用自然语言补充更具体的目标、做法或工具。）")
+        else:
+            lines.append("（提示：把意图和具体对象组合起来，例如 `<意图 ID> <对象 ID>`；输入 objects 查看当前场景对象。）")
     from .perception import perception_config
 
     facts_label = perception_config(story)["facts_label"]

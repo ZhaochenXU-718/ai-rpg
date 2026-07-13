@@ -1,6 +1,8 @@
 # AIRPG MVP 依赖。
 pyyaml>=6.0
 pydantic>=2.0,<3
+# Pydantic evaluates postponed ``X | None`` annotations on Python 3.9.
+eval-type-backport>=0.2; python_version < "3.10"
 # DeepSeek 走 OpenAI 兼容接口（https://api.deepseek.com）
 openai>=1.40
 

@@ -118,10 +118,10 @@ class PresenceIntegrationTests(unittest.TestCase):
 
     def test_inventory_items_are_acquired_and_used_explicitly(self) -> None:
         self.turn(1, "observe", ["family_portrait"])
-        self.assertEqual(self.story.inventory(self.state), ["maid_note"])
+        self.assertEqual(self.story.inventory(self.state), [])
 
         self.turn(2, "negotiate", ["heir"], {"heir.trust": 1})
-        self.assertEqual(self.story.inventory(self.state), ["old_badge", "maid_note"])
+        self.assertEqual(self.story.inventory(self.state), ["old_badge"])
 
         self.turn(3, "sneak", ["side_stair"])
         self.turn(4, "negotiate", ["maid"], {"maid.trust": 1})

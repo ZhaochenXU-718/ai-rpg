@@ -38,6 +38,7 @@ COST_TYPES = {"pressure", "failure_pressure", "consequence", "opportunity_with_c
 RESULT_SUCCESS = "success"
 RESULT_PARTIAL = "partial_success"
 RESULT_FAIL_FORWARD = "fail_forward"
+ATTRIBUTION_WORLD_BEAT = "world_beat"
 
 
 @dataclass
@@ -51,6 +52,10 @@ class TurnResult:
     changes: list[tuple[str, Any, Any]] = field(default_factory=list)
     expired: list[tuple[str, Any]] = field(default_factory=list)
     narrative_hints: list[str] = field(default_factory=list)
+    action_response_hints: list[str] = field(default_factory=list)
+    world_beat_hints: list[str] = field(default_factory=list)
+    world_reaction_hints: list[str] = field(default_factory=list)
+    prior_events: list[str] = field(default_factory=list)
     new_facts: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -63,7 +68,10 @@ def classify_result(story: Story, fired: list[str], generic_applied: bool) -> st
     types = set()
     by_id = {s.get("id"): s for s in story.storylets}
     for storylet_id in fired:
-        types.add((by_id.get(storylet_id) or {}).get("type"))
+        storylet = by_id.get(storylet_id) or {}
+        if storylet.get("attribution") == ATTRIBUTION_WORLD_BEAT:
+            continue
+        types.add(storylet.get("type"))
     has_gain = bool(types & GAIN_TYPES)
     has_cost = bool(types & COST_TYPES)
     if has_gain and not has_cost:
@@ -84,6 +92,23 @@ def _trigger_is_for_intent(trigger: dict[str, Any], intent_id: str) -> bool:
     if "intent_any" in trigger:
         return intent_id in (trigger.get("intent_any") or [])
     return False
+
+
+def _fallback_action_response(
+    story: Story,
+    state: dict[str, Any],
+    intent_id: str,
+    objects: list[str],
+    scene_id: str,
+) -> str | None:
+    """Ground an intent fallback in the actual targets of this action."""
+    narrative = story.intent(intent_id).get("fallback_narrative")
+    if not isinstance(narrative, str) or not narrative.strip():
+        return None
+    labels = [story.object_label(scene_id, obj, state) for obj in objects]
+    if labels:
+        return f"针对「{'、'.join(labels)}」，{narrative.strip()}"
+    return narrative.strip()
 
 
 def _has_matching_action_storylet(
@@ -266,9 +291,12 @@ def run_turn(
         destination = str(selected_exit["to"])
         set_value(state, f"positions.{story.player_id}", destination)
         result.changes.append((f"positions.{story.player_id}", source, destination))
-        result.narrative_hints.append(
-            str(selected_exit.get("narrative_hint") or f"你移动到了{story.scene(destination).get('name', destination)}。")
+        hint = str(
+            selected_exit.get("narrative_hint")
+            or f"你移动到了{story.scene(destination).get('name', destination)}。"
         )
+        result.narrative_hints.append(hint)
+        result.action_response_hints.append(hint)
         player_moved = True
 
     # 3. ordered action-storylet pass, cascading, max one player move per turn
@@ -283,6 +311,7 @@ def run_turn(
     result.world_rules.extend(world_step.rules)
     result.errors.extend(world_step.errors)
     result.narrative_hints.extend(world_step.narrative_hints)
+    result.world_reaction_hints.extend(world_step.narrative_hints)
     for actor, source, destination in world_step.moves:
         result.changes.append((f"positions.{actor}", source, destination))
 
@@ -291,6 +320,17 @@ def run_turn(
         story, state, temporaries, consumed, turn_no, "after_world",
         intent_id, objects, result, player_moved,
     )
+    # Every valid action gets its own response channel.  When no authored
+    # storylet responded, ground the content-declared intent fallback in the
+    # selected targets so a simultaneous world beat cannot replace the action
+    # in either LLM narration or template fallback.
+    if not result.action_response_hints:
+        fallback = _fallback_action_response(
+            story, state, intent_id, objects, result.scene_before
+        )
+        if fallback:
+            result.action_response_hints.append(fallback)
+            result.narrative_hints.append(fallback)
     result.new_facts = state["facts"][fact_count:]
 
     # 5. temporary effect expiry
@@ -334,6 +374,10 @@ def _run_storylet_phase(
         hint = storylet.get("narrative_hint")
         if hint:
             result.narrative_hints.append(hint)
+            if storylet.get("attribution") == ATTRIBUTION_WORLD_BEAT:
+                result.world_beat_hints.append(hint)
+            else:
+                result.action_response_hints.append(hint)
         if storylet.get("once"):
             consumed.add(storylet_id)
         if moves_player:

@@ -47,7 +47,7 @@ SYSTEM_PROMPT = """\
 1. 只能引用【感知快照】中出现的实体 ID、意图和工具。玩家看不到的东西，你也不知道。
 2. steps 恰好一个元素：{"capability": "intent", "action": "<意图ID>", "arguments": {"objects": ["<实体ID>", ...]}, "purpose": "<这一步的作用>"}。
 3. 意图从 available_intents 里选：每个意图的适用范围以 capability_tools 中该工具的描述为准，只要有某个具体意图的描述覆盖了玩家的做法，就必须选它。"custom" 是最后手段，只有当所有具体意图的描述都无法承载玩家的做法时才使用。
-4. proposed_changes 只能提议【可提议状态空间】patchable 里列出的路径：authority 一律 "soft_state"；数字用 operation "increment" 且幅度不超过该路径的 max_step，枚举值用 "set"。提议应是方案的合理直接后果；不确定就留空数组。
+4. proposed_changes 只能提议【可提议状态空间】patchable 里列出的路径：authority 一律 "soft_state"；数字用 operation "increment" 且幅度不超过该路径的 max_step，枚举值用 "set"。当方案会合理地改变可提议状态时应给出提议；只有确实没有直接软状态影响时才留空数组。
 5. 以下情况输出 needs_clarification=true、steps=[]，并在 clarification_question 里用世界内的口吻向玩家解释或提问：
    - 方案违反【世界边界】（例如凭空造物、离开被封锁的区域）——解释为什么行不通；
    - 目标或做法无法从文本中确定——问清楚。
@@ -79,9 +79,10 @@ RENDER_SYSTEM_PROMPT = """\
 1. 只能陈述事实清单里出现的事情，不得发明新的物品、人物、空间结构或事件。
 2. 不得暗示或剧透事实清单之外的信息（未发现的秘密、他人的位置、结局走向）。
 3. 若清单标注"本回合无预设事件"或"行动未执行"，如实写出尝试与落空，不得虚构成功或新发现。
-4. 若有"作者叙事提示"，以它们为骨架融合改写，不改变其事实。
-5. 第二人称"你"，2-4 句，遵循【文风约束】；不要提及规则、数值或系统。
-6. 只输出叙事文本本身。
+4. 严格区分"玩家行动回应提示"、"世界节拍提示"和"世界反应提示"；世界节拍不是玩家行动直接造成的，不得写成玩家行动的成功结果。
+5. "过去回合发生"只能作为背景，不能写成当前仍在发生；行动目标的位置描述必须服从事实清单。
+6. 第二人称"你"，2-4 句，遵循【文风约束】；不要提及规则、数值或系统。
+7. 只输出叙事文本本身。
 """
 
 
@@ -287,15 +288,29 @@ class DeepSeekProvider(LLMProvider):
     def render_narrative(self, request: NarrativeRequest) -> NarrativeResponse | None:
         started = time.monotonic()
         payload = {"事实清单": request.facts, "文风约束": request.style}
-        content, usage = self._call(
-            [
-                {"role": "system", "content": RENDER_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            json_mode=False,
-            temperature=0.7,
-            max_tokens=400,
-        )
+        messages = [
+            {"role": "system", "content": RENDER_SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        usage_total: dict[str, Any] = {}
+        content = ""
+        for attempt in range(2):
+            content, usage = self._call(
+                messages,
+                json_mode=False,
+                temperature=0.7,
+                max_tokens=400,
+            )
+            for key, value in (usage or {}).items():
+                if isinstance(value, (int, float)):
+                    usage_total[key] = usage_total.get(key, 0) + value
+            if content.strip():
+                break
+            if attempt == 0:
+                messages.append({
+                    "role": "user",
+                    "content": "你返回了空内容。请根据同一份事实清单输出 2-4 句叙事文本。",
+                })
         if not content.strip():
             return None
         return NarrativeResponse(
@@ -303,7 +318,7 @@ class DeepSeekProvider(LLMProvider):
             model=self.model,
             prompt_version="deepseek-narrate-v1",
             latency_ms=round((time.monotonic() - started) * 1000, 2),
-            usage=usage,
+            usage=usage_total,
         )
 
     def propose_plan(self, request: PlanRequest) -> PlanResponse:

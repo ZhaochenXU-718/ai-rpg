@@ -250,6 +250,7 @@ class GameSession:
             generic_patch,
             allow_unauthored=_allow_unauthored,
         )
+        result.prior_events = list(self._recent_events)
         self.ending = result.ending
         self.state_revision += 1
         self.last_result = result

@@ -38,6 +38,7 @@ from .llm_protocol import (
     ValidationResult,
     new_protocol_id,
 )
+from .quote import default_proposal
 from .resolver import TurnResult, _has_matching_action_storylet, validate_action
 
 INTENT_CAPABILITY = "intent"
@@ -205,6 +206,23 @@ def validate_plan(
             ))
 
     proposed_patch = _soft_changes_to_patch(soft, issues)
+    # A missing LLM proposal must not make the natural-language path weaker
+    # than the equivalent structured/menu action.  Content already declares a
+    # deterministic fallback per intent; use it only when the model proposed
+    # no changes at all (never to replace an explicit but invalid proposal).
+    if not plan.proposed_changes and len(intent_steps) == 1:
+        step = plan.steps[intent_steps[0]]
+        objects = [str(obj) for obj in (step.arguments.get("objects") or [])]
+        fallback_patch = default_proposal(story, state, step.action, objects)
+        if fallback_patch:
+            proposed_patch = fallback_patch
+            issues.append(_issue(
+                "change.fallback_proposal_applied",
+                IssueSeverity.ADJUSTMENT,
+                "模型没有提议软状态变化，已采用故事声明的同意图兜底效果。",
+                retryable=False,
+                step_index=intent_steps[0],
+            ))
     accepted_patch, clamp_notes = clamp_generic_patch(
         proposed_patch, state, story.resolution_limits
     )
@@ -243,9 +261,10 @@ def validate_plan(
             ))
         has_error = bool(action_errors)
         if not has_error:
-            unauthored = bool(
+            requires_authored_match = bool(
                 story.intent(intent_id).get("requires_storylet_match")
-            ) and not _has_matching_action_storylet(
+            ) or intent_id == "custom"
+            unauthored = requires_authored_match and not _has_matching_action_storylet(
                 story, state, set(consumed), intent_id, objects, accepted_patch
             )
             if unauthored:

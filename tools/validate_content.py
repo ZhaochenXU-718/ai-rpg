@@ -63,6 +63,7 @@ KNOWN_STORYLET_TYPES = {
     "failure_pressure",
     "ending_route",
 }
+KNOWN_STORYLET_ATTRIBUTIONS = {"action_response", "world_beat"}
 CONDITION_GROUPS = (
     "world_state",
     "player_state",
@@ -998,6 +999,11 @@ def validate_storylets(
         storylet_type = storylet.get("type")
         if storylet_type is not None and storylet_type not in KNOWN_STORYLET_TYPES:
             report.warn(f"storylets.{storylet_id}.type '{storylet_type}' is not in the recommended vocabulary.")
+        attribution = storylet.get("attribution", "action_response")
+        if not isinstance(attribution, str) or attribution not in KNOWN_STORYLET_ATTRIBUTIONS:
+            report.error(
+                f"storylets.{storylet_id}.attribution must be 'action_response' or 'world_beat'."
+            )
         phase = storylet.get("phase", "action")
         if phase not in {"action", "after_world"}:
             report.error(
@@ -1258,11 +1264,12 @@ def validate_content_graph(
                 "and it is not the initial scene."
             )
 
-    # With an LLM understanding layer, `custom` carries every free-text
-    # action. A heavy-effect storylet triggered by custom without any object
-    # constraint fires on unrelated actions ("chat with the heir" walking the
-    # player out of the hall). Require object grounding on such triggers.
-    heavy_keys = ("move_entities", "move_items", "set_world")
+    # An action_response with no action or object grounding can ride along with
+    # any turn and impersonate its outcome. Automatic events are valid, but
+    # must explicitly declare world_beat so narration and fallback rendering
+    # keep them separate. The custom-specific warning below remains more
+    # precise for free-text transitions with heavy effects.
+    heavy_keys = (*EFFECT_MUTATION_KEYS, "add_facts")
     for storylet in storylets:
         if not isinstance(storylet, dict):
             continue
@@ -1270,13 +1277,16 @@ def validate_content_graph(
         effect = storylet.get("effect")
         if not isinstance(trigger, dict) or not isinstance(effect, dict):
             continue
-        intents = [trigger["intent"]] if "intent" in trigger else list(trigger.get("intent_any") or [])
-        if "custom" not in intents:
-            continue
-        if trigger.get("object_any") or trigger.get("object_all"):
-            continue
         blocks = [effect] + ([effect["temporary"]] if isinstance(effect.get("temporary"), dict) else [])
-        if any(key in block for block in blocks for key in heavy_keys):
+        has_heavy_effect = any(key in block for block in blocks for key in heavy_keys)
+        intents = [trigger["intent"]] if "intent" in trigger else list(trigger.get("intent_any") or [])
+        has_objects = bool(trigger.get("object_any") or trigger.get("object_all"))
+        if not intents and not has_objects and storylet.get("attribution") != "world_beat":
+            report.warn(
+                f"storylets.{storylet.get('id')}: action_response has no intent/object constraint; "
+                "declare attribution: world_beat or ground it to the player action."
+            )
+        if "custom" in intents and not has_objects and has_heavy_effect:
             report.warn(
                 f"storylets.{storylet.get('id')}: triggered by 'custom' with heavy effects "
                 "but no object_any/object_all constraint; any free-text action would fire it."

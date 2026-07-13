@@ -47,6 +47,44 @@ def _public_snapshot(story: Story, state: dict[str, Any]) -> dict[str, Any]:
     return snapshot
 
 
+def _target_location(
+    story: Story,
+    state: dict[str, Any],
+    action_scene_id: str,
+    current_scene_id: str,
+    object_id: str,
+) -> str:
+    """Describe a referenced target without leaking hidden coordinates."""
+    action_scene_name = story.scene(action_scene_id).get("name", action_scene_id)
+    current_scene_name = story.scene(current_scene_id).get("name", current_scene_id)
+    if object_id in story.characters:
+        position = (state.get("positions") or {}).get(object_id)
+        if position == current_scene_id:
+            return f"当前场景「{current_scene_name}」，与玩家同场"
+        if position == action_scene_id and action_scene_id != current_scene_id:
+            return f"行动发生时位于「{action_scene_name}」；现在已不与玩家同场"
+        return "已不在当前场景"
+    if object_id in story.items:
+        placement = (state.get("item_locations") or {}).get(object_id) or {}
+        if placement.get("type") == "carried_by":
+            owner = placement.get("id")
+            if owner == story.player_id:
+                return "玩家口袋中"
+            if owner in story.characters and owner in story.characters_at(state, current_scene_id):
+                return f"由在场人物「{story.character_name(owner)}」携带"
+            return "已不在当前可见范围"
+        if placement.get("type") == "board" and placement.get("id") == current_scene_id:
+            return f"当前场景「{current_scene_name}」"
+        if placement.get("type") == "board" and placement.get("id") == action_scene_id:
+            return f"行动发生时位于「{action_scene_name}」；现在已不在当前场景"
+        return "已不在当前可见范围"
+    if object_id in story.world_nodes:
+        return "行动发生时的可用出口"
+    if action_scene_id == current_scene_id:
+        return f"当前场景「{current_scene_name}」中的环境对象"
+    return f"行动发生时位于「{action_scene_name}」中的环境对象"
+
+
 def build_turn_facts(
     story: Story,
     state: dict[str, Any],
@@ -61,10 +99,22 @@ def build_turn_facts(
     facts: dict[str, Any] = {
         "玩家行动": player_text or f"以「{intent.get('label', result.intent)}」方式行动",
         "行动目标": [
-            story.object_label(result.scene_before, obj, state) for obj in result.objects
+            {
+                "名称": story.object_label(result.scene_before, obj, state),
+                "位置": _target_location(
+                    story,
+                    state,
+                    result.scene_before,
+                    result.scene_after,
+                    obj,
+                ),
+            }
+            for obj in result.objects
         ],
         "判定档位": result.result_tier,
-        "作者叙事提示": list(result.narrative_hints),
+        "玩家行动回应提示": list(result.action_response_hints),
+        "世界节拍提示（非玩家行动直接造成）": list(result.world_beat_hints),
+        "世界反应提示（非玩家直接控制）": list(result.world_reaction_hints),
         f"新{facts_label}": list(result.new_facts),
         "当前场景": scene_after.get("name", result.scene_after),
         "当前目标": current_goal(story, state),
@@ -72,9 +122,14 @@ def build_turn_facts(
             f"{path}: {previous} -> {new}"
             for path, previous, new in filter_changes_for_player(story, state, result.changes)
         ],
-        "最近发生": list(recent_events[-3:]),
+        "过去回合发生（非本回合）": list(recent_events[-3:]),
         "公开状态": _public_snapshot(story, state),
     }
+    if not result.action_response_hints:
+        facts["玩家行动无专门回应"] = (
+            "没有作者事件卡专门回应这次行动；只能叙述已提交的状态变化，"
+            "不得把世界节拍写成该行动的直接成果。"
+        )
     if result.scene_after != result.scene_before:
         facts["刚进入新场景"] = {
             "名称": scene_after.get("name", result.scene_after),
@@ -109,7 +164,7 @@ def narrate_turn(
         session.state,
         result,
         player_text=player_text,
-        recent_events=tuple(session.recent_events),
+        recent_events=tuple(result.prior_events),
     )
     return _render(session, provider, recorder, "turn", facts)
 
@@ -154,6 +209,12 @@ def _render(
             })
         return None
     if response is None or not response.text.strip():
+        if recorder is not None:
+            recorder.record("narration_fallback", {
+                "turn": session.turn_no,
+                "kind": kind,
+                "reason": "empty_response",
+            })
         return None
     if recorder is not None:
         recorder.record("narration", {

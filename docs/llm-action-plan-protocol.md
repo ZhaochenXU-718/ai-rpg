@@ -272,6 +272,7 @@ custom player_text
 | `steps`（多步计划） | 只接受**恰好一个** `intent.*` 步骤；多步返回 `plan.single_intent_step_required`（retryable）。一个计划 = 一个回合 = 一份意图代价，按步计价待真实 trace 后再定 |
 | `capability` 词表 | 仅 `intent`（由内容意图派生，含 `intent.move`/`intent.use`）；工具列表来自 `PlayerPerception.capability_tools` |
 | `proposed_changes` + `SOFT_STATE` | 经 `resolution_limits` 裁剪后并入兜底 patch；`SET`/`INCREMENT` 支持 |
+| 空 `proposed_changes` | 若所选意图声明了 `fallback_proposal`，采用该内容兜底并返回 adjustment，保证 LLM 路径不弱于同意图菜单路径；模型显式给出但被拒绝的提议不会触发兜底 |
 | `proposed_changes` + `PRESENTATION` | 叙事层内容，不进状态，返回 adjustment |
 | `proposed_changes` + `MECHANICAL` / `CANON` | 一律剥离（adjustment）：机械变化由引擎从步骤推导，canon 只能由作者事件卡产生 |
 | `ChangeOperation.APPEND` / `REMOVE` | 不支持，adjustment 忽略 |
@@ -291,6 +292,7 @@ custom player_text
 - 玩家确认的报价；
 - CommittedOutcome；
 - 模型、Prompt 版本、延迟、Token 和成本。
+- 叙事响应，或进入模板回退的明确原因（如 `narration_fallback: empty_response`）。
 
 这些记录用于复现错误、离线 Replay、协议升级和后续模块边界分析。
 

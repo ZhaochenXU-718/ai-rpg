@@ -11,10 +11,10 @@ walkthroughs:
     title: "钥匙路线：徽章 + 侧门钥匙，无暴露"
     target_ending: truth_exposed
     steps:
-      - note: "观察全家画像：开场压力、侍女便签、画像徽记同回合触发"
+      - note: "观察全家画像：开场压力与画像徽记触发，侍女事件不得搭便车"
         intent: observe
         objects: [family_portrait]
-        expect_storylets: [opening_pressure, observe_family_portrait, maid_warning]
+        expect_storylets: [opening_pressure, observe_family_portrait]
       - note: "与薇拉交涉建立信任，拿到旧徽章"
         intent: negotiate
         objects: [heir]
@@ -25,11 +25,11 @@ walkthroughs:
         objects: [side_stair]
         expect_storylets: [slip_into_corridor]
         expect_world_rules: [maid_uses_service_route]
-      - note: "与艾拉交涉，换来仆役侧门钥匙"
+      - note: "与艾拉交涉：先收到警告便签，再换来仆役侧门钥匙"
         intent: negotiate
         objects: [maid, medicine_box]
         generic_patch: { maid.trust: 1 }
-        expect_storylets: [maid_lends_key]
+        expect_storylets: [maid_warning, maid_lends_key]
       - note: "走后楼梯上二楼东翼"
         intent: sneak
         objects: [back_stairs]
@@ -50,7 +50,7 @@ walkthroughs:
       - note: "观察全家画像，建立与薇拉的第一层信任"
         intent: observe
         objects: [family_portrait]
-        expect_storylets: [opening_pressure, observe_family_portrait, maid_warning]
+        expect_storylets: [opening_pressure, observe_family_portrait]
       - note: "与薇拉交涉拿到旧徽章"
         intent: negotiate
         objects: [heir]
@@ -84,10 +84,10 @@ walkthroughs:
     title: "补救路线：未取徽章，用仆役钥匙强开暗格"
     target_ending: costly_victory
     steps:
-      - note: "观察画像获得侍女便签，但不向薇拉索取徽章"
+      - note: "观察画像但不向薇拉索取徽章；侍女事件不得搭便车"
         intent: observe
         objects: [family_portrait]
-        expect_storylets: [opening_pressure, observe_family_portrait, maid_warning]
+        expect_storylets: [opening_pressure, observe_family_portrait]
       - note: "直接进入仆役走廊"
         intent: sneak
         objects: [side_stair]
@@ -97,7 +97,7 @@ walkthroughs:
         intent: negotiate
         objects: [maid]
         generic_patch: { maid.trust: 1 }
-        expect_storylets: [maid_lends_key]
+        expect_storylets: [maid_warning, maid_lends_key]
       - note: "走后楼梯到档案室门口"
         intent: sneak
         objects: [back_stairs]
@@ -120,10 +120,10 @@ walkthroughs:
     title: "拖延路线：在大厅耗尽时间，午夜焚毁证据"
     target_ending: evidence_destroyed
     steps:
-      - note: "只看壁炉，错过画像；侍女便签仍会自动触发"
+      - note: "只看壁炉，错过画像；侍女事件不得自动触发"
         intent: observe
         objects: [fireplace]
-        expect_storylets: [opening_pressure, maid_warning]
+        expect_storylets: [opening_pressure]
       - intent: observe
         objects: [rain_noise]
       - intent: observe

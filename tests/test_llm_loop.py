@@ -97,6 +97,27 @@ class ActionLoopTest(unittest.TestCase):
         for expected in ("perception", "llm_response", "validation", "quote_confirmed", "committed_outcome"):
             self.assertIn(expected, events)
 
+    def test_empty_llm_proposal_uses_the_story_fallback(self) -> None:
+        """An LLM plan must not be weaker than the equivalent menu action."""
+        plan = make_plan(
+            "plan_negotiate_without_changes",
+            [intent_step("negotiate", ["heir"])],
+            interpretation="你想和薇拉谈谈，争取她的信任。",
+        )
+
+        loop_result = run_action_loop(
+            self.session, ScriptedProvider([plan]), "我坦诚地和薇拉谈谈", self.recorder
+        )
+
+        self.assertTrue(loop_result.can_execute)
+        self.assertEqual(loop_result.quote["proposal"], {"heir.trust": 1})
+        self.assertIn(
+            "change.fallback_proposal_applied",
+            {issue.code for issue in loop_result.validation.issues},
+        )
+        commit_action(self.session, loop_result, self.recorder)
+        self.assertEqual(self.session.state["characters"]["heir"]["trust"], 1)
+
     def test_rejected_plan_replans_once_without_spending_time(self) -> None:
         bad = make_plan("plan_bad", [intent_step("threaten", ["butler"])])
         good = make_plan(
@@ -179,7 +200,7 @@ class ActionLoopTest(unittest.TestCase):
         outcome = commit_action(replay_session, replayed, replay_recorder)
         self.assertEqual(
             outcome.fired_storylets,
-            ("opening_pressure", "observe_family_portrait", "maid_warning"),
+            ("opening_pressure", "observe_family_portrait"),
         )
 
 

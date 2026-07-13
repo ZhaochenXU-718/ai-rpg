@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Play a story in the terminal against the stage-2 rule engine (no LLM).
+"""Play a content-defined story in the terminal.
 
 Usage:
-    python3 server/cli.py [content/midnight_archive.yaml]
+    python3 server/cli.py [path/to/story.yaml]
 
 Each turn: pick an intent (number or id), optionally followed by object ids,
-e.g. `2 heir` or `observe family_portrait`. Medium/high-risk intents show a
-quote card first and ask for confirmation.
+e.g. `2 <target>` or `<intent_id> <target_id>`. Medium/high-risk intents show
+a quote card first and ask for confirmation. When no story path is supplied,
+the CLI discovers content files and asks the player to choose one.
 
 Commands: objects / state / facts / help / quit
 """
@@ -44,6 +45,7 @@ from server.engine.session import GameSession, SessionError
 from server.engine.trace import TraceRecorder
 
 PROMPT = "> "
+CONTENT_DIR = Path("content")
 
 
 def extract_free_text(line: str, head: str) -> str:
@@ -58,7 +60,12 @@ def extract_free_text(line: str, head: str) -> str:
 def print_turn(session: GameSession, provider, recorder, result, player_text: str = "") -> None:
     """LLM 叙事优先，失败静默回退模板；机械行（线索/状态/判定）恒显示。"""
     prose = narrate_turn(session, provider, result, recorder, player_text)
-    print(render_turn(session.story, result, prose=prose))
+    print(render_turn(
+        session.story,
+        result,
+        prose=prose,
+        free_text_mode=provider is not None,
+    ))
 
 
 def handle_free_action(session: GameSession, provider, recorder, free_text: str) -> None:
@@ -100,9 +107,10 @@ def tokenize_action_line(line: str) -> list[str]:
 
 def print_help() -> None:
     print(
-        "输入格式：意图编号或 ID + 目标对象，例如 `1 全家画像`（观察）、`2 薇拉小姐`（交涉）。\n"
-        "使用物品时同时输入口袋物品和目标，例如 `使用 仆役侧门钥匙 仆役窄门`；\n"
-        "移动时选择【出口】中的名称或 ID，例如 `移动 返回仆役走廊`。\n"
+        "LLM 模式可直接输入完整的自然语言方案；也可使用下面的结构化快捷方式。\n"
+        "输入格式：`<意图编号或 ID> <目标名称或 ID>`，目标可以有多个。\n"
+        "使用物品时同时输入【口袋】物品和作用目标，例如 `使用 <物品> <目标>`；\n"
+        "移动时选择【出口】中的名称或 ID，例如 `移动 <出口>`。\n"
         "目标来自【可用对象】、【出口】或【口袋】——中文名或 ID 都可以直接用。\n"
         "命令：objects 对象面板；inventory 口袋；who 人物介绍；state 状态；facts 已知记录；help 帮助；quit 退出。"
     )
@@ -165,6 +173,42 @@ def read_line(prompt: str) -> str | None:
         return None
 
 
+def discover_story_paths(content_dir: Path = CONTENT_DIR) -> list[Path]:
+    """Return loadable-looking story files without preferring any story id."""
+    if not content_dir.is_dir():
+        return []
+    return sorted(path for path in content_dir.glob("*.yaml") if path.is_file())
+
+
+def choose_story_path(argument: str | None, content_dir: Path = CONTENT_DIR) -> Path | None:
+    """Resolve an explicit story path or ask the player to choose discovered content."""
+    if argument:
+        return Path(argument)
+
+    candidates = discover_story_paths(content_dir)
+    if not candidates:
+        print(f"（未在 {content_dir} 中发现故事 YAML；请在命令行指定故事文件。）")
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    print("请选择要游玩的故事：")
+    for index, path in enumerate(candidates, start=1):
+        try:
+            title = Story.load(path).title
+        except (OSError, ValueError):
+            title = path.stem
+        print(f"[{index}] {title}（{path}）")
+
+    while True:
+        answer = read_line("故事编号（q=退出）：")
+        if answer is None or answer.lower() in ("q", "quit", "exit"):
+            return None
+        if answer.isdigit() and 1 <= int(answer) <= len(candidates):
+            return candidates[int(answer) - 1]
+        print("（请输入列表中的故事编号。）")
+
+
 def confirm_quote(session: GameSession, intent_id: str, objects: list[str], provider=None, recorder=None) -> bool:
     """Quote-confirm loop; returns True if the action was executed."""
     while True:
@@ -189,7 +233,11 @@ def confirm_quote(session: GameSession, intent_id: str, objects: list[str], prov
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Play an AIRPG story in the terminal.")
-    parser.add_argument("story", nargs="?", default="content/midnight_archive.yaml")
+    parser.add_argument(
+        "story",
+        nargs="?",
+        help="故事 YAML 路径；省略时从 content 目录发现并选择。",
+    )
     parser.add_argument("--no-log", action="store_true", help="Do not write session logs.")
     parser.add_argument(
         "--llm",
@@ -199,7 +247,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    story = Story.load(args.story)
+    story_path = choose_story_path(args.story)
+    if story_path is None:
+        return 0
+    try:
+        story = Story.load(story_path)
+    except (OSError, ValueError) as exc:
+        print(f"（无法载入故事：{exc}）")
+        return 1
     session = GameSession(story, log_dir=None if args.no_log else "data/sessions")
     try:
         provider = create_provider(args.llm) if args.llm != "off" else None
@@ -241,7 +296,7 @@ def main() -> int:
 
         line = read_line(PROMPT)
         if line is None or line.lower() in ("quit", "exit", "q"):
-            print("（离开庄园——会话结束。）")
+            print("（本次游玩结束。）")
             break
         if not line:
             continue
@@ -270,6 +325,18 @@ def main() -> int:
                 print(f"◇ {fact}")
             continue
 
+        # A clarification reply is always free text.  Route it before the
+        # legacy intent parser so answers such as "用发簪" are not rejected as
+        # unknown commands.
+        if provider is not None and session.pending_clarification is not None:
+            try:
+                handle_free_action(session, provider, recorder, line)
+            except LLMProviderError as exc:
+                print(f"（理解服务暂时不可用：{exc}；可用结构化输入继续，或稍后重试。）")
+            except SessionError as exc:
+                print(f"({exc})")
+            continue
+
         tokens = tokenize_action_line(line)
         head, raw_objects = tokens[0], tokens[1:]
         intent_aliases = {
@@ -284,6 +351,17 @@ def main() -> int:
         elif head in intent_aliases:
             intent_id = intent_aliases[head]
         else:
+            # In LLM mode an unmatched line is a natural-language action, not
+            # a malformed stage-2 command.  Structured mode retains the old
+            # explicit error as its deterministic fallback interface.
+            if provider is not None:
+                try:
+                    handle_free_action(session, provider, recorder, line)
+                except LLMProviderError as exc:
+                    print(f"（理解服务暂时不可用：{exc}；可用结构化输入继续，或稍后重试。）")
+                except SessionError as exc:
+                    print(f"({exc})")
+                continue
             print(f"（未知意图 '{head}'，输入 help 查看格式。）")
             continue
 

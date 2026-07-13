@@ -673,7 +673,7 @@ POST /api/feedback
 - 叙事渲染：`renderer.py` 的模板文本（entry_text + narrative_hint + 状态摘要）。
 - 输入分类：结构化输入下恒为 `in_rules`，`out_of_bounds` 留给自然语言输入。
 
-### 阶段 3：LLM 接入，2-3 天
+### 阶段 3：LLM 接入（已完成，2026-07-12；2026-07-13 完成首轮试玩修复）
 
 修改边界见 `docs/engine-principles.md` 第 5 节（LLM 只做理解与渲染，判定核心接口冻结）。
 
@@ -829,12 +829,13 @@ POST /api/feedback
 
 接下来按顺序：
 
-1. ~~选型并接入第一个真实 LLM provider：DeepSeek（`llm_deepseek.py`，OpenAI 兼容 + JSON 模式，默认 `deepseek-v4-flash`），含输入分类（越界→世界内澄清）与基于 ValidationResult 的重规划反馈；离线测试 9 项（2026-07-12）。~~ 设置 `DEEPSEEK_API_KEY` 做真实冒烟并收集第一批创造性方案 trace。
-2. 实现 `/api/session`、`/api/action/quote`、`/api/action/resolve`、`/api/feedback`（包一层 `GameSession`）。
-3. 做最简 Web UI（`web/`）。
-4. 写 LLM 玩家代理，自动跑 20-50 局（阶段 4.5）。
-5. 找 5-10 人测试。
+1. ~~接入 DeepSeek 并完成三轮真实试玩；根据 trace 修复空提议公平性、节拍归因、叙事事实接地、custom 披露、裸自然语言 CLI 和空渲染重试（2026-07-12 至 2026-07-13）。~~ 再打一局验证修复效果。
+2. 写故事 #2（关系驱动都市日常），同时做纸面模块化记账，用第二种内容验证模块边界。
+3. 在两个故事的 trace 基础上重构正式能力模块，并以对话模块作为第一个正式实现。
+4. 接入 LLM 导演反应与 NPC 动机规划。
+5. 实现 `/api/session`、`/api/action/quote`、`/api/action/resolve`、`/api/feedback` 和最简 Web UI；随后写 LLM 玩家代理自动跑局。
+6. 找 5-10 人测试。
 
 第一句工程目标：
 
-> 先让一个玩家在浏览器里用“意图按钮 + 自然语言方案 + 风险报价 + 判定后果”的方式，完整玩完《午夜前的档案室》。
+> 先证明同一套“自由表达 → 公平报价 → 确定性提交 → 事实叙事”链路能支撑两个机制重心不同的故事，再把它包装成 Web 产品。

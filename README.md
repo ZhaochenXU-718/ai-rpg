@@ -67,17 +67,17 @@
 
 每个模块不仅提供规则，还向 LLM 暴露工具、观察信息、可提议效果和不变量。协议见 [llm-action-plan-protocol](docs/llm-action-plan-protocol.md)。
 
-## 现状对照（2026-07-12）
+## 现状对照（2026-07-13）
 
-**已落地**：理解 → 路由 → 报价 → 账本 → 渲染的完整纵向链路（DeepSeek + mock/replay）；感知墙；报价约束力与 fail-forward 政策；澄清延续；trace；校验器 / walkthrough / 单元测试（66 项）。
+**已落地**：理解 → 路由 → 报价 → 账本 → 渲染的完整纵向链路（DeepSeek + mock/replay）；感知墙；报价约束力与 fail-forward 政策；澄清延续；trace；LLM 空提议的内容兜底；独立行动回应通道与世界节拍归因；叙事目标位置与过去事件接地；归因安全的模板回退；裸自然语言 CLI；通用 CLI 故事发现；校验器 / walkthrough / 单元测试（77 项）。
 
-**雏形**：导演与 NPC 仅有 world_rules 移动规则；能力模块还是静态路由器的一体化实现，"选装"未成立；样板故事《午夜前的档案室》一个。
+**雏形**：导演与 NPC 仅有 world_rules 移动规则；能力模块还是静态路由器的一体化实现，"选装"未成立；现有《午夜前的档案室》和都市日常《晚风中的一桌饭》两个样板故事。
 
 **未开始**：对话模块、战斗 / 日程 / 经济模块、跨会话成长、Web UI、LLM 玩家代理。
 
 **演进顺序**（依据与详情见 [mvp-implementation-plan](mvp-implementation-plan.md) 与 [dev-notes](dev-notes/)）：
 
-1. 真实试玩补齐创造性行动 trace；
+1. 用修复后的链路再做真实试玩，补齐创造性行动 trace；
 2. **故事 #2**（关系驱动的都市日常）+ 纸面模块化记账——把模块边界从假设变成证据；
 3. 正式能力模块化重构（协议接口不动，动路由器背后的实现）；
 4. **对话模块**作为第一个按正式接口实现的能力模块，在两个故事上验证；
@@ -101,7 +101,9 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 游玩（LLM 模式需要 DEEPSEEK_API_KEY）
-python server/cli.py --llm deepseek   # 或 --llm mock / off
+python server/cli.py --llm deepseek   # 未指定故事时从 content 目录选择
+python server/cli.py content/rooftop_supper.yaml --llm deepseek
+python server/cli.py content/midnight_archive.yaml --llm deepseek
 # 校验内容与可解性回归
 python tools/validate_content.py content/midnight_archive.yaml
 python tools/check_walkthroughs.py content/walkthroughs/midnight_archive.yaml

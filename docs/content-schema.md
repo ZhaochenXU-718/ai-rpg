@@ -605,11 +605,14 @@ storylets:
   - id: maid_warning
     title: "侍女的低声提醒"
     type: reveal
+    attribution: action_response
     once: true
     trigger:
       scene_any:
         - great_hall
         - servant_corridor
+      intent: negotiate
+      object_any: [maid]
       npc_state:
         maid.trust_gte: 2
       world_state:
@@ -633,6 +636,13 @@ storylets:
 - `trigger`
 - `effect`
 - `narrative_hint`
+
+可选的 `attribution` 取：
+
+- `action_response`（默认）：事件是对玩家本回合行动的专门回应，可以参与玩家行动的成功/失败归因；必须至少有 `intent` / `intent_any` 或对象约束，不能搭任意回合触发。
+- `world_beat`：事件是随世界状态推进的导演节拍，不是玩家行动的直接成果。无 `intent` / `intent_any` 且无对象约束的重效果事件必须显式声明此值。
+
+叙事事实清单会把两类提示分组；渲染 LLM 不得把 `world_beat` 写成玩家行动成功导致的结果。
 
 可选的 `phase` 取 `action`（默认）或 `after_world`。只有需要读取本回合 NPC 移动结果的到达、相遇、追捕事件才使用 `after_world`。
 
@@ -890,7 +900,7 @@ walkthroughs:
       - note: "观察全家画像，建立与薇拉的第一层信任"
         intent: observe
         objects: [family_portrait]
-        expect_storylets: [opening_pressure, observe_family_portrait, maid_warning]
+        expect_storylets: [opening_pressure, observe_family_portrait]
       - note: "与薇拉交涉，触发旧徽章"
         intent: negotiate
         objects: [heir]

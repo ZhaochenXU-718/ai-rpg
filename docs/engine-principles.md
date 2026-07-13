@@ -66,6 +66,7 @@
 | "和薇拉聊遗嘱"把玩家送出了大厅：转场卡用裸 custom 触发 | B + 校验类 | LLM 时代 custom 承载一切自由文本，重效果卡必须带对象约束；三张转场卡补 `object_any`；校验器新规则：custom 触发 + 重效果 + 无对象约束 → 警告 |
 | 报价没披露"你将离开大厅"，确认后才发现自己移动了 | C（报价约束） | 感知墙开一个例外：玩家**自身**的移动是自己行动的一等后果不是隐藏世界事实，报价卡显示"预计移动：A → B" |
 | 引擎核心内嵌悬疑词汇：`state.clues`/"新线索"文案/CLI `clues` 命令；prompt 硬编码「交涉」意图名；renderer 硬编码 `world.time_left` | C（守则 #4 违例，审计发现而非试玩发现） | 通用化为 `facts` + `add_facts`，展示称呼由故事声明 `perception.facts_label`；意图选择指引完全来自内容层工具描述（社交词汇搬进 negotiate 的 description）；"是否只有代价变化"改判意图声明的 `typical_cost` 路径 |
+| 与角色 A 交谈却只得到角色 B 的自动事件；标记 `world_beat` 后在空叙事模板回退中仍复现 | B + C | 内容层把角色事件绑定到具体 intent/object；通用 resolver 保证每个有效行动都有目标接地的回应通道；模板回退按行动回应、世界节拍、世界反应分组输出；空叙事显式记录 `narration_fallback` trace |
 
 ## 4. 后续协议待办（继续禁止特判）
 
