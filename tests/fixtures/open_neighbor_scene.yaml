@@ -28,7 +28,26 @@ global_rules:
   time:
     countdown_enabled: false
   boundaries:
-    - "核心人物、地点和物品均已在内容中定义。"
+    - "核心人物已在内容中定义；生成式局部事实只能出现在声明的原型与预算内。"
+
+# 作者声明的生成边界：Director 可以在此范围内提议局部地点和局势，
+# 由引擎的原型 / 预算 / 冲突检查裁决后原子提交（Local Canon）。
+generation:
+  budgets:
+    locations: 1
+    situations: 1
+  location_archetypes:
+    storage_nook:
+      label: "临时收纳角"
+      description_hint: "院子边上一处可以临时存放东西的小空间"
+      allowed_parents: [courtyard]
+  situation_archetypes:
+    neighbor_gathering:
+      label: "邻里小聚"
+      description_hint: "几位邻居在附近围拢起来的临时局面"
+      allowed_locations: [courtyard, workshop]
+      max_duration_turns: 3
+      expiry_narrative: "围拢的邻居各自散开，院子恢复了平常的样子。"
 
 world_board:
   nodes:

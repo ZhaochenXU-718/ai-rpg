@@ -397,6 +397,8 @@ def classify_path_authority(story: Story, path: str) -> AuthorityLevel:
     root = path.split(".", 1)[0]
     if root in ("positions", "item_locations"):
         return AuthorityLevel.MECHANICAL
+    if root == "generated":
+        return AuthorityLevel.LOCAL_CANON
     limits = story.resolution_limits or {}
     if path in (limits.get("patchable") or {}):
         return AuthorityLevel.SOFT_STATE
@@ -435,6 +437,7 @@ def build_committed_outcome(
         + [f"storylet.{storylet_id}" for storylet_id in result.fired]
         + [f"world_rule.{rule_id}" for rule_id in result.world_rules]
         + [f"director.{beat.beat_id}" for beat in result.director_beats]
+        + [f"local_canon.{record.entity_id}" for record in result.local_canon]
     ):
         if source not in sources:
             sources.append(source)
@@ -476,6 +479,7 @@ def build_committed_outcome(
         accepted_step_indices=validation.accepted_step_indices,
         committed_changes=committed,
         director_beats=tuple(result.director_beats),
+        local_canon=tuple(result.local_canon),
         fired_storylets=tuple(result.fired),
         world_events=tuple(
             list(result.world_rules)

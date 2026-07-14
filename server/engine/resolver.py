@@ -25,7 +25,8 @@ from .conditions import check_condition_block, evaluate_endings
 from .content import Story
 from .effects import TemporaryEffects, apply_effect, effect_changes_scene
 from .limits import clamp_generic_patch, validate_generic_patch
-from .llm_protocol import CommittedDirectorBeat
+from .llm_protocol import CommittedDirectorBeat, CommittedLocalCanon
+from .local_canon import expire_situations
 from .state import apply_patch_value, get_value, set_value
 from .world import advance_world
 
@@ -66,6 +67,7 @@ class TurnResult:
     errors: list[str] = field(default_factory=list)
     world_rules: list[str] = field(default_factory=list)
     director_beats: list[CommittedDirectorBeat] = field(default_factory=list)
+    local_canon: list[CommittedLocalCanon] = field(default_factory=list)
     director_trace: dict[str, Any] = field(default_factory=dict)
     result_tier: str = RESULT_FAIL_FORWARD
     primary_goal_status_override: str | None = None
@@ -345,7 +347,7 @@ def run_turn(
         _mark_action_effect(result, "engine.move")
         hint = str(
             selected_exit.get("narrative_hint")
-            or f"你移动到了{story.scene(destination).get('name', destination)}。"
+            or f"你移动到了{story.location_name(state, destination)}。"
         )
         result.narrative_hints.append(hint)
         result.action_response_hints.append(hint)
@@ -393,8 +395,18 @@ def run_turn(
             result.narrative_hints.append(fallback)
     result.new_facts = state["facts"][fact_count:]
 
-    # 5. temporary effect expiry
+    # 5. temporary effect expiry; local situations follow the same clock
     result.expired = temporaries.expire(state, turn_no)
+    for situation_id, record in expire_situations(state, turn_no):
+        path = f"generated.situations.{situation_id}.active"
+        _record_changes(result, [(path, True, False)], "local_canon.expiry")
+        archetype = story.situation_archetypes.get(str(record.get("archetype"))) or {}
+        hint = str(
+            archetype.get("expiry_narrative")
+            or f"「{record.get('name', situation_id)}」结束了。"
+        )
+        result.narrative_hints.append(hint)
+        result.world_reaction_hints.append(hint)
 
     # 6. endings
     result.ending = evaluate_endings(state, story.endings)

@@ -26,6 +26,10 @@ def build_initial_state(story: dict[str, Any]) -> dict[str, Any]:
         "item_locations": initial.get("item_locations", {}),
         "characters": {},
         "facts": [],
+        # Validated generative facts (Local Canon). Authors never seed this
+        # namespace; it is populated only through the engine's admission
+        # checks and participates in checkpoints like any other state.
+        "generated": {"locations": {}, "situations": {}},
     }
     for char_id, char in (story.get("characters") or {}).items():
         state["characters"][char_id] = copy.deepcopy(char.get("initial_state", {}))
@@ -36,8 +40,8 @@ def resolve_path(state: dict[str, Any], path: str) -> tuple[dict[str, Any], str]
     """Return (container, leaf_key) for a dotted state path, creating containers."""
     parts = path.split(".")
     root = parts[0]
-    if root in ("world", "player", "scene", "flags", "positions", "item_locations"):
-        container = state[root]
+    if root in ("world", "player", "scene", "flags", "positions", "item_locations", "generated"):
+        container = state.setdefault(root, {}) if root == "generated" else state[root]
         parts = parts[1:]
     elif root == "characters":
         container = state["characters"]

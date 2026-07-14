@@ -69,6 +69,7 @@ def print_turn(session: GameSession, provider, recorder, result, player_text: st
         result,
         prose=prose,
         free_text_mode=provider is not None,
+        state=session.state,
     ))
 
 
@@ -352,8 +353,10 @@ def main() -> int:
                 labels = [story.object_label(scene_now, obj, session.state) for obj in option["objects"]]
                 hint += f"，相关对象：{ '、'.join(labels) }"
             print(hint + "）")
-        intent_ids = suggested_intents(story, session.state)
-        print_intents(story, intent_ids)
+        # LLM 模式只有两种输入：自然语言，或 ideas 提案卡。固定意图菜单
+        # 仅在无理解层（--llm off）的结构化兜底模式下显示。
+        if provider is None:
+            print_intents(story, suggested_intents(story, session.state))
 
         line = read_line(PROMPT)
         if line is None or line.lower() in ("quit", "exit", "q"):

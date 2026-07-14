@@ -33,9 +33,11 @@ from .llm import (
     SuggestionResponse,
 )
 from .llm_protocol import (
+    GENERATED_ENTITY_PREFIX,
     ActionPlan,
     CapabilityAction,
     DirectorBeat,
+    LocalCanonProposal,
     RiskProposal,
     StateChangeProposal,
     SuggestedActionDraft,
@@ -48,7 +50,7 @@ DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
 PROMPT_VERSION = "deepseek-plan-v1"
 SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v1"
-DIRECTOR_PROMPT_VERSION = "deepseek-director-v1"
+DIRECTOR_PROMPT_VERSION = "deepseek-director-v2"
 MAX_REPAIR_ROUNDS = 1
 
 # Transport: (messages, options) -> (content, usage). Injectable for tests.
@@ -142,7 +144,7 @@ DIRECTOR_SYSTEM_PROMPT = """\
 4. summary 只能描述当前可见的动作、神态、短对白或人物进场，不得发明物品、伤害、关系变化、秘密披露、任务完成或其他机械结果。
 5. 人物行为应符合其 motivation、role 和当前局势。没有必要的介入就返回空 beats；不要为了热闹强行让人物说话或进场。
 6. 每个人物最多一个节拍。你不是裁判，不能改变玩家行动结果。
-7. 只输出 {"beats": [...]}，不要输出其它文本。
+7. 只输出 {"beats": [...], "local_canon": [...]}，不要输出其它文本；没有内容的数组留空。
 
 单个节拍格式：
 {
@@ -152,6 +154,26 @@ DIRECTOR_SYSTEM_PROMPT = """\
   "target_ids": ["已有目标 ID"],
   "summary": "玩家可见的克制节拍",
   "motivation": "该节拍如何服从人物既有动机"
+}
+
+关于 local_canon（生成式局部事实）：
+1. 仅当输入包含【生成边界】且其中预算有剩余时，才可以提议；否则 local_canon 必须为空数组。
+2. 只能使用【生成边界】列出的 archetype_id；kind 只能是 location 或 situation。禁止创造人物——重要人物只能来自作者角色池。
+3. entity_id 必须以 gen_ 开头且全新；name 不得与任何既有人物、物品、地点重名。
+4. parent_location_id 必须是作者定义的地点，且在原型允许范围内；situation 的持续回合不得超过原型上限。
+5. description 是玩家将看到的事实描述，不得泄露秘密、不得宣称机械结果（不能替玩家获得物品或改变数值）。
+6. 每次最多提议 1 条，且只在它让当前场景明显更可信、可玩时才提议；宁缺毋滥。
+
+单条 local_canon 格式：
+{
+  "kind": "location|situation",
+  "archetype_id": "生成边界中的原型 ID",
+  "entity_id": "gen_ 开头的新 ID",
+  "name": "简短名称",
+  "description": "玩家可见的事实描述",
+  "parent_location_id": "作者定义的地点 ID",
+  "expires_after_turns": 3,
+  "reason": "为什么此刻需要这个局部事实"
 }
 """
 
@@ -213,6 +235,8 @@ def build_director_messages(request: DirectorRequest) -> list[dict[str, str]]:
         "世界边界": list(request.world_rules),
         "节拍上限": request.max_beats,
     }
+    if request.generation:
+        payload["生成边界"] = request.generation
     return [
         {"role": "system", "content": DIRECTOR_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -384,10 +408,55 @@ def coerce_suggestions(
     return tuple(drafts)
 
 
-def coerce_director_beats(
+def _sanitize_generated_id(value: Any) -> str:
+    entity_id = re.sub(r"[^a-z0-9_]", "_", str(value or "").strip().lower())
+    if not entity_id:
+        entity_id = new_protocol_id("gen")
+    if not entity_id.startswith(GENERATED_ENTITY_PREFIX):
+        entity_id = f"{GENERATED_ENTITY_PREFIX}{entity_id.lstrip('_')}"
+    return entity_id
+
+
+def coerce_local_canon_proposals(
+    data: dict[str, Any],
+    request: DirectorRequest,
+) -> tuple[LocalCanonProposal, ...]:
+    """Best-effort parse; anything malformed is dropped, never repaired into
+    authority (the engine's admission checks are the real gate)."""
+    if not request.generation:
+        return ()
+    proposals: list[LocalCanonProposal] = []
+    for raw in data.get("local_canon") or []:
+        if not isinstance(raw, dict):
+            continue
+        expires = raw.get("expires_after_turns")
+        try:
+            proposal = LocalCanonProposal(
+                proposal_id=new_protocol_id("lcp"),
+                state_revision=request.state_revision,
+                kind=str(raw.get("kind") or ""),
+                archetype_id=str(raw.get("archetype_id") or ""),
+                entity_id=_sanitize_generated_id(raw.get("entity_id")),
+                name=str(raw.get("name") or "").strip(),
+                description=str(raw.get("description") or "").strip(),
+                parent_location_id=str(
+                    raw.get("parent_location_id") or request.location_id
+                ),
+                expires_after_turns=(
+                    int(expires) if isinstance(expires, (int, float)) else None
+                ),
+                reason=str(raw.get("reason") or "").strip() or "Director 提议",
+            )
+        except Exception:
+            continue
+        proposals.append(proposal)
+    return tuple(proposals)
+
+
+def coerce_director_response(
     content: str,
     request: DirectorRequest,
-) -> tuple[DirectorBeat, ...]:
+) -> tuple[tuple[DirectorBeat, ...], tuple[LocalCanonProposal, ...]]:
     try:
         data = json.loads(_strip_fences(content))
     except json.JSONDecodeError as exc:
@@ -415,7 +484,14 @@ def coerce_director_beats(
         beats.append(beat)
     if data["beats"] and not beats:
         raise ValueError("no valid Director beats")
-    return tuple(beats)
+    return tuple(beats), coerce_local_canon_proposals(data, request)
+
+
+def coerce_director_beats(
+    content: str,
+    request: DirectorRequest,
+) -> tuple[DirectorBeat, ...]:
+    return coerce_director_response(content, request)[0]
 
 
 class DeepSeekProvider(LLMProvider):
@@ -608,7 +684,7 @@ class DeepSeekProvider(LLMProvider):
                 })
                 continue
             try:
-                beats = coerce_director_beats(content, request)
+                beats, local_canon = coerce_director_response(content, request)
             except ValueError as exc:
                 last_error = str(exc)
                 messages.append({"role": "assistant", "content": content})
@@ -624,5 +700,6 @@ class DeepSeekProvider(LLMProvider):
                 prompt_version=DIRECTOR_PROMPT_VERSION,
                 latency_ms=round((time.monotonic() - started) * 1000, 2),
                 usage=usage_total,
+                local_canon=local_canon,
             )
         raise LLMProviderError(f"DeepSeek Director 连续无法解析：{last_error}")

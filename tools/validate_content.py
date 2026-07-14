@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -1438,6 +1439,84 @@ def validate_endings(
             validate_state_path(str(path), known_paths, character_ids, report, f"endings.{ending_id}.conditions")
 
 
+def validate_generation(
+    data: dict[str, Any],
+    scenes: dict[str, Any],
+    characters: dict[str, Any],
+    node_ids: set[str],
+    item_ids: set[str],
+    report: ValidationReport,
+) -> None:
+    """Author-declared generative boundary (content-schema section 12).
+
+    Absent block means nothing may be generated; a declared block must be
+    internally consistent so runtime admission never meets a malformed rule.
+    """
+    generation = data.get("generation")
+    if generation is None:
+        return
+    if not isinstance(generation, dict):
+        report.error("generation 必须是映射")
+        return
+
+    budgets = generation.get("budgets")
+    if not isinstance(budgets, dict) or not budgets:
+        report.error("generation.budgets 必须声明（缺预算的生成边界没有约束力）")
+        budgets = {}
+    for key, value in (budgets or {}).items():
+        if key not in ("locations", "situations"):
+            report.error(f"generation.budgets 含未知预算键 '{key}'（v1 只支持 locations / situations）")
+        elif not isinstance(value, int) or value < 0:
+            report.error(f"generation.budgets.{key} 必须是非负整数")
+
+    known_locations = set(node_ids) | set(scenes)
+    reserved_ids = set(characters) | set(scenes) | set(node_ids) | set(item_ids)
+
+    def check_archetypes(section: str, allowed_key: str) -> None:
+        archetypes = generation.get(section)
+        if archetypes is None:
+            return
+        if not isinstance(archetypes, dict):
+            report.error(f"generation.{section} 必须是 id → 定义的映射")
+            return
+        for archetype_id, spec in archetypes.items():
+            prefix = f"generation.{section}.{archetype_id}"
+            if not re.fullmatch(r"[a-z][a-z0-9_]*", str(archetype_id)):
+                report.error(f"{prefix}: 原型 ID 必须是小写下划线形式")
+            if str(archetype_id) in reserved_ids:
+                report.error(f"{prefix}: 原型 ID 与既有实体重名")
+            if not isinstance(spec, dict):
+                report.error(f"{prefix}: 原型定义必须是映射")
+                continue
+            if not spec.get("label"):
+                report.warn(f"{prefix}: 建议声明 label，供回执与提示显示")
+            for parent in spec.get(allowed_key) or []:
+                if str(parent) not in known_locations:
+                    report.error(
+                        f"{prefix}.{allowed_key}: '{parent}' 不是作者定义的地点"
+                    )
+            if section == "situation_archetypes":
+                maximum = spec.get("max_duration_turns")
+                if maximum is not None and (
+                    not isinstance(maximum, int) or maximum < 1
+                ):
+                    report.error(f"{prefix}.max_duration_turns 必须是正整数")
+
+    check_archetypes("location_archetypes", "allowed_parents")
+    check_archetypes("situation_archetypes", "allowed_locations")
+
+    has_archetype = bool(generation.get("location_archetypes")) or bool(
+        generation.get("situation_archetypes")
+    )
+    if not has_archetype:
+        report.warn("generation 声明了预算但没有任何原型，运行时不会产生任何生成实体")
+    if isinstance(budgets, dict):
+        if budgets.get("locations") and not generation.get("location_archetypes"):
+            report.warn("generation.budgets.locations > 0 但未声明 location_archetypes")
+        if budgets.get("situations") and not generation.get("situation_archetypes"):
+            report.warn("generation.budgets.situations > 0 但未声明 situation_archetypes")
+
+
 def validate_content(data: dict[str, Any]) -> ValidationReport:
     report = ValidationReport()
     validate_top_level(data, report)
@@ -1473,6 +1552,7 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
     validate_endings(endings, known_paths, set(characters), report)
     validate_resolution_limits(data, known_paths, set(characters), report)
     validate_perception_block(data, known_paths, set(characters), report)
+    validate_generation(data, scenes, characters, node_ids, item_ids, report)
     validate_content_graph(data, scenes, storylets, report)
 
     return report

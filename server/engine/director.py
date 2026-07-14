@@ -19,12 +19,19 @@ from .llm_protocol import (
     AuthorityLevel,
     CommittedChange,
     CommittedDirectorBeat,
+    CommittedLocalCanon,
     DirectorBeat,
     DirectorBeatKind,
     DirectorBeatValidation,
     IssueSeverity,
     ValidationIssue,
     new_protocol_id,
+)
+from .local_canon import (
+    MAX_LOCAL_CANON_PER_TURN,
+    commit_local_canon,
+    generation_context,
+    validate_local_canon,
 )
 from .state import set_value
 from .world import board_neighbors
@@ -220,6 +227,7 @@ class DirectorCycleResult:
     """Non-authoritative provider response plus accepted engine commits."""
 
     accepted: list[CommittedDirectorBeat] = field(default_factory=list)
+    accepted_local_canon: list[CommittedLocalCanon] = field(default_factory=list)
     rejected: list[dict[str, Any]] = field(default_factory=list)
     model: str = "none"
     prompt_version: str = "n/a"
@@ -236,6 +244,9 @@ class DirectorCycleResult:
             "latency_ms": self.latency_ms,
             "usage": self.usage,
             "accepted": [beat.to_dict() for beat in self.accepted],
+            "accepted_local_canon": [
+                record.to_dict() for record in self.accepted_local_canon
+            ],
             "rejected": self.rejected,
             "error": self.error,
         }
@@ -301,7 +312,12 @@ def run_director_cycle(
     """Propose, revalidate and atomically attach optional beats to a turn."""
     cycle = DirectorCycleResult()
     candidates = _director_candidates(story, state, result)
-    if not candidates:
+    generation = generation_context(story, state)
+    generation_open = any(
+        budget.get("remaining", 0) > 0
+        for budget in (generation.get("budgets") or {}).values()
+    )
+    if not candidates and not generation_open:
         result.director_trace = cycle.trace_dict()
         return cycle
     location_id = story.current_location(state)
@@ -325,6 +341,7 @@ def run_director_cycle(
         candidates=candidates,
         world_rules=world_rules,
         max_beats=max(0, min(2, max_beats)),
+        generation=generation,
     )
     try:
         response = provider.propose_director_beats(request)
@@ -397,6 +414,33 @@ def run_director_cycle(
         result.narrative_hints.append(beat.summary)
         result.world_beat_hints.append(beat.summary)
         used_actors.add(beat.actor_id)
+
+    # Local Canon proposals ride the same cycle but face their own admission
+    # checks; the per-turn cap is a hard engine throttle, not a suggestion.
+    for proposal in getattr(response, "local_canon", ())[:MAX_LOCAL_CANON_PER_TURN]:
+        validation = validate_local_canon(
+            story, state, proposal, state_revision=state_revision,
+        )
+        if not validation.can_commit:
+            cycle.rejected.append({
+                "proposal_id": proposal.proposal_id,
+                "issues": [issue.to_dict() for issue in validation.issues],
+            })
+            continue
+        committed_fact = commit_local_canon(
+            story,
+            state,
+            proposal,
+            validation,
+            turn_no=result.turn_no,
+        )
+        for change in committed_fact.committed_changes:
+            result.changes.append((change.path, change.previous, change.new))
+            result.change_sources.append(change.source)
+        cycle.accepted_local_canon.append(committed_fact)
+        result.local_canon.append(committed_fact)
+        result.narrative_hints.append(committed_fact.narrative_hint)
+        result.world_beat_hints.append(committed_fact.narrative_hint)
 
     result.director_trace = cycle.trace_dict()
     return cycle

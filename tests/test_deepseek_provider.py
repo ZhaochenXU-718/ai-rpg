@@ -282,7 +282,7 @@ class ProviderLoopTest(unittest.TestCase):
 
         self.assertEqual(len(response.beats), 1)
         self.assertEqual(response.beats[0].actor_id, "maid")
-        self.assertEqual(response.prompt_version, "deepseek-director-v1")
+        self.assertEqual(response.prompt_version, "deepseek-director-v2")
 
     def test_missing_api_key_fails_at_construction(self) -> None:
         import os

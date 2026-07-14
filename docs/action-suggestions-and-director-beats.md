@@ -130,16 +130,43 @@ LLM 模式中的 Director 周期发生在玩家能力、storylet、world rules �
 
 `enter_scene` 的位置变化属于 `MECHANICAL` 权威；`react` / `advance_plan` 当前只允许产生表现层节拍，不直接修改关系、物品、任务或 Canon。完整人物日程与长期计划状态尚未结构化，当前模型只能依据作者 motivation、位置、角色资料、世界边界和本回合已提交结果决定是否介入。
 
-## 7. 当前边界与下一步
+## 7. Local Canon 提议（生成式局部事实）
 
-本轮已经打通协议和首个能力纵切，但还不是完整产品形态：
+Director 响应可以在 `beats` 之外携带 `local_canon` 提议数组，这是 LLM 创造持久新实体的**唯一**通道（`ActionPlan.proposed_changes` 中的 `local_canon` 权限提议会被剥离）。作者通过内容 `generation` 块立法（原型 + 硬预算，见 [content-schema](content-schema.md) 第 18 节），缺省禁止一切生成。
+
+```text
+run_director_cycle
+→ 组装 generation 上下文（原型、剩余预算、既有生成实体）
+→ provider 返回 beats + local_canon 提议
+→ 每回合最多 1 条进入准入检查（validate_local_canon）：
+    原型在清单内 / gen_ 命名空间且 ID 全新 / 名称不与 Canon 冲突
+    / 父地点是作者地点且在原型允许范围 / 生命周期不超原型上限
+    / 预算未耗尽 / revision 未过期
+→ 通过则 commit_local_canon 原子写入 state.generated（local_canon 权限层）
+→ 拒绝项带 issue 码进入 director_trace.rejected，状态零变化
+```
+
+运行时语义：
+
+- **生成地点**：自动获得“父地点 ↔ 生成地点”双向出口，可移动进入并返回；感知墙内显示其名称与描述。
+- **局势**：进入所在场景的可见实体与可交互对象；`expires_at_turn` 到期后由 resolver 在回合结束时转为不活跃（归因 `local_canon.expiry`，展示原型声明的 `expiry_narrative`），记录保留作 provenance。
+- **预算**：按分支累计创建数计算，过期不释放——预算是作者的总量承诺，不是并发上限。
+- **回滚**：生成实体随 checkpoint 快照参与撤回与分支，撤回到创建之前的节点即不存在，无需额外协议。
+- **回执**：提交回合的机械回执显示“新增局部事实：〈名称〉〔地点 / 局势〕”；`CommittedOutcome.local_canon` 与 `resolution_sources` 携带完整结构化记录。
+
+v1 明确不做：生成任何角色（重要人物只能来自作者角色池，无名路人停留在表现层）、生成实体嵌套（只能挂在作者地点上）、承诺 / 任务 / 关系类事实。
+
+## 8. 当前边界与下一步
+
+本轮已经打通协议、首个能力纵切和最小 Local Canon，但还不是完整产品形态：
 
 - 提案由 CLI 按需生成，尚未在每轮 UI 中自动刷新；
 - mock 的提案多样性较基础，真实模型质量需要基于 trace 评估；
 - `social.request_item` 当前只有直接同意转移或明确拒绝，条件交换应由后续社会能力协议显式表达；
-- Director 已能调度进场和表现层反应，但结构化日程、长期 NPC 计划状态与节拍冷却仍未实现；
-- 正式可插拔 Capability Module Contract 与 Local Canon 仍未实现。
+- Director 已能调度进场、表现层反应和 Local Canon 提议，但结构化日程、长期 NPC 计划状态与节拍冷却仍未实现；
+- 正式可插拔 Capability Module Contract 仍未实现；
+- Local Canon 仅覆盖局部地点与局势；次要 NPC 晋升、承诺 / 任务类事实按试玩证据后置。
 
-测试夹具 `tests/fixtures/open_neighbor_scene.yaml` 刻意不包含任何普通行动 storylet：`social.request_item` 仍可完成物品请求，Director 仍只能让相邻的作者角色进场。这证明 storylet 可以退回 Canon 锚点，而不是普通行动白名单。
+测试夹具 `tests/fixtures/open_neighbor_scene.yaml` 刻意不包含任何普通行动 storylet：`social.request_item` 仍可完成物品请求，Director 仍只能让相邻的作者角色进场，Local Canon 只能在声明的原型与预算内扩建世界。这证明 storylet 可以退回 Canon 锚点，而不是普通行动白名单。
 
-下一步开始最小 Local Canon，优先处理局部地点与局势，同时为社会能力增加显式条件交换结果。核心人物继续禁止临场创建。
+下一步为社会能力增加显式条件交换结果，并用真实 DeepSeek 试玩评估提案与生成质量。核心人物继续禁止临场创建。

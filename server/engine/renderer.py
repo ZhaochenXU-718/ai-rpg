@@ -11,6 +11,7 @@ from typing import Any
 
 from .content import Story
 from .director import current_goal, current_scene_id
+from .llm_protocol import LocalCanonKind
 from .resolver import RESULT_FAIL_FORWARD, RESULT_PARTIAL, RESULT_SUCCESS, TurnResult
 from .state import get_value
 
@@ -21,10 +22,19 @@ TIER_TEXT = {
 }
 
 
-def render_scene_entry(story: Story, scene_id: str) -> str:
+def render_scene_entry(
+    story: Story, scene_id: str, state: dict[str, Any] | None = None
+) -> str:
     scene = story.scene(scene_id)
-    lines = [f"—— {scene.get('name', scene_id)} ——"]
+    name = story.location_name(state, scene_id) if state is not None else scene.get(
+        "name", scene_id
+    )
+    lines = [f"—— {name} ——"]
     entry = (scene.get("entry_text") or "").strip()
+    if not entry and state is not None:
+        record = story.generated_locations(state).get(scene_id)
+        if isinstance(record, dict):
+            entry = str(record.get("description") or "").strip()
     if entry:
         lines.append(entry)
     return "\n".join(lines)
@@ -34,7 +44,7 @@ def render_intro(story: Story, state: dict[str, Any]) -> str:
     parts = [f"《{story.title}》", ""]
     if story.premise:
         parts += [story.premise, ""]
-    parts.append(render_scene_entry(story, current_scene_id(state)))
+    parts.append(render_scene_entry(story, current_scene_id(state), state))
     return "\n".join(parts)
 
 
@@ -44,7 +54,7 @@ def render_status(story: Story, state: dict[str, Any]) -> str:
     from .perception import perception_config
 
     config = perception_config(story)
-    header = f"场景：{story.scene(current_scene_id(state)).get('name', current_scene_id(state))}"
+    header = f"场景：{story.location_name(state, current_scene_id(state))}"
     for key, label in config["world_state"].items():
         value = get_value(state, f"world.{key}")
         if value is not None:
@@ -178,6 +188,7 @@ def render_turn(
     prose: str | None = None,
     *,
     free_text_mode: bool = False,
+    state: dict[str, Any] | None = None,
 ) -> str:
     """Render one committed turn. ``prose`` (LLM narration) replaces the
     template text when provided; mechanical lines (facts, state changes,
@@ -241,15 +252,21 @@ def render_turn(
         (f"{path} {previous}→{new}" if previous is not None else f"{path} = {new}")
         for path, previous, new in collapsed
         if not str(path).startswith("world.current_goal")
+        # Local Canon records are dicts; their receipt is the dedicated
+        # "新增局部事实" line below, not a raw state dump.
+        and not str(path).startswith("generated.")
     ]
     if interesting:
         lines.append("（状态变化：" + "，".join(interesting) + "）")
+    for record in result.local_canon:
+        kind_label = "地点" if record.kind == LocalCanonKind.LOCATION else "局势"
+        lines.append(f"（新增局部事实：{record.name}〔{kind_label}〕）")
     for note in result.notes:
         lines.append(f"（{note}）")
     lines.append(f"【判定：{TIER_TEXT.get(result.result_tier, result.result_tier)}】")
     if result.scene_after != result.scene_before:
         lines.append("")
-        lines.append(render_scene_entry(story, result.scene_after))
+        lines.append(render_scene_entry(story, result.scene_after, state))
     return "\n".join(lines)
 
 

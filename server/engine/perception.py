@@ -161,6 +161,18 @@ def build_player_perception(
             ))
             seen.add(obj_id)
 
+    for situation_id, record in story.generated_situations_at(state, location_id).items():
+        if situation_id in seen:
+            continue
+        entities.append(_entity(
+            situation_id,
+            str(record.get("name") or situation_id),
+            EntityKind.STATE,
+            actionable=situation_id in actionable,
+            description=str(record.get("description") or ""),
+        ))
+        seen.add(situation_id)
+
     for node_id, label in story.exit_labels(state).items():
         if node_id in seen:
             continue
@@ -191,8 +203,7 @@ def build_player_perception(
         if value is not None:
             public_state[f"scene.{key}"] = value
 
-    node = story.world_nodes.get(location_id) or {}
-    location_name = node.get("name") or story.scene(location_id).get("name", location_id)
+    location_name = story.location_name(state, location_id)
 
     return PlayerPerception(
         story_id=story.id,

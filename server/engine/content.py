@@ -79,8 +79,57 @@ class Story:
     def resolution_limits(self) -> dict[str, Any] | None:
         return self.data.get("resolution_limits")
 
+    @property
+    def generation(self) -> dict[str, Any]:
+        """Author-declared generative boundary; absent means nothing may be
+        generated (no declaration is not a default allowance)."""
+        return self.data.get("generation") or {}
+
+    @property
+    def location_archetypes(self) -> dict[str, Any]:
+        return self.generation.get("location_archetypes") or {}
+
+    @property
+    def situation_archetypes(self) -> dict[str, Any]:
+        return self.generation.get("situation_archetypes") or {}
+
+    def generation_budget(self, budget_key: str) -> int:
+        try:
+            return int((self.generation.get("budgets") or {}).get(budget_key, 0))
+        except (TypeError, ValueError):
+            return 0
+
     def scene(self, scene_id: str) -> dict[str, Any]:
         return self.scenes.get(scene_id) or {}
+
+    def generated_locations(self, state: dict[str, Any]) -> dict[str, Any]:
+        return (state.get("generated") or {}).get("locations") or {}
+
+    def generated_situations_at(
+        self, state: dict[str, Any], node_id: str | None = None
+    ) -> dict[str, Any]:
+        node_id = node_id or self.current_location(state)
+        return {
+            situation_id: record
+            for situation_id, record in (
+                (state.get("generated") or {}).get("situations") or {}
+            ).items()
+            if isinstance(record, dict)
+            and record.get("active")
+            and record.get("parent") == node_id
+        }
+
+    def location_name(self, state: dict[str, Any], location_id: str) -> str:
+        node = self.world_nodes.get(location_id) or {}
+        if node.get("name"):
+            return str(node["name"])
+        scene_name = self.scene(location_id).get("name")
+        if scene_name:
+            return str(scene_name)
+        record = self.generated_locations(state).get(location_id)
+        if isinstance(record, dict) and record.get("name"):
+            return str(record["name"])
+        return location_id
 
     def current_location(self, state: dict[str, Any]) -> str:
         return (state.get("positions") or {}).get(
@@ -126,15 +175,41 @@ class Story:
         return found
 
     def available_exits(self, state: dict[str, Any]) -> list[dict[str, Any]]:
-        """Authored player exits whose state conditions currently hold."""
+        """Player exits whose state conditions currently hold.
+
+        Authored exits come from the scene declaration. Committed generated
+        locations (Local Canon) contribute derived exits: parent → generated
+        child, and generated location → its parent. Both directions exist
+        exactly because the commit admitted the attachment.
+        """
         from .conditions import check_condition_block
 
+        current = self.current_location(state)
         exits = []
-        for exit_spec in self.scene(self.current_location(state)).get("exits") or []:
+        for exit_spec in self.scene(current).get("exits") or []:
             if isinstance(exit_spec, dict) and check_condition_block(
                 state, exit_spec.get("when") or {}
             ):
                 exits.append(exit_spec)
+
+        generated = self.generated_locations(state)
+        declared = {str(spec.get("to")) for spec in exits if isinstance(spec, dict)}
+        for generated_id, record in generated.items():
+            if not isinstance(record, dict):
+                continue
+            if record.get("parent") == current and generated_id not in declared:
+                exits.append({
+                    "to": generated_id,
+                    "label": str(record.get("name") or generated_id),
+                })
+        current_record = generated.get(current)
+        if isinstance(current_record, dict):
+            parent = str(current_record.get("parent") or "")
+            if parent and parent not in declared:
+                exits.append({
+                    "to": parent,
+                    "label": self.location_name(state, parent),
+                })
         return exits
 
     def exit_labels(self, state: dict[str, Any]) -> dict[str, str]:
@@ -205,6 +280,7 @@ class Story:
         }
         objects.update(self.characters_at(state, scene_id))
         objects.update(self.items_at(state, scene_id))
+        objects.update(self.generated_situations_at(state, scene_id))
         return objects
 
     def scene_objects(self, scene_id: str, state: dict[str, Any] | None = None) -> set[str]:
@@ -213,6 +289,7 @@ class Story:
         if state is not None:
             objects.update(self.characters_at(state, scene_id))
             objects.update(self.items_at(state, scene_id))
+            objects.update(self.generated_situations_at(state, scene_id))
         return objects
 
     def actionable_objects(self, state: dict[str, Any]) -> set[str]:
@@ -268,6 +345,12 @@ class Story:
             return self.character_name(object_id)
         if object_id in self.items:
             return self.item_labels().get(object_id, object_id)
+        if state is not None:
+            generated = state.get("generated") or {}
+            for namespace in ("locations", "situations"):
+                record = (generated.get(namespace) or {}).get(object_id)
+                if isinstance(record, dict) and record.get("name"):
+                    return str(record["name"])
         return self.object_labels(scene_id, state).get(object_id, object_id)
 
     def intent(self, intent_id: str) -> dict[str, Any]:

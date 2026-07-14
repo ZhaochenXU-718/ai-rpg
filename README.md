@@ -71,11 +71,11 @@
 
 ## 现状对照（2026-07-14）
 
-**已落地**：理解 → 路由 → 报价 → 账本 → 渲染的 v0.1 纵向链路（DeepSeek + mock/replay）；感知墙；报价约束力与旧 fail-forward 路径；澄清延续；trace（含结果来源、主目标状态与纯代价标记）；低风险自由行动自动提交；内存 checkpoint / 撤回 / 状态分支及 CLI 入口；动态 `SuggestedAction`（DeepSeek / mock、生成后校验与去重、revision 失效、CLI `ideas` / `idea <n>`）；首个通用能力 `social.request_item`（用途不泄露隐藏物品、确定性同意 / 拒绝与物品转移）；`DirectorBeat` 的 DeepSeek / mock 生成、既有人物候选、确定性复验、故障隔离与同回合原子提交；无普通行动 storylet 的开放场景回归；校验器 / walkthrough / 单元测试（110 项）。《午夜前的档案室》保留显式倒计时，《晚风中的一桌饭》已切换为无倒计时自由叙事配置。
+**已落地**：理解 → 路由 → 报价 → 账本 → 渲染的 v0.1 纵向链路（DeepSeek + mock/replay）；感知墙；报价约束力与旧 fail-forward 路径；澄清延续；trace（含结果来源、主目标状态与纯代价标记）；低风险自由行动自动提交；内存 checkpoint / 撤回 / 状态分支及 CLI 入口；动态 `SuggestedAction`（DeepSeek / mock、生成后校验与去重、revision 失效、CLI `ideas` / `idea <n>`）；首个通用能力 `social.request_item`（用途不泄露隐藏物品、确定性同意 / 拒绝与物品转移）；`DirectorBeat` 的 DeepSeek / mock 生成、既有人物候选、确定性复验、故障隔离与同回合原子提交；最小 Local Canon（作者 `generation` 立法：地点 / 局势原型 + 硬预算；Director 通道每回合最多 1 条提议，经原型 / 预算 / 命名 / 冲突 / 生命周期准入后原子提交 `local_canon` 权限层；生成地点自动可达、局势按期过期、随 checkpoint 参与撤回分支）；无普通行动 storylet 的开放场景回归；校验器 / walkthrough / 单元测试（129 项）。《午夜前的档案室》保留显式倒计时，《晚风中的一桌饭》已切换为无倒计时自由叙事配置。
 
-**雏形**：Director 已能在玩家提交内安排相邻既有人物进场或在场人物的表现层反应，但结构化日程、长期 NPC 计划状态与节拍冷却尚未建立；能力路由已抽出一个通用社会能力，但正式模块契约和“选装”尚未成立；现有《午夜前的档案室》和都市日常《晚风中的一桌饭》两个样板故事。
+**雏形**：Director 已能在玩家提交内安排相邻既有人物进场、在场人物的表现层反应与受限生成提议，但结构化日程、长期 NPC 计划状态与节拍冷却尚未建立；能力路由已抽出一个通用社会能力，但正式模块契约和“选装”尚未成立；Local Canon 覆盖局部地点与局势，次要 NPC 晋升和承诺 / 任务类事实未做；现有《午夜前的档案室》和都市日常《晚风中的一桌饭》两个样板故事。
 
-**未开始**：正式可插拔能力模块契约、checkpoint 跨进程持久化与完整消息树 UI、Local Canon、完整对话 / 战斗 / 日程 / 经济模块、跨会话成长、Web UI、LLM 玩家代理。
+**未开始**：正式可插拔能力模块契约、checkpoint 跨进程持久化与完整消息树 UI、完整对话 / 战斗 / 日程 / 经济模块、跨会话成长、Web UI、LLM 玩家代理。
 
 **演进顺序**（依据与详情见 [mvp-implementation-plan](mvp-implementation-plan.md) 与 [dev-notes](dev-notes/)）：
 
@@ -83,8 +83,9 @@
 2. ~~实现最小 checkpoint、撤回与状态分支语义；~~（2026-07-14 完成内存版）
 3. ~~用 `social.request_item` 完成第一个通用能力纵切，Storylet 退回剧情锚点；~~（2026-07-14 完成，含独立开放场景 fixture）
 4. ~~建立经验证的 LLM 行动提案层与既有人物 Director Beat，并接入同回合调度 / 提交；~~（2026-07-14 完成最小纵切）
-5. 实现最小 Local Canon（先地点 / 局势，重要人物禁止临场生成）；
-6. 最后建设长期摘要、完整消息树 UI、Web 产品外壳与 LLM 玩家代理。
+5. ~~实现最小 Local Canon（先地点 / 局势，重要人物禁止临场生成）；~~（2026-07-14 完成：`generation` 立法 + Director 提议通道 + 准入 / 预算 / 过期 / 分支回滚）
+6. 用真实 DeepSeek 在开放场景试玩，评估提案质量、生成质量与开放性指标，再决定正式 Capability Module Contract；
+7. 最后建设长期摘要、完整消息树 UI、Web 产品外壳与 LLM 玩家代理。
 
 ## 修订约定
 
@@ -98,6 +99,7 @@
 | 2026-07-14 | v0.2 | 重划作者 / 引擎 / LLM 权限；默认无倒计时、可逆行动自动执行并支持状态分支；定义动态行动提案、既有人物调度与 Local Canon 边界 |
 | 2026-07-14 | v0.3 | 实现动态行动提案、`social.request_item` 通用能力与既有人物 Director Beat 校验，补齐内容策略校验和 CLI 入口 |
 | 2026-07-14 | v0.4 | 将 Director Beat 接入提交后候选生成、确定性复验和同回合 checkpoint；新增无普通 storylet 的开放场景回归 |
+| 2026-07-14 | v0.5 | 实现最小 Local Canon：`generation` 生成边界 schema、`local_canon` 权限层、Director 提议通道与准入 / 预算 / 过期 / 分支回滚；演进顺序第 5 项完成 |
 
 ## 快速开始
 

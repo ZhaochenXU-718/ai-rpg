@@ -119,6 +119,7 @@ authoring_notes:
 | `quote_warnings` | list | 报价卡上的世界内风险提示（条件 + 文案），见 6.1 |
 | `world_rules` | list | 每个 world step 执行的通用实体移动规则，缺省为空 |
 | `items` | map | 可携带物品定义；使用时必须同时提供 `initial_state.item_locations` |
+| `generation` | map | 生成边界：可生成的地点 / 局势原型与硬预算（Local Canon），见第 18 节；缺省表示禁止一切生成 |
 | `genre_system` | map | 类型专属扩展 |
 | `authoring_notes` | map | 创作备注、生产记录 |
 
@@ -1052,3 +1053,35 @@ v2 是位置模型的不兼容升级：
 一句话总结：
 
 > 故事可以自由创作，但必须用稳定的状态、意图、事件卡和结局协议与导演引擎对话。
+
+## 18. `generation`：生成边界（Local Canon）
+
+`generation` 是作者对"引擎可以在哪里替我扩建世界"的显式立法（[authoring-contract](authoring-contract.md) 第 4 节的落地）。缺省表示禁止一切生成——没有声明就没有默认许可。
+
+```yaml
+generation:
+  budgets:              # 必填；每类实体在一条时间线分支上的硬上限
+    locations: 1
+    situations: 1
+  location_archetypes:  # 可生成地点的原型清单
+    storage_nook:
+      label: "临时收纳角"
+      description_hint: "院子边上一处可以临时存放东西的小空间"
+      allowed_parents: [courtyard]      # 只能挂在这些作者地点上；缺省 = 任意作者地点
+  situation_archetypes: # 可生成局势（临时局面）的原型清单
+    neighbor_gathering:
+      label: "邻里小聚"
+      description_hint: "几位邻居在附近围拢起来的临时局面"
+      allowed_locations: [courtyard, workshop]
+      max_duration_turns: 3             # 生命周期上限；提议不得超过
+      expiry_narrative: "围拢的邻居各自散开，院子恢复了平常的样子。"
+```
+
+约束与语义：
+
+1. **提议通道唯一**：Local Canon 只能由 Director 通道提议（每回合最多 1 条）；`ActionPlan.proposed_changes` 中出现 `local_canon` 权限的提议会被直接剥离。
+2. **准入检查**：原型必须在清单内；实体 ID 必须以 `gen_` 开头且全新；名称不得与既有人物、物品、地点重名；父地点必须是作者地点（生成实体不得嵌套）且在原型允许范围内；局势生命周期不得超过原型上限。
+3. **硬预算**：按分支内累计创建数计算，局势过期不释放预算——预算是作者配置的总量承诺，不是并发上限。
+4. **提交与回滚**：通过检查的提议写入 `state.generated` 命名空间（`local_canon` 权限层），随 checkpoint 快照参与撤回与分支；撤回到创建之前的节点，生成实体即不存在。
+5. **运行时表现**：生成地点自动获得"父地点 ↔ 生成地点"双向出口并进入感知；活跃局势作为场景实体进入感知与可交互对象，过期后转为不活跃并保留 provenance。
+6. **禁止人物**：v1 不支持生成任何角色。重要人物只能来自作者角色池；无名路人停留在表现层。

@@ -185,6 +185,7 @@ parent_plan_id: null
 | `presentation` | 动作姿态、气氛、无状态描写 | LLM可以自由生成，但不能伪造状态变化 |
 | `soft_state` | 情绪、注意力、短期判断 | 可由白名单和限幅规则验证 |
 | `mechanical` | 位置、物品、生命、金钱、时间 | 必须由对应能力工具验证并提交 |
+| `local_canon` | 生成式局部地点、临时局势 | 只能经 Director 通道提议，由原型 / 预算 / 冲突检查裁决后提交（见 [action-suggestions-and-director-beats](action-suggestions-and-director-beats.md) 第 7 节）；`ActionPlan.proposed_changes` 中出现即剥离 |
 | `canon` | 真凶、关键证据、死亡、任务完成 | 只能由作者锚点、受信规则或明确授权能力改变 |
 
 状态操作显式区分：

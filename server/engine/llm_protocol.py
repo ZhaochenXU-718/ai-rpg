@@ -55,6 +55,10 @@ class AuthorityLevel(str, Enum):
     PRESENTATION = "presentation"
     SOFT_STATE = "soft_state"
     MECHANICAL = "mechanical"
+    # Validated generative facts (authoring-contract section 4): proposed by
+    # the Director channel, admitted only through archetype, budget and
+    # conflict checks. Never writable from an ActionPlan proposal.
+    LOCAL_CANON = "local_canon"
     CANON = "canon"
 
 
@@ -390,6 +394,70 @@ class DirectorBeatValidation(ProtocolModel):
         return self
 
 
+class LocalCanonKind(str, Enum):
+    """v1 generative fact kinds; characters are deliberately not includable."""
+
+    LOCATION = "location"
+    SITUATION = "situation"
+
+
+GENERATED_ENTITY_PREFIX = "gen_"
+
+
+class LocalCanonProposal(ProtocolModel):
+    """A proposed persistent local fact; only the engine may admit it.
+
+    Entity ids live in a mandatory ``gen_`` namespace so generated facts can
+    never shadow an authored id and their provenance stays visible in every
+    trace and state dump.
+    """
+
+    proposal_id: NonEmptyStr
+    state_revision: NonNegativeInt
+    kind: LocalCanonKind
+    archetype_id: MachineId
+    entity_id: MachineId
+    name: NonEmptyStr
+    description: NonEmptyStr
+    # For locations: the authored location it attaches to.
+    # For situations: the authored location where the situation holds.
+    parent_location_id: NonEmptyStr
+    # Situations only: relative lifetime in turns; None follows the archetype.
+    expires_after_turns: Annotated[int, Field(ge=1)] | None = None
+    reason: NonEmptyStr
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def proposal_is_coherent(self):
+        if not self.entity_id.startswith(GENERATED_ENTITY_PREFIX):
+            raise ValueError(
+                f"generated entity ids must start with '{GENERATED_ENTITY_PREFIX}'"
+            )
+        if self.kind == LocalCanonKind.LOCATION and self.expires_after_turns is not None:
+            raise ValueError("v1 generated locations are persistent-local; no expiry")
+        return self
+
+
+class LocalCanonValidation(ProtocolModel):
+    validation_id: NonEmptyStr
+    proposal_id: NonEmptyStr
+    state_revision: NonNegativeInt
+    can_commit: bool
+    issues: tuple[ValidationIssue, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def decision_is_coherent(self):
+        has_error = any(
+            issue.severity == IssueSeverity.ERROR for issue in self.issues
+        )
+        if self.can_commit == has_error:
+            raise ValueError(
+                "can_commit must be true exactly when validation has no errors"
+            )
+        return self
+
+
 class CommittedChange(ProtocolModel):
     path: NonEmptyStr
     previous: Any
@@ -407,6 +475,21 @@ class CommittedDirectorBeat(ProtocolModel):
     kind: DirectorBeatKind
     actor_id: NonEmptyStr
     target_location_id: NonEmptyStr
+    narrative_hint: NonEmptyStr
+    committed_changes: tuple[CommittedChange, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+
+class CommittedLocalCanon(ProtocolModel):
+    """One admitted generative fact included in the surrounding turn commit."""
+
+    proposal_id: NonEmptyStr
+    validation_id: NonEmptyStr
+    kind: LocalCanonKind
+    entity_id: MachineId
+    archetype_id: MachineId
+    name: NonEmptyStr
+    parent_location_id: NonEmptyStr
     narrative_hint: NonEmptyStr
     committed_changes: tuple[CommittedChange, ...] = ()
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
@@ -430,6 +513,7 @@ class CommittedOutcome(ProtocolModel):
     accepted_step_indices: tuple[NonNegativeInt, ...] = ()
     committed_changes: tuple[CommittedChange, ...] = ()
     director_beats: tuple[CommittedDirectorBeat, ...] = ()
+    local_canon: tuple[CommittedLocalCanon, ...] = ()
     fired_storylets: tuple[NonEmptyStr, ...] = ()
     world_events: tuple[NonEmptyStr, ...] = ()
     new_facts: tuple[NonEmptyStr, ...] = ()

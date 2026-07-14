@@ -29,6 +29,7 @@ from .llm_protocol import (
     DirectorBeat,
     DirectorBeatKind,
     EntityKind,
+    LocalCanonProposal,
     PlayerPerception,
     SuggestedActionDraft,
     ValidationResult,
@@ -117,6 +118,9 @@ class DirectorRequest:
     candidates: tuple[dict[str, Any], ...] = ()
     world_rules: tuple[str, ...] = ()
     max_beats: int = 2
+    # Author-declared generative boundary (archetypes, budgets, existing
+    # generated entities). Empty means nothing may be generated this story.
+    generation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -127,6 +131,8 @@ class DirectorResponse:
     prompt_version: str = "n/a"
     latency_ms: float = 0.0
     usage: dict[str, Any] = field(default_factory=dict)
+    # Optional Local Canon proposals; the engine validates and may reject all.
+    local_canon: tuple[LocalCanonProposal, ...] = ()
 
 
 class LLMProviderError(Exception):
@@ -162,10 +168,12 @@ class ScriptedProvider(LLMProvider):
         plans: list[ActionPlan],
         suggestion_batches: list[tuple[SuggestedActionDraft, ...]] | None = None,
         director_batches: list[tuple[DirectorBeat, ...]] | None = None,
+        local_canon_batches: list[tuple[LocalCanonProposal, ...]] | None = None,
     ) -> None:
         self._plans = list(plans)
         self._suggestion_batches = list(suggestion_batches or [])
         self._director_batches = list(director_batches or [])
+        self._local_canon_batches = list(local_canon_batches or [])
 
     def propose_plan(self, request: PlanRequest) -> PlanResponse:
         if not self._plans:
@@ -192,10 +200,22 @@ class ScriptedProvider(LLMProvider):
 
     def propose_director_beats(self, request: DirectorRequest) -> DirectorResponse:
         beats = self._director_batches.pop(0) if self._director_batches else ()
+        proposals = (
+            self._local_canon_batches.pop(0) if self._local_canon_batches else ()
+        )
         return DirectorResponse(
             beats=beats,
-            raw=json.dumps([beat.to_dict() for beat in beats], ensure_ascii=False),
+            raw=json.dumps(
+                {
+                    "beats": [beat.to_dict() for beat in beats],
+                    "local_canon": [
+                        proposal.to_dict() for proposal in proposals
+                    ],
+                },
+                ensure_ascii=False,
+            ),
             model="scripted",
+            local_canon=proposals,
         )
 
 
