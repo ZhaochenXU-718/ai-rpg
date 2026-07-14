@@ -13,7 +13,10 @@ from server.engine.llm_protocol import (
     CapabilityTool,
     ChangeOperation,
     CommittedChange,
+    CommittedDirectorBeat,
     CommittedOutcome,
+    DirectorBeat,
+    DirectorBeatKind,
     EntityKind,
     IssueSeverity,
     PerceivedEntity,
@@ -21,6 +24,9 @@ from server.engine.llm_protocol import (
     RiskLikelihood,
     RiskProposal,
     StateChangeProposal,
+    SuggestedAction,
+    SuggestedActionDraft,
+    SuggestedActionSet,
     ValidationIssue,
     ValidationResult,
     action_plan_json_schema,
@@ -227,6 +233,59 @@ class LLMProtocolTests(unittest.TestCase):
                 ),
             )
 
+    def test_suggested_action_binds_card_text_plan_and_validation(self) -> None:
+        plan = self.make_plan()
+        validation = ValidationResult(
+            validation_id="validation_suggestion",
+            plan_id=plan.plan_id,
+            state_revision=plan.perception_revision,
+            can_execute=True,
+            can_replan=False,
+            accepted_step_indices=(0,),
+        )
+        draft = SuggestedActionDraft(
+            suggestion_id="suggestion_redirect",
+            perception_revision=plan.perception_revision,
+            title="借反光引开视线",
+            action_text=plan.player_text,
+            focus="creative",
+            rationale="从环境入手，避免直接冲突。",
+            plan=plan,
+        )
+        action = SuggestedAction(**draft.to_dict(), validation=validation)
+        suggestion_set = SuggestedActionSet(
+            suggestion_set_id="suggestions_demo",
+            perception_revision=plan.perception_revision,
+            actions=(action,),
+        )
+
+        self.assertEqual(
+            SuggestedActionSet.from_dict(suggestion_set.to_dict()),
+            suggestion_set,
+        )
+        invalid = draft.to_dict()
+        invalid["action_text"] = "换一条没有重新规划的文字"
+        with self.assertRaises(ValidationError):
+            SuggestedActionDraft.from_dict(invalid)
+
+    def test_director_beat_is_only_a_reference_to_an_actor(self) -> None:
+        beat = DirectorBeat(
+            beat_id="beat_guard_enters",
+            state_revision=6,
+            kind=DirectorBeatKind.ENTER_SCENE,
+            actor_id="guard",
+            target_location_id="archive_door",
+            target_ids=("player",),
+            summary="守卫循声来到档案室门口。",
+            motivation="确认刚才的异常响动。",
+        )
+
+        self.assertEqual(DirectorBeat.from_dict(beat.to_dict()), beat)
+        invalid = beat.to_dict()
+        invalid["target_ids"] = ["player", "player"]
+        with self.assertRaises(ValidationError):
+            DirectorBeat.from_dict(invalid)
+
     def test_committed_outcome_round_trip(self) -> None:
         outcome = CommittedOutcome(
             outcome_id="outcome_demo",
@@ -238,6 +297,8 @@ class LLMProtocolTests(unittest.TestCase):
             scene_before="archive_door",
             scene_after="archive_door",
             result_tier="partial_success",
+            primary_goal_status="partial",
+            resolution_sources=("creative_resolution",),
             accepted_step_indices=(0,),
             committed_changes=(
                 CommittedChange(
@@ -249,6 +310,14 @@ class LLMProtocolTests(unittest.TestCase):
                     reason="已验证的视觉误导",
                 ),
             ),
+            director_beats=(CommittedDirectorBeat(
+                beat_id="beat_guard_reacts",
+                validation_id="beat_validation_demo",
+                kind=DirectorBeatKind.REACT,
+                actor_id="guard",
+                target_location_id="archive_door",
+                narrative_hint="守卫侧过身，继续盯着东窗的动静。",
+            ),),
             world_events=("guard_attention_redirected",),
             new_facts=("守卫会对东窗方向的异常反光作出反应",),
         )

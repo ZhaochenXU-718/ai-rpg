@@ -194,7 +194,7 @@ class CapabilityRouterTest(unittest.TestCase):
         self.assertFalse(validation.can_execute)
         self.assertTrue(validation.can_replan)
         self.assertIn(
-            "plan.single_intent_step_required",
+            "plan.single_capability_step_required",
             {issue.code for issue in validation.issues},
         )
         self.assertEqual(self.session.turn_no, 0)

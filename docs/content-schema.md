@@ -250,6 +250,42 @@ initial_state:
 
 物品所有权只能通过受信任的 `move_items` 效果改变。v2 禁止同时用 `player.has_key` 之类布尔值复制同一个所有权事实，也禁止在 `available_objects` 中重复声明受跟踪物品。
 
+#### 4.3.1 可请求物品 `request_policy`
+
+普通的借用 / 索取不应要求作者为每个“意图 × 人物 × 物品”组合编写 storylet。可携带物品可以选择性声明 `request_policy`，接入通用的 `social.request_item` 能力：
+
+```yaml
+items:
+  picnic_mat:
+    name: "折叠野餐垫"
+    description: "洗得很干净，正好能铺桌。"
+    portable: true
+    consumable: false
+    request_policy:
+      enabled: true
+      when:
+        flags: { dinner_agreed: true }
+      purposes:
+        table_cover: "能铺桌的干净东西"
+      rapport_key: rapport
+      min_rapport: 1
+      grant_narrative: "罗叔从储物间翻出洗净的旧野餐垫借给你。"
+      refusal_narrative: "罗叔没有直接答应，也许要先让他了解用途。"
+```
+
+字段约束：
+
+- `request_policy` 只能用于 `portable: true` 的物品；不声明策略的物品不会被通用请求能力转移。
+- `when` 使用标准条件块，控制该用途何时进入能力目录；缺省表示没有额外情境条件。
+- `purposes` 必须是非空 map（稳定用途 ID → 玩家可见描述）或非空字符串列表。
+- 行动 LLM 只看到在场人物、用途 ID 和用途描述，不看到具体物品 ID；物品仍归感知墙和权威 `item_locations` 管理。
+- 物品当前必须由被请求人物携带，且人物必须与玩家在同一场景。引擎在执行时重新验证所有权，不能依据旧提案转移已经离手的物品。
+- `rapport_key` 缺省为 `rapport`，`min_rapport` 缺省为 `1`。`always_grant` / `never_grant` 可用于无随机性的明确政策，但不能同时为 true。
+- `grant_narrative` / `refusal_narrative` 是可选表现提示；同意时的物品转移、拒绝时的主目标状态都由引擎生成，文本不能替代账本效果。
+- 关键证据、唯一任务物品与 Canon 变化不应通过普通请求策略开放，应使用更严格的专用能力或作者锚点。
+
+该能力只调度作者已经定义的角色和物品，不创建新人物或新物品。完整交互协议见 [action-suggestions-and-director-beats](action-suggestions-and-director-beats.md)。
+
 ## 5. `characters`
 
 角色以 map 形式定义，key 是角色 ID。
@@ -328,9 +364,9 @@ intents:
 
 - `base_risk`: `low`、`medium`、`high`、`variable`
 - `quote_required`: 是否必须先报价再执行，见下方规则
-- `typical_cost`: 常见代价，通常包含 `time_left: -1`
+- `typical_cost`: 行动本身必然产生的代价，缺省为空。只有显式启用倒计时的故事，且该能力确实耗时时，才填写 `time_left`；禁止把统一扣时当成所有 intent 的默认值
 - `min_objects` / `max_objects`: 行动需要的目标数量边界
-- `requires_storylet_match`: `true` 时，本次行动必须能命中一张显式声明该意图的 action storylet；否则在报价、扣时和 world step 前拒绝。**该严格模式只约束结构化（无 LLM）路径**：LLM 计划路径上，目标合法但未预写的尝试按 fail-forward 执行（扣时、软代价过白名单、无 canon 效果、报价明示"没有把握"），防止零成本探测作者预写面
+- `requires_storylet_match`: v2 兼容字段。`true` 时，旧结构化路径必须命中一张显式 action storylet；旧 LLM 路径会进入 `allow_unauthored` fail-forward。**新能力模块不得使用此字段授权普通行动**：行动由能力模块裁决，storylet 只响应已提交状态并触发剧情锚点。目标政策见 `authoring-contract.md` 第 5 节
 - `engine_action`: 通用内建动作；当前仅支持 `move`
 - `fallback_proposal`: 无 LLM 模式下，行动未命中事件卡时的默认软状态提议。`npc_state: {key, step}` 作用于目标中的第一个人物；或直接给 `state_patch`。提议仍要过 `resolution_limits` 裁剪。阶段 3 由 LLM 提议替代
 - `fallback_narrative`: 未命中事件卡但有状态变化时的反馈文案；不填时引擎用无类型色彩的通用句
@@ -341,15 +377,15 @@ intents:
 - 场景的 `suggested_intents` 必须引用这里已有的 intent ID。
 - 玩家自由输入最终也应映射到某个 intent，`custom` 是兜底意图。
 
-`quote_required` 语义（分层报价，避免每回合五步交互的节奏损耗）：
+`quote_required` 语义（v2 内容兼容；正式能力模块将按真实效果和可逆性推导）：
 
-- `false`：低风险意图直接执行，系统在结果叙事前用一句话复述理解即可。
-- `true`：必须先返回报价卡（理解、收益、风险、代价），玩家确认后才执行。
+- `false`：低风险、可逆意图直接执行，系统在结果叙事前用一句话复述理解即可。
+- `true`：必须先返回报价卡（理解、收益、风险、代价），玩家确认后才执行。新内容应优先用于不可逆结果，不要因为行动“不确定”就默认要求确认。
 - 缺省按 `base_risk` 推导：`low` 为 `false`，其余为 `true`。
 - 报价对判定有约束力：执行结果的恶化程度不得超出报价列出的风险与代价范围。
 - 规则引擎会在私有状态副本上预演确定性结果；预演不得修改真实状态。
 - **报价披露受感知墙约束（见 6.1）**：预演的全量结果只用于约束力校验和日志；报价卡上只允许出现玩家已可感知的公开状态变化。揭示、获得物品、位置变化和结局一律不上卡——报价是风险估计，不是预言机。
-- 重新报价免费且不消耗 `time_left`，但同一回合最多 3 次，次数计入日志用于公平感分析。
+- 重新报价免费且不推进世界时间、不产生行动代价，但同一回合最多 3 次，次数计入日志用于公平感分析。
 
 ### 6.1 `perception`：感知墙
 
@@ -765,9 +801,9 @@ effect:
 
 validator 对词表外的 type 只给 warning，不报错。
 
-## 11. `resolution_limits`：兜底判定白名单
+## 11. `resolution_limits`：v2 兜底判定白名单
 
-这是 MVP 核心命题（"玩家的具体想法被认真接住"）的关键协议。当玩家方案没有命中任何 storylet 时，引擎走兜底判定路径：
+这是 v0.1 MVP 的兼容协议。当玩家方案没有命中任何 storylet 时，旧引擎走兜底判定路径。开放行动阶段将由通用能力模块替代“未命中 storylet → soft patch”的授权语义；本节字段在迁移完成前继续保护现有两个回归故事。
 
 ```text
 LLM 从玩家方案提议一组状态变化（Plan）
@@ -805,7 +841,7 @@ resolution_limits:
 规则：
 
 - 关键剧情事实（证据、钥匙、位置、结局条件涉及的状态）必须列入 `protected`，只能由 storylet 或 world step 改变。schema v2 强制要求 `positions.*` 受保护；声明了 `items` 时也强制要求 `item_locations.*` 受保护。
-- `requires_storylet_match: true` 的意图不走“空动作”兜底：若当前意图、对象与状态不能命中作者交互，整次操作原子拒绝，不消耗时间、不增加回合数、不推进 world step。
+- `requires_storylet_match: true` 的意图在 v2 结构化兼容路径中不走“空动作”兜底；正式能力模块不读取该字段。
 - 白名单之外、未列入 `protected` 的路径默认拒绝，并记入日志——高频被拒绝的路径是内容迭代信号（说明玩家普遍想影响某个作者没想到的维度）。
 - 违反 `player_role.constraints` 或 `global_rules.boundaries` 的方案不进入兜底判定，报价阶段直接返回 `can_execute: false`，并附用世界内语言表述的原因（例如"暴风雪封死了山路"，而不是"系统不允许"）。
 
@@ -883,10 +919,11 @@ genre_system:
 
 ## 14. Walkthrough 用例：可解性回归
 
-每个故事必须附带 walkthrough 文件，作为内容的可解性回归用例。它回答两个问题：
+每个故事必须附带 walkthrough 文件，作为内容的可解性回归用例。它回答以下问题：
 
 1. 每个结局是否真的可达（不是假分支）。
-2. 时间预算是否够（关键路径的回合数不超过 `time_left`）。
+2. 每条声明的关键路线是否仍能触发预期 storylet、world rule 与结局。
+3. 若故事显式启用倒计时，时间预算是否足够；默认无倒计时的故事不检查这一项。
 
 文件位置：`content/walkthroughs/<story_id>.yaml`。
 
@@ -1004,12 +1041,13 @@ v2 是位置模型的不兼容升级：
 8. 每个 storylet 是否有 `trigger`、`effect` 和 `narrative_hint`。
 9. 每个结局是否有 `priority` 和 `conditions`。
 10. 重要剧情事实是否写入状态，而不是只写在文本里。
-11. 世界图节点和边是否合法；初始场景之外的每个场景，是否有 storylet 通过 `move_entities` 将玩家移入。
+11. 世界图节点和边是否合法；初始场景之外的每个场景，是否可通过已声明的 `scenes.<id>.exits` 或 storylet `move_entities` 到达。
 12. 每个 `flags` 是否至少被一个 storylet 设置（没有就是死变量或缺事件卡）。
 13. `resolution_limits` 是否覆盖软状态，`positions.*` 与 `item_locations.*` 是否列入 `protected`。
 14. 每个结局是否有 walkthrough 覆盖，关键区域是否覆盖“缺少首选物品”的补救/失败路线。
 15. world rule 是否只引用通用实体/节点、从同一快照可确定地得到唯一移动提案。
-16. 关键路径回合数加上合理冗余是否在 `time_left` 预算内。
+16. 若故事显式启用倒计时，关键路径回合数加上合理冗余是否在 `time_left` 预算内；默认无倒计时的故事跳过此项。
+17. 声明了 `request_policy` 的物品是否可携带、用途文案是否只暴露玩家可知信息、条件路径是否存在，关键物品是否误接入普通请求能力。
 
 一句话总结：
 

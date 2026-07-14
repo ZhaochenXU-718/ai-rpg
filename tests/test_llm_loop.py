@@ -85,6 +85,7 @@ class ActionLoopTest(unittest.TestCase):
             self.session, ScriptedProvider([plan]), "我坦诚地和薇拉聊聊", self.recorder
         )
         self.assertTrue(loop_result.can_execute)
+        self.assertTrue(loop_result.confirmation_required)
         self.assertEqual(loop_result.quote["understanding"], "你想赢得薇拉的初步信任。")
         # The quoted proposal is exactly what commit will apply.
         self.assertEqual(loop_result.quote["proposal"], {"heir.trust": 1})
@@ -92,10 +93,36 @@ class ActionLoopTest(unittest.TestCase):
         outcome = commit_action(self.session, loop_result, self.recorder)
         self.assertEqual(self.session.state["characters"]["heir"]["trust"], 1)
         self.assertEqual(outcome.plan_id, "plan_negotiate")
+        self.assertIn("generic_patch", outcome.resolution_sources)
+        self.assertEqual(outcome.primary_goal_status, "unverified")
+        self.assertFalse(outcome.cost_only)
 
         events = [record["event"] for record in self._trace_events()]
         for expected in ("perception", "llm_response", "validation", "quote_confirmed", "committed_outcome"):
             self.assertIn(expected, events)
+
+    def test_low_risk_free_text_auto_commits_with_provenance(self) -> None:
+        plan = make_plan(
+            "plan_observe_without_confirmation",
+            [intent_step("observe", ["family_portrait"])],
+            interpretation="你想观察全家画像。",
+        )
+
+        loop_result = run_action_loop(
+            self.session, ScriptedProvider([plan]), "我观察全家画像", self.recorder
+        )
+
+        self.assertTrue(loop_result.can_execute)
+        self.assertFalse(loop_result.confirmation_required)
+        outcome = commit_action(self.session, loop_result, self.recorder)
+        self.assertEqual(outcome.primary_goal_status, "achieved")
+        self.assertFalse(outcome.cost_only)
+        self.assertIn("intent_cost", outcome.resolution_sources)
+        self.assertIn("storylet.observe_family_portrait", outcome.resolution_sources)
+
+        events = [record["event"] for record in self._trace_events()]
+        self.assertIn("auto_committed", events)
+        self.assertNotIn("quote_confirmed", events)
 
     def test_empty_llm_proposal_uses_the_story_fallback(self) -> None:
         """An LLM plan must not be weaker than the equivalent menu action."""

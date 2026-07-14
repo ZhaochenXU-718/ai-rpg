@@ -16,8 +16,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server.engine.content import Story
-from server.engine.llm import LLMProviderError, PlanRequest, create_provider
-from server.engine.llm_deepseek import DeepSeekProvider, build_messages, coerce_plan
+from server.engine.llm import (
+    DirectorRequest,
+    LLMProviderError,
+    PlanRequest,
+    SuggestionRequest,
+    create_provider,
+)
+from server.engine.llm_deepseek import (
+    DeepSeekProvider,
+    build_director_messages,
+    build_messages,
+    build_suggestion_messages,
+    coerce_director_beats,
+    coerce_plan,
+    coerce_suggestions,
+)
 from server.engine.llm_loop import commit_action, run_action_loop
 from server.engine.session import GameSession
 from server.engine.trace import TraceRecorder
@@ -57,6 +71,57 @@ def plan_json(**overrides) -> str:
     }
     data.update(overrides)
     return json.dumps(data, ensure_ascii=False)
+
+
+def suggestions_json() -> str:
+    plan = json.loads(plan_json())
+    plan.pop("needs_clarification", None)
+    plan.pop("clarification_question", None)
+    return json.dumps({
+        "suggestions": [{
+            "title": "查看画像细节",
+            "action_text": "我走近全家画像，仔细看徽记和人物姿态。",
+            "focus": "investigate",
+            "rationale": "先从当前可见线索入手。",
+            "plan": plan,
+        }],
+    }, ensure_ascii=False)
+
+
+def director_json() -> str:
+    return json.dumps({
+        "beats": [{
+            "kind": "react",
+            "actor_id": "maid",
+            "target_location_id": "great_hall",
+            "target_ids": ["player"],
+            "summary": "艾拉朝你看了一眼，又把声音压低了一些。",
+            "motivation": "她想提醒玩家，但不愿引起管家注意。",
+        }]
+    }, ensure_ascii=False)
+
+
+def director_request() -> DirectorRequest:
+    return DirectorRequest(
+        story_id="midnight_archive",
+        state_revision=0,
+        turn_no=1,
+        location_id="great_hall",
+        location_name="宅邸大厅",
+        current_goal="寻找进入档案室的机会",
+        player_id="player",
+        player_action="我观察全家画像。",
+        action_targets=("family_portrait",),
+        committed_result={"result_tier": "success"},
+        candidates=({
+            "actor_id": "maid",
+            "name": "艾拉侍女",
+            "role": "reluctant_helper",
+            "motivation": "想提醒玩家，但不能让管家发现。",
+            "status": "present",
+            "can_enter": False,
+        },),
+    )
 
 
 class PromptBuildingTest(unittest.TestCase):
@@ -127,6 +192,38 @@ class CoercionTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             coerce_plan("这不是 json", self.request)
 
+    def test_suggestion_cards_freeze_action_text_into_the_plan(self) -> None:
+        suggestion_request = SuggestionRequest(
+            perception=self.request.perception,
+            count=3,
+        )
+        suggestions = coerce_suggestions(
+            suggestions_json(), suggestion_request
+        )
+
+        self.assertEqual(len(suggestions), 1)
+        self.assertEqual(
+            suggestions[0].action_text,
+            suggestions[0].plan.player_text,
+        )
+        prompt = build_suggestion_messages(suggestion_request)
+        self.assertIn("不得创造新人物", prompt[0]["content"])
+
+        numeric_focus = coerce_suggestions(
+            suggestions_json().replace('"investigate"', '"3-way"'),
+            suggestion_request,
+        )
+        self.assertEqual(numeric_focus[0].focus, "focus_3-way")
+
+    def test_director_output_only_builds_references_to_existing_ids(self) -> None:
+        request = director_request()
+        beats = coerce_director_beats(director_json(), request)
+
+        self.assertEqual(beats[0].actor_id, "maid")
+        self.assertEqual(beats[0].state_revision, 0)
+        prompt = build_director_messages(request)
+        self.assertIn("不得创造", prompt[0]["content"])
+
 
 class ProviderLoopTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -139,6 +236,7 @@ class ProviderLoopTest(unittest.TestCase):
         provider = DeepSeekProvider(transport=transport)
         loop_result = run_action_loop(self.session, provider, "我观察全家画像", self.recorder)
         self.assertTrue(loop_result.can_execute)
+        self.assertFalse(loop_result.confirmation_required)
         self.assertEqual(loop_result.quote["understanding"], "你想观察全家画像上的细节。")
         outcome = commit_action(self.session, loop_result, self.recorder)
         self.assertIn("observe_family_portrait", outcome.fired_storylets)
@@ -164,6 +262,28 @@ class ProviderLoopTest(unittest.TestCase):
             ))
         self.assertEqual(self.session.turn_no, 0)
 
+    def test_provider_generates_structured_suggestion_cards(self) -> None:
+        transport = FakeTransport([suggestions_json()])
+        provider = DeepSeekProvider(transport=transport)
+        response = provider.propose_suggestions(SuggestionRequest(
+            perception=self.session.perception(),
+            count=3,
+        ))
+
+        self.assertEqual(len(response.suggestions), 1)
+        self.assertEqual(response.suggestions[0].plan.steps[0].action, "observe")
+        self.assertEqual(response.prompt_version, "deepseek-suggestions-v1")
+
+    def test_provider_generates_structured_director_beats(self) -> None:
+        transport = FakeTransport([director_json()])
+        provider = DeepSeekProvider(transport=transport)
+
+        response = provider.propose_director_beats(director_request())
+
+        self.assertEqual(len(response.beats), 1)
+        self.assertEqual(response.beats[0].actor_id, "maid")
+        self.assertEqual(response.prompt_version, "deepseek-director-v1")
+
     def test_missing_api_key_fails_at_construction(self) -> None:
         import os
 
@@ -178,3 +298,4 @@ class ProviderLoopTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    coerce_director_beats,

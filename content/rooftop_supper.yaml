@@ -1,6 +1,6 @@
 id: rooftop_supper
 title: "晚风中的一桌饭"
-version: 0.1.0
+version: 0.2.0
 schema_version: 2
 language: zh-CN
 genre: urban_slice_of_life
@@ -8,21 +8,21 @@ target_duration_minutes: 15-25
 
 design_goal: |
   验证同一套通用引擎能否承载没有反派、没有暴力、没有重大秘密的都市日常故事。
-  核心体验不是破解谜题，而是在有限的晚饭窗口里留意他人的处境、提供恰当帮助，
+  核心体验不是破解谜题，而是在一个普通傍晚留意他人的处境、提供恰当帮助，
   并把一次偶然的邀约变成一张不勉强任何人的邻里饭桌。
 
 premise: |
   周五傍晚，你刚回到梧桐里九号楼。陈阿姨拎着一篮刚做好的饭菜站在一楼门厅：
   原本要回家吃饭的女儿临时加班，她一个人吃不完，又不愿让饭菜在冰箱里放坏。
-  天台的晚风正好，楼里的邻居却各有各的忙碌。再过一会儿，送餐晚高峰开始、
-  洗衣店打烊，云层里的阵雨也会落下来。你可以帮她支起一张小桌，
+  天台的晚风正好，楼里的邻居却各有各的忙碌。送餐晚高峰、洗衣店打烊和云层里的
+  阵雨都是每个人安排的一部分，但不会变成催促你的回合倒计时。你可以帮她支起一张小桌，
   也可以问问附近的人，今晚是否愿意暂时放下手里的事，一起吃顿便饭。
 
 player_role:
   id: player
   name: "九号楼住户"
   public_identity: "住进梧桐里半年、和大家混了个脸熟的普通上班族"
-  private_goal: "在晚饭窗口结束前，帮陈阿姨把多做的饭菜妥善摆上桌；是否邀请邻居，由你决定"
+  private_goal: "帮陈阿姨把多做的饭菜妥善摆上桌；是否邀请邻居、何时改变计划，由你决定"
   constraints:
     - "不能强迫任何人参加饭局，也不能替别人承诺时间。"
     - "不能凭空获得物品、金钱、交通工具或专业能力。"
@@ -41,11 +41,11 @@ style_bible:
 global_rules:
   time:
     description: >
-      每次确认执行行动通常消耗 1 点 time_left。它代表饭菜保温、店铺营业和邻居空闲
-      共同构成的晚饭窗口；报价、查看帮助和放弃不消耗。归零时，大家会按原计划散去。
-    evening_window_closes_when_time_left_lte: 0
+      本故事使用自由叙事默认配置，不设置全局倒计时。world.step 只记录已提交行动的顺序；
+      饭菜温度、营业时间和邻居安排通过人物动机与场景叙事表达，不因玩家多观察或多交谈而自动失败。
+    countdown_enabled: false
   fairness:
-    - "复杂行动先报价，再执行。"
+    - "当前故事没有不可逆高风险行动，所有可验证行动都可以直接执行并在事后显示回执。"
     - "善意不是万能钥匙；帮助必须与对方眼下的需要有关。"
     - "玩家没有邀请到所有人也不算失败，一张安静的小桌同样是完整选择。"
     - "失败要回到日常尺度：饭菜被各自打包带走，而不是发生灾难。"
@@ -124,6 +124,14 @@ items:
     description: "罗叔借出的旧野餐垫，洗得很干净，正好能铺在天台折叠桌上。"
     portable: true
     consumable: false
+    request_policy:
+      when:
+        flags: { dinner_agreed: true }
+      purposes:
+        table_cover: "能铺桌的干净东西"
+      min_rapport: 1
+      grant_narrative: "罗叔听明白你只是想找件干净东西铺桌，从储物间翻出洗净的旧野餐垫借给你。"
+      refusal_narrative: "罗叔没有直接答应，只说储物间的东西不能随便外借；也许先让他更了解这顿饭的安排会好一些。"
   checked_cloth:
     name: "蓝白格布"
     description: "小雨刚洗好的市集桌布，她愿意先借来铺晚饭，吃完再收走。"
@@ -134,9 +142,7 @@ initial_state:
   world:
     chapter: 1
     step: 0
-    # 完整邻里路线 8 回合，另留 2 回合观察或改变主意。
-    time_left: 10
-    current_goal: "在晚饭窗口结束前，把陈阿姨多做的饭菜妥善摆上桌"
+    current_goal: "把陈阿姨多做的饭菜妥善摆上桌"
     dinner_status: waiting
     guest_count: 0
     weather: humid
@@ -220,8 +226,6 @@ characters:
 
 perception:
   facts_label: "留意到"
-  world_state:
-    time_left: "晚饭窗口"
   scene_state:
     ambient_noise: "周围动静"
     wind_level: "风"
@@ -231,9 +235,6 @@ perception:
     fatigue: "疲惫"
 
 quote_warnings:
-  - when:
-      state_lte: { world.time_left: 3 }
-    text: "饭菜已经不如刚才热，附近的人也快要回到各自的安排里。"
   - when:
       state_gte: { xiaoyu.fatigue: 3 }
       same_location: [player, xiaoyu]
@@ -250,26 +251,20 @@ intents:
     base_risk: low
     quote_required: false
     fallback_narrative: "你停下来多看了一会儿，眼下没有新的事情需要插手。"
-    typical_cost:
-      time_left: -1
   talk:
     label: "聊聊"
     description: "与人交谈、询问、邀请、说明计划、听对方顾虑或礼貌地说服。"
     base_risk: medium
-    quote_required: true
+    quote_required: false
     fallback_proposal:
       npc_state: { key: rapport, step: 1 }
     fallback_narrative: "你们聊了几句。对方没有立刻改变安排，但谈话比刚才自然了一点。"
-    typical_cost:
-      time_left: -1
   help:
     label: "搭把手"
     description: "处理对方眼下明确的小麻烦，例如整理纸箱、固定支架或收好布料。"
     base_risk: low
     quote_required: false
     requires_storylet_match: true
-    typical_cost:
-      time_left: -1
   prepare:
     label: "布置"
     description: "使用手边物品铺桌、摆饭或完成天台晚饭的准备。"
@@ -277,24 +272,18 @@ intents:
     quote_required: false
     requires_storylet_match: true
     min_objects: 3
-    typical_cost:
-      time_left: -1
   custom:
     label: "自定义做法"
     description: "提出不在预设动作里的日常做法，由系统映射为最接近的结构化行动。"
     base_risk: variable
-    quote_required: true
+    quote_required: false
     fallback_narrative: "你的做法带来了一点变化，但还没有让晚饭计划真正往前走。"
-    typical_cost:
-      time_left: -1
   move:
     label: "走过去"
     description: "沿当前出口前往门厅、临街小店或天台。"
     base_risk: low
     quote_required: false
     engine_action: move
-    typical_cost:
-      time_left: -1
 
 resolution_limits:
   max_paths_per_action: 3
@@ -314,7 +303,6 @@ resolution_limits:
   protected:
     - positions.*
     - item_locations.*
-    - world.time_left
     - world.dinner_status
     - world.guest_count
     - flags.*
@@ -842,40 +830,6 @@ storylets:
         scene.social_pressure: low
     narrative_hint: "桌边没有坐满，但空位并不尴尬。陈阿姨把汤往你这边推了推，晚饭安静地开始了。"
 
-  - id: evening_window_closes_waiting
-    title: "大家回到各自的晚上"
-    type: failure_pressure
-    attribution: world_beat
-    once: true
-    trigger:
-      state_lte:
-        world.time_left: 0
-      world_state:
-        dinner_status: waiting
-    effect:
-      set_world:
-        dinner_status: missed
-      add_facts:
-        - "陈阿姨把饭菜分装进保鲜盒；没有东西被浪费，只是今晚没能坐成一桌。"
-    narrative_hint: "阵雨落下前，陈阿姨把饭菜重新分装。店铺继续营业，邻居各自回家，今晚没有人坐上天台。"
-
-  - id: evening_window_closes_planning
-    title: "没赶上的饭桌"
-    type: failure_pressure
-    attribution: world_beat
-    once: true
-    trigger:
-      state_lte:
-        world.time_left: 0
-      world_state:
-        dinner_status: planning
-    effect:
-      set_world:
-        dinner_status: missed
-      add_facts:
-        - "晚饭窗口结束后，饭菜被大家各自带回家；计划没有完成，但也没有造成损失。"
-    narrative_hint: "雨点敲上遮雨棚时，店铺要打烊、订单也多起来。还没摆开的饭菜最终被分成几份，各自带回家。"
-
 endings:
   shared_evening:
     title: "晚风把人留成一桌"
@@ -901,17 +855,6 @@ endings:
       陈阿姨并不介意。她把汤分进小碗，你们听着楼下电动车经过，慢慢把热饭吃完。
       一顿饭不需要很多人见证才算被认真对待；空着的凳子，也不等于谁辜负了邀请。
 
-  plans_dispersed:
-    title: "各自带回家的晚饭"
-    priority: 3
-    conditions:
-      world.dinner_status: missed
-    outcome: |
-      等你们真正腾出手，阵雨、订单和打烊时间已经把这个傍晚切回各自的轨道。
-      陈阿姨把饭菜分成几盒，罗叔留了一盒夜里热，小雨和阿禾也各自带走一点。
-      天台的桌没有铺开，但饭菜没有被扔掉，也没有人因此责怪谁。
-      城市里很多没完成的小计划，最后就是这样被妥善收好。
-
 genre_system:
   social_gathering:
     host: aunt_chen
@@ -922,20 +865,22 @@ genre_system:
     principle: "邀请是否成功取决于是否听懂对方的时间和边界，而不是把好感刷到满值。"
   everyday_stakes:
     success: "饭菜被摆上桌，人们可以自在地来去。"
-    setback: "计划散掉，饭菜被分装带走，没有灾难性惩罚。"
+    setback: "邀请被拒绝或临时改变计划都不会受罚；安静的小桌同样是完整结果。"
 
 authoring_notes:
   content_scope:
     scenes: 4
     characters: 5
     items: 3
-    storylets: 21
-    endings: 3
+    storylets: 19
+    endings: 2
   route_notes:
     - "铺桌物有两条等价路线：帮罗叔整理纸箱借野餐垫，或帮小雨理开布料借格布。"
     - "小雨和阿禾都可通过理解顾虑来邀请；帮忙路线是更明确、更省回合的作者交互。"
     - "最佳结局要求两人都接受邀请；零到一位来客会进入同样完整的小桌结局。"
-    - "时间耗尽只让计划散去，不制造受伤、冲突或道德惩罚。"
+    - "自由叙事模式没有全局倒计时；邻居的忙碌属于人物边界，不是对玩家试错的惩罚。"
   production_log:
     created_at: "2026-07-13"
+    updated_at: "2026-07-14"
+    revision: "v0.2 移除统一回合倒计时与时间耗尽结局，全部行动按可逆行为直接执行。"
     source: "原创都市日常短篇；未使用既有影视、小说或游戏 IP。"

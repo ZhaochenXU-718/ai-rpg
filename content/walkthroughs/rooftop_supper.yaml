@@ -1,5 +1,5 @@
 # 《晚风中的一桌饭》可解性回归用例。
-# 覆盖两种铺桌物资、两档成功结局和时间耗尽结局。
+# 覆盖两种铺桌物资与两档完整结局；自由叙事默认无时间耗尽结局。
 
 story: rooftop_supper
 
@@ -121,31 +121,3 @@ walkthroughs:
           - small_table_settles
         expect_world_rules:
           - aunt_comes_upstairs
-
-  - id: plans_dispersed_by_delay
-    title: "错过窗口：在门厅耽搁到大家各自散去"
-    target_ending: plans_dispersed
-    steps:
-      - intent: observe
-        objects: [elevator_notice]
-        expect_storylets: [opening_offer]
-      - intent: observe
-        objects: [takeout_bench]
-      - intent: observe
-        objects: [elevator_notice]
-      - intent: observe
-        objects: [takeout_bench]
-      - intent: observe
-        objects: [elevator_notice]
-      - intent: observe
-        objects: [takeout_bench]
-      - intent: observe
-        objects: [elevator_notice]
-      - intent: observe
-        objects: [takeout_bench]
-      - intent: observe
-        objects: [elevator_notice]
-      - note: "晚饭窗口归零，计划没有开始，饭菜被妥善分装"
-        intent: observe
-        objects: [takeout_bench]
-        expect_storylets: [evening_window_closes_waiting]

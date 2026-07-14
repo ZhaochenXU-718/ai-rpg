@@ -26,6 +26,7 @@ from pydantic import (
 
 PROTOCOL_VERSION = "0.1"
 ProtocolVersion = Literal["0.1"]
+PrimaryGoalStatus = Literal["achieved", "partial", "not_achieved", "unverified"]
 MachineId = Annotated[
     str,
     StringConstraints(strip_whitespace=True, pattern=r"^[a-z][a-z0-9_.-]*$"),
@@ -85,6 +86,12 @@ class IssueSeverity(str, Enum):
     ERROR = "error"
     WARNING = "warning"
     ADJUSTMENT = "adjustment"
+
+
+class DirectorBeatKind(str, Enum):
+    ENTER_SCENE = "enter_scene"
+    REACT = "react"
+    ADVANCE_PLAN = "advance_plan"
 
 
 def new_protocol_id(prefix: MachineId) -> str:
@@ -285,6 +292,104 @@ class ValidationResult(ProtocolModel):
         return self
 
 
+class SuggestedActionDraft(ProtocolModel):
+    """LLM-authored card before deterministic plan validation."""
+
+    suggestion_id: NonEmptyStr
+    perception_revision: NonNegativeInt
+    title: NonEmptyStr
+    action_text: NonEmptyStr
+    focus: MachineId
+    rationale: NonEmptyStr
+    plan: ActionPlan
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def draft_matches_frozen_plan(self):
+        if self.plan.perception_revision != self.perception_revision:
+            raise ValueError("suggestion and plan perception revisions must match")
+        if self.plan.player_text != self.action_text:
+            raise ValueError("action_text must equal the frozen plan player_text")
+        return self
+
+
+class SuggestedAction(SuggestedActionDraft):
+    """Player-facing card whose exact frozen plan already passed validation."""
+
+    validation: ValidationResult
+
+    @model_validator(mode="after")
+    def validation_matches_plan(self):
+        if self.validation.plan_id != self.plan.plan_id:
+            raise ValueError("suggestion validation must belong to its plan")
+        if self.validation.state_revision != self.perception_revision:
+            raise ValueError("suggestion validation revision must match perception")
+        if not self.validation.can_execute:
+            raise ValueError("player-facing suggestions must be executable")
+        return self
+
+
+class SuggestedActionSet(ProtocolModel):
+    suggestion_set_id: NonEmptyStr
+    perception_revision: NonNegativeInt
+    actions: tuple[SuggestedAction, ...]
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def set_is_coherent(self):
+        if not 1 <= len(self.actions) <= 5:
+            raise ValueError("a suggestion set must contain 1 to 5 actions")
+        _ensure_unique(
+            [action.suggestion_id for action in self.actions],
+            "suggestion ids",
+        )
+        if any(
+            action.perception_revision != self.perception_revision
+            for action in self.actions
+        ):
+            raise ValueError("all suggestions must use the set perception revision")
+        return self
+
+
+class DirectorBeat(ProtocolModel):
+    """A proposed beat over an authored character; never creates an entity."""
+
+    beat_id: MachineId
+    state_revision: NonNegativeInt
+    kind: DirectorBeatKind
+    actor_id: NonEmptyStr
+    target_location_id: NonEmptyStr
+    target_ids: tuple[NonEmptyStr, ...] = ()
+    summary: NonEmptyStr
+    motivation: NonEmptyStr
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def targets_are_unique(self):
+        _ensure_unique(list(self.target_ids), "target_ids")
+        return self
+
+
+class DirectorBeatValidation(ProtocolModel):
+    validation_id: NonEmptyStr
+    beat_id: NonEmptyStr
+    state_revision: NonNegativeInt
+    can_schedule: bool
+    issues: tuple[ValidationIssue, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def decision_is_coherent(self):
+        has_error = any(
+            issue.severity == IssueSeverity.ERROR for issue in self.issues
+        )
+        if self.can_schedule == has_error:
+            raise ValueError(
+                "can_schedule must be true exactly when validation has no errors"
+            )
+        return self
+
+
 class CommittedChange(ProtocolModel):
     path: NonEmptyStr
     previous: Any
@@ -292,6 +397,19 @@ class CommittedChange(ProtocolModel):
     authority: AuthorityLevel
     source: MachineId
     reason: str = ""
+
+
+class CommittedDirectorBeat(ProtocolModel):
+    """One validated Director beat included in the surrounding turn commit."""
+
+    beat_id: MachineId
+    validation_id: NonEmptyStr
+    kind: DirectorBeatKind
+    actor_id: NonEmptyStr
+    target_location_id: NonEmptyStr
+    narrative_hint: NonEmptyStr
+    committed_changes: tuple[CommittedChange, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
 
 class CommittedOutcome(ProtocolModel):
@@ -306,8 +424,12 @@ class CommittedOutcome(ProtocolModel):
     scene_before: NonEmptyStr
     scene_after: NonEmptyStr
     result_tier: NonEmptyStr
+    primary_goal_status: PrimaryGoalStatus = "unverified"
+    cost_only: bool = False
+    resolution_sources: tuple[MachineId, ...] = ()
     accepted_step_indices: tuple[NonNegativeInt, ...] = ()
     committed_changes: tuple[CommittedChange, ...] = ()
+    director_beats: tuple[CommittedDirectorBeat, ...] = ()
     fired_storylets: tuple[NonEmptyStr, ...] = ()
     world_events: tuple[NonEmptyStr, ...] = ()
     new_facts: tuple[NonEmptyStr, ...] = ()
@@ -323,9 +445,15 @@ class CommittedOutcome(ProtocolModel):
             [str(index) for index in self.accepted_step_indices],
             "accepted_step_indices",
         )
+        _ensure_unique(list(self.resolution_sources), "resolution_sources")
         return self
 
 
 def action_plan_json_schema() -> dict[str, Any]:
     """Provider-neutral JSON Schema for structured ActionPlan generation."""
     return copy.deepcopy(ActionPlan.model_json_schema())
+
+
+def suggested_action_draft_json_schema() -> dict[str, Any]:
+    """Provider-neutral schema for one unvalidated suggestion card."""
+    return copy.deepcopy(SuggestedActionDraft.model_json_schema())

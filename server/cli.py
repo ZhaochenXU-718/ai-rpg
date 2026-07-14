@@ -9,7 +9,7 @@ e.g. `2 <target>` or `<intent_id> <target_id>`. Medium/high-risk intents show
 a quote card first and ask for confirmation. When no story path is supplied,
 the CLI discovers content files and asks the player to choose one.
 
-Commands: objects / state / facts / help / quit
+Commands: objects / state / facts / undo / timeline / help / quit
 """
 
 from __future__ import annotations
@@ -42,6 +42,10 @@ from server.engine.llm import LLMProviderError, create_provider
 from server.engine.llm_loop import commit_action, run_action_loop
 from server.engine.narration import narrate_rejection, narrate_turn
 from server.engine.session import GameSession, SessionError
+from server.engine.suggestions import (
+    generate_action_suggestions,
+    prepare_suggested_action,
+)
 from server.engine.trace import TraceRecorder
 
 PROMPT = "> "
@@ -68,13 +72,42 @@ def print_turn(session: GameSession, provider, recorder, result, player_text: st
     ))
 
 
-def handle_free_action(session: GameSession, provider, recorder, free_text: str) -> None:
-    """理解 → 验证 →（一次重规划）→ 报价 → 确认 → 提交。"""
+def execute_prepared_action(
+    session: GameSession,
+    provider,
+    recorder,
+    loop_result,
+    player_text: str,
+) -> bool:
+    """Confirm when required, then commit an already validated frozen plan."""
+    for message in loop_result.adjustment_messages():
+        print(f"（{message}）")
+    if loop_result.confirmation_required:
+        print(render_quote(loop_result.quote))
+        answer = read_line("执行？[y=确认 / n=放弃] ")
+        if answer is None or answer.lower() not in ("y", "yes", "确认", "执行"):
+            print("（已放弃，本次不消耗时间。）")
+            return False
+    else:
+        print(f"（理解：{loop_result.plan.interpretation}）")
+    commit_action(
+        session,
+        loop_result,
+        recorder,
+        director_provider=provider,
+    )
+    if session.last_result is not None:
+        print_turn(session, provider, recorder, session.last_result, player_text)
+    return True
+
+
+def handle_free_action(session: GameSession, provider, recorder, free_text: str) -> bool:
+    """理解 → 验证 → 可逆性策略 → 提交。"""
     loop_result = run_action_loop(session, provider, free_text, recorder)
     if loop_result.clarification:
         print(f"（系统想先确认：{loop_result.clarification}）")
         print("（本次不消耗时间，请补充后重试。）")
-        return
+        return False
     if not loop_result.can_execute:
         reasons = loop_result.rejection_messages()
         prose = narrate_rejection(session, provider, reasons, free_text, recorder)
@@ -85,17 +118,10 @@ def handle_free_action(session: GameSession, provider, recorder, free_text: str)
             print(f"  - {message}")
         if loop_result.replanned:
             print("（系统已自动调整过一次方案，仍未通过；请换一种做法。）")
-        return
-    print(render_quote(loop_result.quote))
-    for message in loop_result.adjustment_messages():
-        print(f"（{message}）")
-    answer = read_line("执行？[y=确认 / n=放弃] ")
-    if answer is None or answer.lower() not in ("y", "yes", "确认", "执行"):
-        print("（已放弃，本次不消耗时间。）")
-        return
-    commit_action(session, loop_result, recorder)
-    if session.last_result is not None:
-        print_turn(session, provider, recorder, session.last_result, free_text)
+        return False
+    return execute_prepared_action(
+        session, provider, recorder, loop_result, free_text
+    )
 
 
 def tokenize_action_line(line: str) -> list[str]:
@@ -112,8 +138,34 @@ def print_help() -> None:
         "使用物品时同时输入【口袋】物品和作用目标，例如 `使用 <物品> <目标>`；\n"
         "移动时选择【出口】中的名称或 ID，例如 `移动 <出口>`。\n"
         "目标来自【可用对象】、【出口】或【口袋】——中文名或 ID 都可以直接用。\n"
-        "命令：objects 对象面板；inventory 口袋；who 人物介绍；state 状态；facts 已知记录；help 帮助；quit 退出。"
+        "命令：objects 对象面板；inventory 口袋；who 人物介绍；state 状态；facts 已知记录；"
+        "ideas 生成动态行动提案；idea <编号> 直接执行已验证提案；"
+        "undo 撤回上次行动并创建分支；timeline 查看状态分支；help 帮助；quit 退出。"
     )
+
+
+def print_suggestions(suggestion_set) -> None:
+    print("【行动提案｜也可以完全忽略并自由输入】")
+    for index, suggestion in enumerate(suggestion_set.actions, start=1):
+        print(f"[{index}] {suggestion.title}（{suggestion.focus}）")
+        print(f"    {suggestion.action_text}")
+        print(f"    侧重点：{suggestion.rationale}")
+
+
+def print_timeline(session: GameSession) -> None:
+    """Render the retained branch heads and active ancestry."""
+    print("【状态分支】")
+    for branch in session.branches():
+        head = session.get_checkpoint(branch.head_checkpoint_id)
+        marker = "*" if branch.branch_id == session.current_branch_id else " "
+        print(
+            f"{marker} {branch.branch_id}: {branch.head_checkpoint_id} "
+            f"（回合 {head.turn_no}，从 {branch.fork_checkpoint_id} 分出）"
+        )
+    ancestry = " → ".join(
+        checkpoint.checkpoint_id for checkpoint in session.checkpoint_history()
+    )
+    print(f"当前路径：{ancestry}；状态修订：{session.state_revision}")
 
 
 def resolve_objects(story: Story, state, tokens: list[str]) -> list[str]:
@@ -226,7 +278,10 @@ def confirm_quote(session: GameSession, intent_id: str, objects: list[str], prov
             return False
         if answer.lower() in ("r", "requote", "重新报价"):
             continue
-        result = session.resolve(quote_id=quote["quote_id"])
+        result = session.resolve(
+            quote_id=quote["quote_id"],
+            _director_provider=provider,
+        )
         print_turn(session, provider, recorder, result)
         return True
 
@@ -262,6 +317,7 @@ def main() -> int:
         print(f"（{exc}）")
         return 1
     recorder = TraceRecorder(None if args.no_log else "data/traces", session.session_id)
+    suggestion_set = None
 
     print(render_intro(story, session.state))
     print()
@@ -269,6 +325,11 @@ def main() -> int:
 
     last_scene = None
     while not session.is_over:
+        if (
+            suggestion_set is not None
+            and suggestion_set.perception_revision != session.state_revision
+        ):
+            suggestion_set = None
         print()
         scene_now = current_scene_id(session.state)
         if scene_now != last_scene:
@@ -302,6 +363,78 @@ def main() -> int:
             continue
         if line.lower() in ("help", "h", "?"):
             print_help()
+            continue
+        if line.lower() in ("undo", "撤回", "回退"):
+            try:
+                restored = session.undo()
+            except SessionError as exc:
+                print(f"（{exc}。）")
+            else:
+                recorder.record("state_branch_created", {
+                    "source_checkpoint_id": restored.source_checkpoint_id,
+                    "restored_checkpoint_id": restored.restored_checkpoint_id,
+                    "branch_id": restored.branch_id,
+                    "state_revision": restored.state_revision,
+                    "turn": restored.turn_no,
+                })
+                last_scene = None
+                print(
+                    f"（已撤回到 {restored.restored_checkpoint_id}，并创建 "
+                    f"{restored.branch_id}；原历史仍保留。）"
+                )
+                suggestion_set = None
+            continue
+        if line.lower() in ("timeline", "branches", "时间线", "分支"):
+            print_timeline(session)
+            continue
+        if line.lower() in ("ideas", "suggestions", "提案", "建议"):
+            if provider is None:
+                print("（当前未启用 LLM，无法生成动态行动提案。）")
+                continue
+            try:
+                suggestion_set = generate_action_suggestions(
+                    session, provider, recorder
+                )
+            except (LLMProviderError, SessionError) as exc:
+                print(f"（行动提案暂时不可用：{exc}。）")
+            else:
+                print_suggestions(suggestion_set)
+            continue
+        suggestion_match = re.match(
+            r"^(?:idea|suggestion|提案|建议)\s*(\d+)$",
+            line,
+            re.IGNORECASE,
+        )
+        if suggestion_match:
+            if suggestion_set is None:
+                print("（请先输入 ideas 生成当前局势的行动提案。）")
+                continue
+            index = int(suggestion_match.group(1)) - 1
+            if not 0 <= index < len(suggestion_set.actions):
+                print("（提案编号不在当前列表中。）")
+                continue
+            suggestion = suggestion_set.actions[index]
+            try:
+                loop_result = prepare_suggested_action(session, suggestion)
+                recorder.record("suggestion_selected", {
+                    "turn": session.turn_no + 1,
+                    "suggestion_set_id": suggestion_set.suggestion_set_id,
+                    "suggestion_id": suggestion.suggestion_id,
+                    "plan_id": suggestion.plan.plan_id,
+                    "state_revision": session.state_revision,
+                })
+                committed = execute_prepared_action(
+                    session,
+                    provider,
+                    recorder,
+                    loop_result,
+                    suggestion.action_text,
+                )
+                if committed:
+                    suggestion_set = None
+            except (LLMProviderError, SessionError) as exc:
+                print(f"（提案无法执行：{exc}。）")
+                suggestion_set = None
             continue
         if line.lower() == "objects":
             print(render_objects(story, session.state))
@@ -398,7 +531,12 @@ def main() -> int:
             if story.quote_required(intent_id):
                 confirm_quote(session, intent_id, objects, provider, recorder)
             else:
-                result = session.resolve(intent_id=intent_id, objects=objects)
+                result = session.resolve(
+                    intent_id=intent_id,
+                    objects=objects,
+                    _director_provider=provider,
+                    _player_action=line,
+                )
                 print_turn(session, provider, recorder, result)
         except SessionError as exc:
             print(f"({exc})")

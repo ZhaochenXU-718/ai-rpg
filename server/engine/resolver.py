@@ -20,11 +20,13 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
+from .capability_effects import CapabilityResolution
 from .conditions import check_condition_block, evaluate_endings
 from .content import Story
 from .effects import TemporaryEffects, apply_effect, effect_changes_scene
 from .limits import clamp_generic_patch, validate_generic_patch
-from .state import apply_patch_value, set_value
+from .llm_protocol import CommittedDirectorBeat
+from .state import apply_patch_value, get_value, set_value
 from .world import advance_world
 
 # Storylet types that read as a gain vs. a cost, used only to label the
@@ -50,6 +52,9 @@ class TurnResult:
     scene_after: str
     fired: list[str] = field(default_factory=list)
     changes: list[tuple[str, Any, Any]] = field(default_factory=list)
+    change_sources: list[str] = field(default_factory=list)
+    action_effect_sources: list[str] = field(default_factory=list)
+    matched_action_storylets: list[str] = field(default_factory=list)
     expired: list[tuple[str, Any]] = field(default_factory=list)
     narrative_hints: list[str] = field(default_factory=list)
     action_response_hints: list[str] = field(default_factory=list)
@@ -60,8 +65,26 @@ class TurnResult:
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     world_rules: list[str] = field(default_factory=list)
+    director_beats: list[CommittedDirectorBeat] = field(default_factory=list)
+    director_trace: dict[str, Any] = field(default_factory=dict)
     result_tier: str = RESULT_FAIL_FORWARD
+    primary_goal_status_override: str | None = None
     ending: str | None = None
+
+
+def _record_changes(
+    result: TurnResult,
+    changes: list[tuple[str, Any, Any]],
+    source: str,
+) -> None:
+    """Append state changes and keep their provenance aligned by index."""
+    result.changes.extend(changes)
+    result.change_sources.extend(source for _ in changes)
+
+
+def _mark_action_effect(result: TurnResult, source: str) -> None:
+    if source not in result.action_effect_sources:
+        result.action_effect_sources.append(source)
 
 
 def classify_result(story: Story, fired: list[str], generic_applied: bool) -> str:
@@ -229,6 +252,7 @@ def run_turn(
     generic_patch: dict[str, Any] | None = None,
     strict_patch: bool = False,
     allow_unauthored: bool = False,
+    capability_resolution: CapabilityResolution | None = None,
 ) -> TurnResult:
     """Resolve one confirmed action. Mutates state / temporaries / consumed."""
     objects = [str(obj) for obj in objects or []]
@@ -240,12 +264,13 @@ def run_turn(
         scene_after=story.current_location(state),
     )
 
-    result.errors.extend(
-        validate_action(
-            story, state, intent_id, objects, generic_patch, consumed,
-            allow_unauthored=allow_unauthored,
+    if capability_resolution is None:
+        result.errors.extend(
+            validate_action(
+                story, state, intent_id, objects, generic_patch, consumed,
+                allow_unauthored=allow_unauthored,
+            )
         )
-    )
     if result.errors:
         return result
     intent = story.intent(intent_id)
@@ -276,21 +301,48 @@ def run_turn(
     for key, value in (intent.get("typical_cost") or {}).items():
         path = str(key) if "." in str(key) else f"world.{key}"
         previous, new = apply_patch_value(state, path, value)
-        result.changes.append((path, previous, new))
+        _record_changes(result, [(path, previous, new)], "intent_cost")
 
     # 2. generic (fallback) resolution grant
     generic_applied = False
     for key, value in accepted.items():
         previous, new = apply_patch_value(state, key, value)
-        result.changes.append((key, previous, new))
+        _record_changes(result, [(key, previous, new)], "generic_patch")
         generic_applied = True
+        _mark_action_effect(result, "generic_patch")
+
+    if capability_resolution is not None:
+        source = capability_resolution.capability_id
+        for mutation in capability_resolution.mutations:
+            if mutation.operation == "increment":
+                previous, new = apply_patch_value(
+                    state, mutation.path, mutation.value
+                )
+            else:
+                previous = copy.deepcopy(get_value(state, mutation.path))
+                new = copy.deepcopy(mutation.value)
+                set_value(state, mutation.path, new)
+            _record_changes(result, [(mutation.path, previous, new)], source)
+        _mark_action_effect(result, source)
+        result.primary_goal_status_override = (
+            capability_resolution.primary_goal_status
+        )
+        result.action_response_hints.append(
+            capability_resolution.response_hint
+        )
+        result.narrative_hints.append(capability_resolution.response_hint)
 
     player_moved = False
     if selected_exit is not None:
         source = story.current_location(state)
         destination = str(selected_exit["to"])
         set_value(state, f"positions.{story.player_id}", destination)
-        result.changes.append((f"positions.{story.player_id}", source, destination))
+        _record_changes(
+            result,
+            [(f"positions.{story.player_id}", source, destination)],
+            "engine.move",
+        )
+        _mark_action_effect(result, "engine.move")
         hint = str(
             selected_exit.get("narrative_hint")
             or f"你移动到了{story.scene(destination).get('name', destination)}。"
@@ -312,8 +364,16 @@ def run_turn(
     result.errors.extend(world_step.errors)
     result.narrative_hints.extend(world_step.narrative_hints)
     result.world_reaction_hints.extend(world_step.narrative_hints)
-    for actor, source, destination in world_step.moves:
-        result.changes.append((f"positions.{actor}", source, destination))
+    if len(world_step.rules) != len(world_step.moves):
+        raise AssertionError("world step rule/move provenance is misaligned")
+    for rule_id, (actor, source, destination) in zip(
+        world_step.rules, world_step.moves
+    ):
+        _record_changes(
+            result,
+            [(f"positions.{actor}", source, destination)],
+            f"world_rule.{rule_id}",
+        )
 
     # Arrival/reaction storylets see the atomically applied world positions.
     _run_storylet_phase(
@@ -324,7 +384,7 @@ def run_turn(
     # storylet responded, ground the content-declared intent fallback in the
     # selected targets so a simultaneous world beat cannot replace the action
     # in either LLM narration or template fallback.
-    if not result.action_response_hints:
+    if not result.action_response_hints and capability_resolution is None:
         fallback = _fallback_action_response(
             story, state, intent_id, objects, result.scene_before
         )
@@ -340,7 +400,11 @@ def run_turn(
     result.ending = evaluate_endings(state, story.endings)
 
     result.scene_after = story.current_location(state)
-    result.result_tier = classify_result(story, result.fired, generic_applied)
+    result.result_tier = (
+        capability_resolution.result_tier
+        if capability_resolution is not None
+        else classify_result(story, result.fired, generic_applied)
+    )
     return result
 
 
@@ -369,8 +433,21 @@ def _run_storylet_phase(
             continue
         if not check_condition_block(state, storylet.get("trigger") or {}, intent_id, objects):
             continue
-        result.changes.extend(apply_effect(state, effect, turn_no, temporaries))
+        source = f"storylet.{storylet_id}"
+        _record_changes(
+            result,
+            apply_effect(state, effect, turn_no, temporaries),
+            source,
+        )
         result.fired.append(storylet_id)
+        trigger = storylet.get("trigger") or {}
+        if (
+            storylet.get("attribution") != ATTRIBUTION_WORLD_BEAT
+            and intent_id is not None
+            and _trigger_is_for_intent(trigger, intent_id)
+        ):
+            result.matched_action_storylets.append(storylet_id)
+            _mark_action_effect(result, source)
         hint = storylet.get("narrative_hint")
         if hint:
             result.narrative_hints.append(hint)

@@ -1,4 +1,4 @@
-"""DeepSeek provider: the first real understanding model behind the loop.
+"""DeepSeek provider for action plans, suggestions, narration and Director beats.
 
 DeepSeek exposes an OpenAI-compatible API (https://api-docs.deepseek.com)
 with JSON output mode, so the transport is the ``openai`` SDK pointed at
@@ -21,20 +21,34 @@ import time
 from typing import Any, Callable
 
 from .llm import (
+    DirectorRequest,
+    DirectorResponse,
     LLMProvider,
     LLMProviderError,
     NarrativeRequest,
     NarrativeResponse,
     PlanRequest,
     PlanResponse,
+    SuggestionRequest,
+    SuggestionResponse,
 )
-from .llm_protocol import ActionPlan, CapabilityAction, RiskProposal, StateChangeProposal, new_protocol_id
+from .llm_protocol import (
+    ActionPlan,
+    CapabilityAction,
+    DirectorBeat,
+    RiskProposal,
+    StateChangeProposal,
+    SuggestedActionDraft,
+    new_protocol_id,
+)
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 # deepseek-chat / deepseek-reasoner are deprecated on 2026-07-24; flash is
 # the fast non-thinking tier, right for per-turn understanding latency.
 DEFAULT_MODEL = "deepseek-v4-flash"
 PROMPT_VERSION = "deepseek-plan-v1"
+SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v1"
+DIRECTOR_PROMPT_VERSION = "deepseek-director-v1"
 MAX_REPAIR_ROUNDS = 1
 
 # Transport: (messages, options) -> (content, usage). Injectable for tests.
@@ -45,9 +59,9 @@ SYSTEM_PROMPT = """\
 
 硬性规则：
 1. 只能引用【感知快照】中出现的实体 ID、意图和工具。玩家看不到的东西，你也不知道。
-2. steps 恰好一个元素：{"capability": "intent", "action": "<意图ID>", "arguments": {"objects": ["<实体ID>", ...]}, "purpose": "<这一步的作用>"}。
-3. 意图从 available_intents 里选：每个意图的适用范围以 capability_tools 中该工具的描述为准，只要有某个具体意图的描述覆盖了玩家的做法，就必须选它。"custom" 是最后手段，只有当所有具体意图的描述都无法承载玩家的做法时才使用。
-4. proposed_changes 只能提议【可提议状态空间】patchable 里列出的路径：authority 一律 "soft_state"；数字用 operation "increment" 且幅度不超过该路径的 max_step，枚举值用 "set"。当方案会合理地改变可提议状态时应给出提议；只有确实没有直接软状态影响时才留空数组。
+2. steps 恰好一个元素，必须从 capability_tools 复制 capability/action，并让 arguments 符合该工具的 arguments_schema。
+3. 优先使用能直接表达玩家目标的专用能力，例如“向某人请求物品”应使用 social.request_item，而不是降级成 talk。只有没有专用能力时才从 available_intents 选择 intent 工具；"custom" 是最后手段。
+4. proposed_changes 只能提议【可提议状态空间】patchable 里列出的路径：authority 一律 "soft_state"；数字用 operation "increment" 且幅度不超过该路径的 max_step，枚举值用 "set"。确定性能力（例如 social.request_item）的物品转移由引擎裁决，不得由模型提议。
 5. 以下情况输出 needs_clarification=true、steps=[]，并在 clarification_question 里用世界内的口吻向玩家解释或提问：
    - 方案违反【世界边界】（例如凭空造物、离开被封锁的区域）——解释为什么行不通；
    - 目标或做法无法从文本中确定——问清楚。
@@ -60,7 +74,7 @@ SYSTEM_PROMPT = """\
   "interpretation": "对玩家意图的复述",
   "goal": "机器可读短目标，小写下划线",
   "intent_id": "所选意图 ID",
-  "steps": [{"capability": "intent", "action": "...", "arguments": {"objects": ["..."]}, "purpose": "..."}],
+  "steps": [{"capability": "...", "action": "...", "arguments": {}, "purpose": "..."}],
   "references": ["涉及的实体 ID"],
   "proposed_changes": [{"path": "...", "operation": "increment", "value": 1, "authority": "soft_state", "reason": "..."}],
   "risks": [{"description": "...", "likelihood": "unlikely|possible|likely|certain"}],
@@ -83,6 +97,62 @@ RENDER_SYSTEM_PROMPT = """\
 5. "过去回合发生"只能作为背景，不能写成当前仍在发生；行动目标的位置描述必须服从事实清单。
 6. 第二人称"你"，2-4 句，遵循【文风约束】；不要提及规则、数值或系统。
 7. 只输出叙事文本本身。
+"""
+
+
+SUGGESTION_SYSTEM_PROMPT = """\
+你是互动叙事游戏的行动提案器。根据玩家当前可见信息生成 3-5 张不同侧重点的玩家行动卡，并输出 json。
+
+硬性规则：
+1. 只能引用感知快照里的实体和 capability_tools；每张卡恰好使用一个工具，arguments 必须符合该工具 schema。
+2. 卡片只描述玩家准备说什么或做什么，不保证尚未裁决的结果，不泄露具体隐藏物品、秘密或人物位置。
+3. 不得创造新人物。人物进场和世界事件属于 Director Beat，不得伪装成玩家行动卡。
+4. action_text 是可直接执行的第一人称行动或对白；plan.player_text 必须与其完全相同。
+5. 每张卡应在工具、目标或侧重点上有实质差异；自由输入始终与卡片等价。
+6. proposed_changes 只允许 soft_state；social.request_item 等确定性能力不要自行提议物品转移。
+7. 只输出 {"suggestions": [...]}，不要输出其它文本。
+
+单张卡格式：
+{
+  "title": "短标题",
+  "action_text": "我……",
+  "focus": "practical|social|investigate|cautious|creative",
+  "rationale": "这一提案的侧重点",
+  "plan": {
+    "interpretation": "对行动的复述",
+    "goal": "机器可读短目标",
+    "steps": [{"capability": "...", "action": "...", "arguments": {}, "purpose": "..."}],
+    "references": [],
+    "proposed_changes": [],
+    "risks": [],
+    "assumptions": [],
+    "confidence": 0.8
+  }
+}
+"""
+
+
+DIRECTOR_SYSTEM_PROMPT = """\
+你是互动叙事游戏的 Director。玩家行动和确定性世界规则已经执行完毕；你只能从候选列表中选择 0-2 个既有人物，为同一次提交补充一个克制的进场、反应或计划节拍，并输出 json。
+
+硬性规则：
+1. 只能使用【候选人物】里的 actor_id，不得创造、改名或暗示任何新人物。
+2. status=present 的人物只能 react 或 advance_plan；status=adjacent 且 can_enter=true 的人物才可 enter_scene。
+3. target_location_id 必须等于当前地点；target_ids 只能引用输入中的 player_id、玩家行动目标或候选人物。
+4. summary 只能描述当前可见的动作、神态、短对白或人物进场，不得发明物品、伤害、关系变化、秘密披露、任务完成或其他机械结果。
+5. 人物行为应符合其 motivation、role 和当前局势。没有必要的介入就返回空 beats；不要为了热闹强行让人物说话或进场。
+6. 每个人物最多一个节拍。你不是裁判，不能改变玩家行动结果。
+7. 只输出 {"beats": [...]}，不要输出其它文本。
+
+单个节拍格式：
+{
+  "kind": "enter_scene|react|advance_plan",
+  "actor_id": "候选人物 ID",
+  "target_location_id": "当前地点 ID",
+  "target_ids": ["已有目标 ID"],
+  "summary": "玩家可见的克制节拍",
+  "motivation": "该节拍如何服从人物既有动机"
+}
 """
 
 
@@ -112,6 +182,39 @@ def build_messages(request: PlanRequest) -> list[dict[str, str]]:
         }
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
+def build_suggestion_messages(request: SuggestionRequest) -> list[dict[str, str]]:
+    payload = {
+        "数量上限": request.count,
+        "感知快照": request.perception.to_dict(),
+        "世界边界": list(request.world_rules),
+        "可提议状态空间": request.proposal_space,
+    }
+    return [
+        {"role": "system", "content": SUGGESTION_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
+def build_director_messages(request: DirectorRequest) -> list[dict[str, str]]:
+    payload = {
+        "故事": request.story_id,
+        "状态版本": request.state_revision,
+        "当前地点": {"id": request.location_id, "name": request.location_name},
+        "当前目标": request.current_goal,
+        "player_id": request.player_id,
+        "玩家行动": request.player_action,
+        "玩家行动目标": list(request.action_targets),
+        "已提交结果": request.committed_result,
+        "候选人物": list(request.candidates),
+        "世界边界": list(request.world_rules),
+        "节拍上限": request.max_beats,
+    }
+    return [
+        {"role": "system", "content": DIRECTOR_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
@@ -222,6 +325,97 @@ def coerce_plan(content: str, request: PlanRequest) -> ActionPlan:
         return ActionPlan.model_validate(plan_data)
     except Exception as exc:
         raise ValueError(f"plan failed protocol validation: {exc}") from exc
+
+
+def coerce_suggestions(
+    content: str,
+    request: SuggestionRequest,
+) -> tuple[SuggestedActionDraft, ...]:
+    try:
+        data = json.loads(_strip_fences(content))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid json: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("suggestions"), list):
+        raise ValueError("suggestion response must contain a suggestions array")
+
+    drafts: list[SuggestedActionDraft] = []
+    for card in data["suggestions"][: request.count]:
+        if not isinstance(card, dict):
+            continue
+        action_text = str(card.get("action_text") or "").strip()
+        title = str(card.get("title") or "").strip()
+        rationale = str(card.get("rationale") or "").strip()
+        if not action_text or not title or not rationale:
+            continue
+        raw_plan = card.get("plan") or {}
+        if not isinstance(raw_plan, dict):
+            continue
+        raw_plan = dict(raw_plan)
+        raw_plan.setdefault("interpretation", action_text)
+        plan = coerce_plan(
+            json.dumps(raw_plan, ensure_ascii=False),
+            PlanRequest(
+                perception=request.perception,
+                player_text=action_text,
+                world_rules=request.world_rules,
+                proposal_space=request.proposal_space,
+            ),
+        )
+        if plan.needs_clarification:
+            continue
+        focus = re.sub(
+            r"[^a-z0-9_.-]+",
+            "_",
+            str(card.get("focus") or "practical").strip().lower(),
+        ).strip("_") or "practical"
+        if not focus[0].isalpha():
+            focus = f"focus_{focus}"
+        drafts.append(SuggestedActionDraft(
+            suggestion_id=new_protocol_id("suggestion"),
+            perception_revision=request.perception.state_revision,
+            title=title,
+            action_text=action_text,
+            focus=focus,
+            rationale=rationale,
+            plan=plan,
+        ))
+    if not drafts:
+        raise ValueError("no valid suggestion cards")
+    return tuple(drafts)
+
+
+def coerce_director_beats(
+    content: str,
+    request: DirectorRequest,
+) -> tuple[DirectorBeat, ...]:
+    try:
+        data = json.loads(_strip_fences(content))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid json: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("beats"), list):
+        raise ValueError("Director response must contain a beats array")
+
+    beats: list[DirectorBeat] = []
+    for raw in data["beats"][: request.max_beats]:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            beat = DirectorBeat(
+                beat_id=new_protocol_id("beat"),
+                state_revision=request.state_revision,
+                kind=raw.get("kind"),
+                actor_id=str(raw.get("actor_id") or ""),
+                target_location_id=str(raw.get("target_location_id") or ""),
+                target_ids=tuple(str(item) for item in raw.get("target_ids") or []),
+                summary=str(raw.get("summary") or "").strip(),
+                motivation=str(raw.get("motivation") or "").strip(),
+            )
+        except Exception:
+            continue
+        beats.append(beat)
+    if data["beats"] and not beats:
+        raise ValueError("no valid Director beats")
+    return tuple(beats)
 
 
 class DeepSeekProvider(LLMProvider):
@@ -354,3 +548,81 @@ class DeepSeekProvider(LLMProvider):
                 usage=usage_total,
             )
         raise LLMProviderError(f"DeepSeek 连续输出无法解析：{last_error}")
+
+    def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:
+        messages = build_suggestion_messages(request)
+        started = time.monotonic()
+        usage_total: dict[str, Any] = {}
+        last_error = "empty response"
+        for _ in range(MAX_REPAIR_ROUNDS + 1):
+            content, usage = self._call(messages)
+            for key, value in (usage or {}).items():
+                if isinstance(value, (int, float)):
+                    usage_total[key] = usage_total.get(key, 0) + value
+            if not content.strip():
+                last_error = "empty content"
+                messages.append({
+                    "role": "user",
+                    "content": "你返回了空内容。请只输出 suggestions json 对象。",
+                })
+                continue
+            try:
+                suggestions = coerce_suggestions(content, request)
+            except ValueError as exc:
+                last_error = str(exc)
+                messages.append({"role": "assistant", "content": content})
+                messages.append({
+                    "role": "user",
+                    "content": f"上一条提案无法解析（{exc}）。请修正并只输出 json。",
+                })
+                continue
+            return SuggestionResponse(
+                suggestions=suggestions,
+                raw=content,
+                model=self.model,
+                prompt_version=SUGGESTION_PROMPT_VERSION,
+                latency_ms=round((time.monotonic() - started) * 1000, 2),
+                usage=usage_total,
+            )
+        raise LLMProviderError(f"DeepSeek 行动提案连续无法解析：{last_error}")
+
+    def propose_director_beats(self, request: DirectorRequest) -> DirectorResponse:
+        messages = build_director_messages(request)
+        started = time.monotonic()
+        usage_total: dict[str, Any] = {}
+        last_error = "empty response"
+        for _ in range(MAX_REPAIR_ROUNDS + 1):
+            content, usage = self._call(
+                messages,
+                temperature=0.5,
+                max_tokens=700,
+            )
+            for key, value in (usage or {}).items():
+                if isinstance(value, (int, float)):
+                    usage_total[key] = usage_total.get(key, 0) + value
+            if not content.strip():
+                last_error = "empty content"
+                messages.append({
+                    "role": "user",
+                    "content": "你返回了空内容。请只输出 beats json 对象。",
+                })
+                continue
+            try:
+                beats = coerce_director_beats(content, request)
+            except ValueError as exc:
+                last_error = str(exc)
+                messages.append({"role": "assistant", "content": content})
+                messages.append({
+                    "role": "user",
+                    "content": f"上一条导演节拍无法解析（{exc}）。请修正并只输出 json。",
+                })
+                continue
+            return DirectorResponse(
+                beats=beats,
+                raw=content,
+                model=self.model,
+                prompt_version=DIRECTOR_PROMPT_VERSION,
+                latency_ms=round((time.monotonic() - started) * 1000, 2),
+                usage=usage_total,
+            )
+        raise LLMProviderError(f"DeepSeek Director 连续无法解析：{last_error}")

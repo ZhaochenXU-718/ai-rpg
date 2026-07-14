@@ -14,9 +14,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from .llm import LLMProvider, PlanRequest, PlanResponse
-from .llm_protocol import ActionPlan, CommittedOutcome, IssueSeverity, ValidationResult
+from .llm_protocol import (
+    ActionPlan,
+    CommittedOutcome,
+    IssueSeverity,
+    ValidationResult,
+    new_protocol_id,
+)
 from .quote import build_quote
 from .session import GameSession
+from .state import get_value
 from .trace import TraceRecorder
 
 MAX_REPLANS = 1
@@ -31,6 +38,7 @@ class ActionLoopResult:
     quote: dict[str, Any] | None = None
     clarification: str | None = None
     replanned: bool = False
+    confirmation_required: bool = True
 
     @property
     def can_execute(self) -> bool:
@@ -117,6 +125,39 @@ def _build_plan_quote(
     payload = session.plan_payload(validation)
     if payload is None:
         return None
+    capability_resolution = payload.get("capability_resolution")
+    if capability_resolution is not None:
+        expected_changes = []
+        for mutation in capability_resolution.mutations:
+            expected_changes.append((
+                mutation.path,
+                get_value(session.state, mutation.path),
+                mutation.value,
+            ))
+        return {
+            "quote_id": new_protocol_id("quote"),
+            "intent": capability_resolution.capability_id,
+            "objects": list(capability_resolution.objects),
+            "player_text": plan.player_text,
+            "classification": "capability",
+            "understanding": plan.interpretation,
+            "benefits": [],
+            "risks": [risk.description for risk in plan.risks],
+            "costs": {},
+            "disclosed_changes": [],
+            "expected_move": None,
+            "expected_changes": expected_changes,
+            "expected_storylets": [],
+            "expected_fact_count": 0,
+            "expected_ending": None,
+            "proposal": {},
+            "notes": [],
+            "can_execute": True,
+            "rejection_reason_in_world": None,
+            "requote_count": 0,
+            "plan_id": plan.plan_id,
+            "validation_id": validation.validation_id,
+        }
     unauthored = bool(payload.get("allow_unauthored"))
     quote = build_quote(
         session.story,
@@ -175,8 +216,21 @@ def run_action_loop(
         session.pending_clarification = None
         if validation.can_execute:
             quote = _build_plan_quote(session, plan, validation)
+            payload = session.plan_payload(validation) or {}
+            confirmation_required = bool(
+                payload.get(
+                    "confirmation_required",
+                    session.story.quote_required(
+                        str(payload.get("intent_id") or "")
+                    ),
+                )
+            )
             return ActionLoopResult(
-                plan=plan, validation=validation, quote=quote, replanned=replanned,
+                plan=plan,
+                validation=validation,
+                quote=quote,
+                replanned=replanned,
+                confirmation_required=confirmation_required,
             )
         if not validation.can_replan or attempt == MAX_REPLANS:
             return ActionLoopResult(plan=plan, validation=validation, replanned=replanned)
@@ -189,19 +243,37 @@ def commit_action(
     session: GameSession,
     loop_result: ActionLoopResult,
     recorder: TraceRecorder,
+    director_provider: LLMProvider | None = None,
 ) -> CommittedOutcome:
-    """Player confirmed the quote: commit through the deterministic resolver."""
-    recorder.record("quote_confirmed", {
+    """Commit a validated plan, after confirmation only when policy requires it."""
+    decision_event = (
+        "quote_confirmed" if loop_result.confirmation_required else "auto_committed"
+    )
+    recorder.record(decision_event, {
         "turn": session.turn_no + 1,
+        "state_revision": loop_result.validation.state_revision,
         "plan_id": loop_result.plan.plan_id,
+        "validation_id": loop_result.validation.validation_id,
         "quote": {
             key: value for key, value in (loop_result.quote or {}).items()
             if key not in ("expected_changes", "expected_storylets")
         },
     })
-    outcome = session.resolve_plan(loop_result.plan, loop_result.validation)
+    outcome = session.resolve_plan(
+        loop_result.plan,
+        loop_result.validation,
+        director_provider=director_provider,
+    )
+    if session.last_result is not None and session.last_result.director_trace:
+        recorder.record("director_cycle", {
+            "turn": outcome.turn_no,
+            "state_revision_before": outcome.state_revision_before,
+            **session.last_result.director_trace,
+        })
     recorder.record("committed_outcome", {
         "turn": outcome.turn_no,
+        "checkpoint_id": session.current_checkpoint_id,
+        "branch_id": session.current_branch_id,
         "outcome": outcome.to_dict(),
     })
     return outcome

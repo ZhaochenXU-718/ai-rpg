@@ -77,6 +77,14 @@ class TemporaryEffects:
             "restore": [(path, previous) for path, previous, _ in restore],
         })
 
+    def snapshot(self) -> tuple[dict[str, Any], ...]:
+        """Return an isolated checkpoint payload for the pending rollbacks."""
+        return tuple(copy.deepcopy(self._entries))
+
+    def restore(self, snapshot: tuple[dict[str, Any], ...]) -> None:
+        """Replace the registry from a checkpoint payload."""
+        self._entries = copy.deepcopy(list(snapshot))
+
     def expire(self, state: dict[str, Any], turn_no: int) -> list[tuple[str, Any]]:
         """Roll back entries that expire at the end of `turn_no`."""
         restored: list[tuple[str, Any]] = []

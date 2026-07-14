@@ -338,6 +338,7 @@ def validate_items(
     data: dict[str, Any],
     scenes: dict[str, Any],
     characters: dict[str, Any],
+    known_paths: set[str],
     node_ids: set[str],
     report: ValidationReport,
 ) -> set[str]:
@@ -356,6 +357,78 @@ def validate_items(
         for field in ("portable", "consumable"):
             if not isinstance(item.get(field), bool):
                 report.error(f"{context}.{field} must be a boolean.")
+
+        policy = item.get("request_policy")
+        if policy is None:
+            continue
+        policy_context = f"{context}.request_policy"
+        if not isinstance(policy, dict):
+            report.error(f"{policy_context} must be a mapping.")
+            continue
+        if item.get("portable") is not True:
+            report.error(f"{policy_context} requires a portable item.")
+        enabled = policy.get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            report.error(f"{policy_context}.enabled must be a boolean.")
+        when = policy.get("when", {})
+        if not isinstance(when, dict):
+            report.error(f"{policy_context}.when must be a mapping.")
+        else:
+            validate_condition_block(
+                when,
+                known_paths,
+                set(characters),
+                report,
+                f"{policy_context}.when",
+                node_ids=node_ids,
+                item_ids=item_ids,
+            )
+        purposes = policy.get("purposes")
+        if isinstance(purposes, dict):
+            if not purposes:
+                report.error(f"{policy_context}.purposes must not be empty.")
+            for purpose_id, label in purposes.items():
+                if not isinstance(purpose_id, str) or not purpose_id:
+                    report.error(
+                        f"{policy_context}.purposes keys must be non-empty strings."
+                    )
+                if not isinstance(label, str) or not label:
+                    report.error(
+                        f"{policy_context}.purposes.{purpose_id} must be a non-empty string."
+                    )
+        elif isinstance(purposes, list):
+            if not purposes or any(
+                not isinstance(purpose, str) or not purpose for purpose in purposes
+            ):
+                report.error(
+                    f"{policy_context}.purposes must be a non-empty string list."
+                )
+        else:
+            report.error(
+                f"{policy_context}.purposes must be a non-empty mapping or string list."
+            )
+        minimum = policy.get("min_rapport")
+        if minimum is not None and (
+            not isinstance(minimum, (int, float)) or isinstance(minimum, bool)
+        ):
+            report.error(f"{policy_context}.min_rapport must be a number.")
+        rapport_key = policy.get("rapport_key")
+        if rapport_key is not None and (
+            not isinstance(rapport_key, str) or not rapport_key
+        ):
+            report.error(f"{policy_context}.rapport_key must be a non-empty string.")
+        for field in ("always_grant", "never_grant"):
+            value = policy.get(field)
+            if value is not None and not isinstance(value, bool):
+                report.error(f"{policy_context}.{field} must be a boolean.")
+        if policy.get("always_grant") is True and policy.get("never_grant") is True:
+            report.error(
+                f"{policy_context} cannot enable both always_grant and never_grant."
+            )
+        for field in ("grant_narrative", "refusal_narrative"):
+            value = policy.get(field)
+            if value is not None and (not isinstance(value, str) or not value):
+                report.error(f"{policy_context}.{field} must be a non-empty string.")
 
     initial = data.get("initial_state") or {}
     locations = initial.get("item_locations") if isinstance(initial, dict) else None
@@ -1257,11 +1330,32 @@ def validate_content_graph(
         initial_scene = positions.get(player_id)
     else:
         initial_scene = world.get("scene") if isinstance(world, dict) else None
+    if isinstance(initial_scene, str):
+        reachable_scenes.add(initial_scene)
+
+    # Authored exits are first-class player movement. Reachability is a
+    # potential-path check, so conditional exits count even when their runtime
+    # conditions are not initially true. Storylet destinations collected above
+    # remain valid seeds, and exits can continue from either kind of destination.
+    changed = True
+    while changed:
+        changed = False
+        for source in list(reachable_scenes):
+            scene = scenes.get(source)
+            if not isinstance(scene, dict):
+                continue
+            for exit_spec in scene.get("exits") or []:
+                if not isinstance(exit_spec, dict):
+                    continue
+                target = exit_spec.get("to")
+                if isinstance(target, str) and target in scenes and target not in reachable_scenes:
+                    reachable_scenes.add(target)
+                    changed = True
     for scene_id in scenes:
         if scene_id != initial_scene and scene_id not in reachable_scenes:
             report.warn(
-                f"scenes.{scene_id} is unreachable: no storylet moves the player to it "
-                "and it is not the initial scene."
+                f"scenes.{scene_id} is unreachable: no storylet or authored exit path "
+                "can move the player to it, and it is not the initial scene."
             )
 
     # An action_response with no action or object grounding can ride along with
@@ -1361,7 +1455,9 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
 
     known_paths = collect_state_paths(data)
     node_ids, directed_edges = validate_world_board(data, scenes, characters, report)
-    item_ids = validate_items(data, scenes, characters, node_ids, report)
+    item_ids = validate_items(
+        data, scenes, characters, known_paths, node_ids, report
+    )
     validate_world_rules(
         data, scenes, characters, known_paths, node_ids, directed_edges, item_ids, report
     )

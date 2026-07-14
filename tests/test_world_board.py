@@ -20,6 +20,7 @@ from tools.validate_content import validate_content
 
 ROOT = Path(__file__).resolve().parent.parent
 STORY_PATH = ROOT / "content" / "midnight_archive.yaml"
+ROOFTOP_STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
 
 
 class WorldStepTests(unittest.TestCase):
@@ -322,6 +323,29 @@ class SessionValidationTests(unittest.TestCase):
         self.assertEqual(self.session.state["characters"]["maid"]["trust"], 3)
 
 
+class RooftopFreeNarrativePolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.story = Story.load(ROOFTOP_STORY_PATH)
+        self.session = GameSession(self.story, log_dir=None)
+
+    def test_everyday_story_has_no_countdown_or_pre_action_quotes(self) -> None:
+        self.assertNotIn("time_left", self.session.state["world"])
+        for intent_id, intent in self.story.intents.items():
+            self.assertFalse(self.story.quote_required(intent_id), intent_id)
+            self.assertNotIn("time_left", intent.get("typical_cost") or {}, intent_id)
+
+        # Repeated observation advances the world step for ordering, but cannot
+        # consume a hidden failure clock or force a missed-dinner ending.
+        for index in range(12):
+            target = "elevator_notice" if index % 2 == 0 else "takeout_bench"
+            self.session.resolve(intent_id="observe", objects=[target])
+
+        self.assertEqual(self.session.turn_no, 12)
+        self.assertEqual(self.session.state["world"]["step"], 12)
+        self.assertNotIn("time_left", self.session.state["world"])
+        self.assertIsNone(self.session.ending)
+
+
 class CliParsingTests(unittest.TestCase):
     def test_chinese_punctuation_separates_targets(self) -> None:
         self.assertEqual(
@@ -341,6 +365,40 @@ class SchemaV2ValidationTests(unittest.TestCase):
         data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
         report = validate_content(data)
         self.assertEqual(report.errors, [])
+
+    def test_authored_exits_count_toward_scene_reachability(self) -> None:
+        data = yaml.safe_load(ROOFTOP_STORY_PATH.read_text(encoding="utf-8"))
+        report = validate_content(data)
+
+        self.assertEqual(report.errors, [])
+        self.assertFalse(
+            any("is unreachable" in warning for warning in report.warnings),
+            report.warnings,
+        )
+
+    def test_request_policy_requires_valid_public_purposes(self) -> None:
+        data = yaml.safe_load(ROOFTOP_STORY_PATH.read_text(encoding="utf-8"))
+        broken = copy.deepcopy(data)
+        broken["items"]["picnic_mat"]["request_policy"]["purposes"] = {}
+
+        report = validate_content(broken)
+
+        self.assertTrue(
+            any("request_policy.purposes must not be empty" in error for error in report.errors)
+        )
+
+    def test_request_policy_condition_uses_known_state_paths(self) -> None:
+        data = yaml.safe_load(ROOFTOP_STORY_PATH.read_text(encoding="utf-8"))
+        broken = copy.deepcopy(data)
+        broken["items"]["picnic_mat"]["request_policy"]["when"] = {
+            "flags": {"not_a_real_flag": True}
+        }
+
+        report = validate_content(broken)
+
+        self.assertTrue(
+            any("flags.not_a_real_flag" in warning for warning in report.warnings)
+        )
 
     def test_static_presence_is_rejected_in_schema_v2(self) -> None:
         data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
