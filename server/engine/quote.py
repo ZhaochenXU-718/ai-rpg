@@ -12,22 +12,13 @@ import copy
 import uuid
 from typing import Any
 
+from .conditions import check_condition_block
 from .content import Story
 from .effects import TemporaryEffects
 from .limits import clamp_generic_patch
-from .state import get_value
+from .perception import filter_changes_for_player
 
 MAX_REQUOTES_PER_TURN = 3
-
-# Which soft state a bare intent nudges when no storylet catches the action.
-# NPC-targeted intents pick the first NPC among the chosen objects.
-NPC_PROPOSALS = {
-    "negotiate": ("trust", 1),
-    "threaten": ("suspicion", 1),
-}
-SCENE_PROPOSALS = {
-    "create_distraction": {"scene.noise_level": 1},
-}
 
 RISK_TEXT = {
     "low": "低风险：最多消耗时间。",
@@ -38,24 +29,32 @@ RISK_TEXT = {
 
 
 def default_proposal(story: Story, state: dict[str, Any], intent_id: str, objects: list[str]) -> dict[str, Any]:
-    npc_rule = NPC_PROPOSALS.get(intent_id)
-    if npc_rule:
-        key, step = npc_rule
+    """Fallback soft-state proposal declared by the story, not the engine.
+
+    Content declares e.g. ``fallback_proposal: {npc_state: {key: trust,
+    step: 1}}`` (applies to the first character among the targets) or a
+    literal ``state_patch``.  The engine knows the shapes, never the story's
+    vocabulary; the stage-3 LLM replaces this entirely.
+    """
+    fallback = story.intent(intent_id).get("fallback_proposal") or {}
+    npc_rule = fallback.get("npc_state")
+    if isinstance(npc_rule, dict) and npc_rule.get("key"):
         for obj in objects:
             if obj in story.characters:
-                return {f"{obj}.{key}": step}
+                return {f"{obj}.{npc_rule['key']}": npc_rule.get("step", 1)}
         return {}
-    return dict(SCENE_PROPOSALS.get(intent_id, {}))
+    patch = fallback.get("state_patch")
+    return dict(patch) if isinstance(patch, dict) else {}
 
 
 def hazard_notes(story: Story, state: dict[str, Any]) -> list[str]:
+    """Story-declared quote warnings whose conditions currently hold."""
     notes = []
-    if (get_value(state, "scene.fire_risk") or 0) >= 1:
-        notes.append("火势风险已存在，再生事端可能失控。")
-    for char_id in story.characters:
-        suspicion = get_value(state, f"{char_id}.suspicion")
-        if isinstance(suspicion, (int, float)) and suspicion >= 4:
-            notes.append(f"{story.character_name(char_id)}已经高度怀疑你。")
+    for warning in story.data.get("quote_warnings") or []:
+        if not isinstance(warning, dict) or not warning.get("text"):
+            continue
+        if check_condition_block(state, warning.get("when") or {}):
+            notes.append(str(warning["text"]))
     return notes
 
 
@@ -70,6 +69,8 @@ def build_quote(
     temporaries: TemporaryEffects | None = None,
     consumed: set[str] | None = None,
     turn_no: int = 1,
+    proposal: dict[str, Any] | None = None,
+    allow_unauthored: bool = False,
 ) -> dict[str, Any]:
     intent = story.intent(intent_id)
     label = intent.get("label", intent_id)
@@ -79,9 +80,13 @@ def build_quote(
         exit_labels.get(obj, story.object_label(scene_id, obj, state)) for obj in objects
     ]
 
-    proposal = default_proposal(story, state, intent_id, objects)
+    # A caller-supplied proposal (the validated plan payload) takes priority
+    # over the story's rule fallback; both pass the same whitelist clamp.
+    if proposal is None:
+        proposal = default_proposal(story, state, intent_id, objects)
     accepted, clamp_notes = clamp_generic_patch(proposal, state, story.resolution_limits)
-    if intent_id in NPC_PROPOSALS and not any(obj in story.characters for obj in objects):
+    npc_targeted = isinstance((intent.get("fallback_proposal") or {}).get("npc_state"), dict)
+    if npc_targeted and not any(obj in story.characters for obj in objects):
         clamp_notes.append("未指定人物对象，这次行动难以改变任何人的态度；输入 who 查看在场人物。")
 
     understanding = f"你打算以「{label}」的方式行动"
@@ -114,6 +119,7 @@ def build_quote(
         intent_id,
         objects,
         accepted,
+        allow_unauthored=allow_unauthored,
     )
     by_path: dict[str, list[Any]] = {}
     path_order: list[str] = []
@@ -128,6 +134,27 @@ def build_quote(
         for path in path_order
         if path not in costs and by_path[path][0] != by_path[path][1]
     ]
+    # Disclosure wall: the player-facing card may only state consequences on
+    # state the player can already perceive (story `perception` block).
+    # Everything else — reveals, acquisitions, endings — stays a full
+    # preview for binding enforcement and logs, never for the card.
+    # The filter reads the *pre-action* state on purpose: a quote must not
+    # become an oracle for what is about to be discovered.
+    disclosed_changes = filter_changes_for_player(story, state, expected_changes)
+
+    # Exception to the wall: the player's OWN movement is a first-class
+    # consequence of their own action, not a hidden world fact — hiding it
+    # broke quote binding ("我只是想聊天，怎么走出大厅了？").
+    expected_move = None
+    move_path = f"positions.{story.player_id}"
+    if move_path in by_path and by_path[move_path][0] != by_path[move_path][1]:
+        origin, destination = by_path[move_path]
+
+        def node_name(node_id: Any) -> str:
+            node = story.world_nodes.get(str(node_id)) or {}
+            return node.get("name") or story.scene(str(node_id)).get("name", str(node_id))
+
+        expected_move = {"from": node_name(origin), "to": node_name(destination)}
 
     return {
         "quote_id": uuid.uuid4().hex[:12],
@@ -139,9 +166,12 @@ def build_quote(
         "benefits": [intent.get("description", "")],
         "risks": risks,
         "costs": costs,
+        "disclosed_changes": disclosed_changes,
+        "expected_move": expected_move,
+        # Internal preview (binding enforcement + logs); never rendered.
         "expected_changes": expected_changes,
         "expected_storylets": list(preview_result.fired),
-        "expected_clue_count": len(preview_result.new_clues),
+        "expected_fact_count": len(preview_result.new_facts),
         "expected_ending": preview_result.ending,
         "proposal": accepted,
         "notes": clamp_notes,

@@ -39,18 +39,22 @@ def render_intro(story: Story, state: dict[str, Any]) -> str:
 
 
 def render_status(story: Story, state: dict[str, Any]) -> str:
-    world = state["world"]
-    lines = [
-        f"场景：{story.scene(current_scene_id(state)).get('name', current_scene_id(state))}"
-        f" ｜ 剩余时间：{world.get('time_left')}",
-        f"当前目标：{current_goal(story, state)}",
-    ]
+    # What may be shown and how it is labelled comes from the story's
+    # `perception` block; the engine carries no genre vocabulary here.
+    from .perception import perception_config
+
+    config = perception_config(story)
+    header = f"场景：{story.scene(current_scene_id(state)).get('name', current_scene_id(state))}"
+    for key, label in config["world_state"].items():
+        value = get_value(state, f"world.{key}")
+        if value is not None:
+            header += f" ｜ {label}：{value}"
+    lines = [header, f"当前目标：{current_goal(story, state)}"]
     # Physical presence is derived from the authoritative world positions.
-    scene_chars = story.characters_at(state)
     watches = []
-    for char_id in scene_chars:
+    for char_id in story.characters_at(state):
         parts = []
-        for key, tag in (("suspicion", "疑"), ("alertness", "警"), ("trust", "信")):
+        for key, tag in config["character_state"].items():
             value = get_value(state, f"{char_id}.{key}")
             if value is not None:
                 parts.append(f"{tag}{value}")
@@ -58,8 +62,8 @@ def render_status(story: Story, state: dict[str, Any]) -> str:
             watches.append(f"{story.character_name(char_id)}({'/'.join(parts)})")
     if watches:
         lines.append("在场：" + "  ".join(watches))
-    if state["clues"]:
-        lines.append(f"已获线索 {len(state['clues'])} 条（输入 clues 查看）")
+    if state["facts"]:
+        lines.append(f"已获{config['facts_label']} {len(state['facts'])} 条（输入 facts 查看）")
     inventory = story.inventory(state)
     if inventory:
         lines.append("口袋：" + "、".join(story.item_labels().get(item, item) for item in inventory))
@@ -135,17 +139,19 @@ def render_quote(quote: dict[str, Any]) -> str:
         costs = "，".join(f"{path} {value:+}" if isinstance(value, (int, float)) else f"{path}→{value}"
                           for path, value in quote["costs"].items())
         lines.append(f"预计代价：{costs}")
-    expected_changes = quote.get("expected_changes") or []
-    if expected_changes:
+    # Disclosure wall (perception.py): only consequences on already-visible
+    # public state reach the card. The full preview stays internal — a quote
+    # is a risk estimate, not an oracle of reveals and endings.
+    disclosed = quote.get("disclosed_changes") or []
+    if disclosed:
         effects = "，".join(
             f"{path} {previous}→{new}"
-            for path, previous, new in expected_changes
+            for path, previous, new in disclosed
         )
         lines.append(f"预计影响：{effects}")
-    if quote.get("expected_clue_count"):
-        lines.append(f"预计收获：{quote['expected_clue_count']} 条新线索")
-    if quote.get("expected_ending"):
-        lines.append(f"预计将进入结局：{quote['expected_ending']}")
+    move = quote.get("expected_move")
+    if move:
+        lines.append(f"预计移动：{move['from']} → {move['to']}")
     for note in quote["notes"]:
         lines.append(f"（{note}）")
     if not quote["can_execute"]:
@@ -153,19 +159,29 @@ def render_quote(quote: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-# Engine-default fallback lines for turns where no storylet fired.
-# Generic on purpose; stage 3 replaces this whole layer with LLM rendering.
-INTENT_FALLBACK = {
-    "negotiate": "对话在试探中结束。没有立刻的突破，但对方记住了你的态度。",
-    "observe": "你看得很仔细，暂时没有发现新的异常。",
-    "sneak": "你悄悄换了位置，没有引起注意，也还没找到突破口。",
-    "create_distraction": "动静起来了，但还没有形成真正的机会。",
-    "threaten": "你的施压没有得到想要的反应。",
-    "custom": "你的尝试产生了一些影响，但没有引出新的事件。",
-}
+# Engine-default fallback lines for turns where no storylet fired. Stories
+# override per intent via `intents.<id>.fallback_narrative`; these generic
+# lines carry no genre vocabulary. Stage 3 replaces this layer with LLM
+# rendering.
+FALLBACK_WITH_EFFECT = "行动产生了影响，但没有引出新的事件。"
+FALLBACK_NO_EFFECT = "这一步没有改变任何事，但时间仍在流逝。"
 
 
-def render_turn(story: Story, result: TurnResult) -> str:
+def intent_fallback_line(story: Story, intent_id: str) -> str:
+    line = story.intent(intent_id).get("fallback_narrative")
+    return str(line) if line else FALLBACK_WITH_EFFECT
+
+
+def render_turn(
+    story: Story,
+    result: TurnResult,
+    prose: str | None = None,
+    *,
+    free_text_mode: bool = False,
+) -> str:
+    """Render one committed turn. ``prose`` (LLM narration) replaces the
+    template text when provided; mechanical lines (facts, state changes,
+    tier) always print — they are the fairness receipt, not flavour."""
     if result.errors:
         return "\n".join(
             ["（行动未执行：" + "；".join(result.errors) + "）", "【判定：未执行】"]
@@ -185,16 +201,42 @@ def render_turn(story: Story, result: TurnResult) -> str:
         for path in path_order
         if by_path[path][0] != by_path[path][1]
     ]
-    meaningful = [c for c in collapsed if c[0] != "world.time_left"]
-    if result.narrative_hints:
+    # "Did anything change beyond the action's declared cost?" — the cost
+    # paths come from the intent's typical_cost, not a hardcoded clock key.
+    cost_paths = {
+        str(key) if "." in str(key) else f"world.{key}"
+        for key in (story.intent(result.intent).get("typical_cost") or {})
+    }
+    meaningful = [c for c in collapsed if c[0] not in cost_paths]
+    if prose:
+        lines.append(prose)
+    elif (
+        result.action_response_hints
+        or result.world_beat_hints
+        or result.world_reaction_hints
+    ):
+        # Preserve the same attribution contract when LLM narration is empty:
+        # the player's action is always answered first; concurrent director
+        # beats and autonomous world reactions are explicitly separated.
+        lines.extend(result.action_response_hints)
+        lines.extend(f"与此同时，{hint}" for hint in result.world_beat_hints)
+        lines.extend(f"随后，{hint}" for hint in result.world_reaction_hints)
+    elif result.narrative_hints:
+        # Compatibility for results produced before attribution was tracked.
         lines.extend(result.narrative_hints)
     elif meaningful:
-        lines.append(INTENT_FALLBACK.get(result.intent, "行动产生了影响，但没有引出新的事件。"))
+        lines.append(intent_fallback_line(story, result.intent))
     else:
-        lines.append("这一步没有掀起波澜，但庄园的钟摆没有停。")
-        lines.append("（提示：把意图和具体对象组合起来，例如 `observe family_portrait`；输入 objects 查看当前场景对象。）")
-    for clue in result.new_clues:
-        lines.append(f"◇ 新线索：{clue}")
+        lines.append(FALLBACK_NO_EFFECT)
+        if free_text_mode:
+            lines.append("（提示：可以继续用自然语言补充更具体的目标、做法或工具。）")
+        else:
+            lines.append("（提示：把意图和具体对象组合起来，例如 `<意图 ID> <对象 ID>`；输入 objects 查看当前场景对象。）")
+    from .perception import perception_config
+
+    facts_label = perception_config(story)["facts_label"]
+    for fact in result.new_facts:
+        lines.append(f"◇ 新{facts_label}：{fact}")
     interesting = [
         (f"{path} {previous}→{new}" if previous is not None else f"{path} = {new}")
         for path, previous, new in collapsed

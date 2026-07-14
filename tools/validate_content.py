@@ -63,6 +63,7 @@ KNOWN_STORYLET_TYPES = {
     "failure_pressure",
     "ending_route",
 }
+KNOWN_STORYLET_ATTRIBUTIONS = {"action_response", "world_beat"}
 CONDITION_GROUPS = (
     "world_state",
     "player_state",
@@ -337,6 +338,7 @@ def validate_items(
     data: dict[str, Any],
     scenes: dict[str, Any],
     characters: dict[str, Any],
+    known_paths: set[str],
     node_ids: set[str],
     report: ValidationReport,
 ) -> set[str]:
@@ -355,6 +357,78 @@ def validate_items(
         for field in ("portable", "consumable"):
             if not isinstance(item.get(field), bool):
                 report.error(f"{context}.{field} must be a boolean.")
+
+        policy = item.get("request_policy")
+        if policy is None:
+            continue
+        policy_context = f"{context}.request_policy"
+        if not isinstance(policy, dict):
+            report.error(f"{policy_context} must be a mapping.")
+            continue
+        if item.get("portable") is not True:
+            report.error(f"{policy_context} requires a portable item.")
+        enabled = policy.get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            report.error(f"{policy_context}.enabled must be a boolean.")
+        when = policy.get("when", {})
+        if not isinstance(when, dict):
+            report.error(f"{policy_context}.when must be a mapping.")
+        else:
+            validate_condition_block(
+                when,
+                known_paths,
+                set(characters),
+                report,
+                f"{policy_context}.when",
+                node_ids=node_ids,
+                item_ids=item_ids,
+            )
+        purposes = policy.get("purposes")
+        if isinstance(purposes, dict):
+            if not purposes:
+                report.error(f"{policy_context}.purposes must not be empty.")
+            for purpose_id, label in purposes.items():
+                if not isinstance(purpose_id, str) or not purpose_id:
+                    report.error(
+                        f"{policy_context}.purposes keys must be non-empty strings."
+                    )
+                if not isinstance(label, str) or not label:
+                    report.error(
+                        f"{policy_context}.purposes.{purpose_id} must be a non-empty string."
+                    )
+        elif isinstance(purposes, list):
+            if not purposes or any(
+                not isinstance(purpose, str) or not purpose for purpose in purposes
+            ):
+                report.error(
+                    f"{policy_context}.purposes must be a non-empty string list."
+                )
+        else:
+            report.error(
+                f"{policy_context}.purposes must be a non-empty mapping or string list."
+            )
+        minimum = policy.get("min_rapport")
+        if minimum is not None and (
+            not isinstance(minimum, (int, float)) or isinstance(minimum, bool)
+        ):
+            report.error(f"{policy_context}.min_rapport must be a number.")
+        rapport_key = policy.get("rapport_key")
+        if rapport_key is not None and (
+            not isinstance(rapport_key, str) or not rapport_key
+        ):
+            report.error(f"{policy_context}.rapport_key must be a non-empty string.")
+        for field in ("always_grant", "never_grant"):
+            value = policy.get(field)
+            if value is not None and not isinstance(value, bool):
+                report.error(f"{policy_context}.{field} must be a boolean.")
+        if policy.get("always_grant") is True and policy.get("never_grant") is True:
+            report.error(
+                f"{policy_context} cannot enable both always_grant and never_grant."
+            )
+        for field in ("grant_narrative", "refusal_narrative"):
+            value = policy.get(field)
+            if value is not None and (not isinstance(value, str) or not value):
+                report.error(f"{policy_context}.{field} must be a non-empty string.")
 
     initial = data.get("initial_state") or {}
     locations = initial.get("item_locations") if isinstance(initial, dict) else None
@@ -511,6 +585,31 @@ def validate_intents(intents: dict[str, Any], report: ValidationReport) -> None:
             report.error(
                 f"intents.{intent_id}.engine_action '{engine_action}' is not supported."
             )
+        fallback = intent.get("fallback_proposal")
+        if fallback is not None:
+            if not isinstance(fallback, dict) or not (
+                set(fallback) <= {"npc_state", "state_patch"}
+            ):
+                report.error(
+                    f"intents.{intent_id}.fallback_proposal must be a mapping "
+                    "with 'npc_state' and/or 'state_patch'."
+                )
+            else:
+                npc_rule = fallback.get("npc_state")
+                if npc_rule is not None and (
+                    not isinstance(npc_rule, dict) or not npc_rule.get("key")
+                ):
+                    report.error(
+                        f"intents.{intent_id}.fallback_proposal.npc_state needs a 'key'."
+                    )
+                patch = fallback.get("state_patch")
+                if patch is not None and not isinstance(patch, dict):
+                    report.error(
+                        f"intents.{intent_id}.fallback_proposal.state_patch must be a mapping."
+                    )
+        narrative = intent.get("fallback_narrative")
+        if narrative is not None and not isinstance(narrative, str):
+            report.error(f"intents.{intent_id}.fallback_narrative must be a string.")
         for field in ("min_objects", "max_objects"):
             value = intent.get(field)
             if value is not None and (
@@ -904,8 +1003,13 @@ def validate_effect(
                     report,
                     f"{context}.move_items.{item_id}",
                 )
-    if "add_clues" in effect and not isinstance(effect["add_clues"], list):
-        report.error(f"{context}.add_clues must be a list.")
+    if "add_clues" in effect:
+        report.error(
+            f"{context}.add_clues was renamed to add_facts "
+            "(the display label comes from perception.facts_label)."
+        )
+    if "add_facts" in effect and not isinstance(effect["add_facts"], list):
+        report.error(f"{context}.add_facts must be a list.")
     if "temporary" in effect:
         temporary = effect["temporary"]
         if not isinstance(temporary, dict):
@@ -968,6 +1072,11 @@ def validate_storylets(
         storylet_type = storylet.get("type")
         if storylet_type is not None and storylet_type not in KNOWN_STORYLET_TYPES:
             report.warn(f"storylets.{storylet_id}.type '{storylet_type}' is not in the recommended vocabulary.")
+        attribution = storylet.get("attribution", "action_response")
+        if not isinstance(attribution, str) or attribution not in KNOWN_STORYLET_ATTRIBUTIONS:
+            report.error(
+                f"storylets.{storylet_id}.attribution must be 'action_response' or 'world_beat'."
+            )
         phase = storylet.get("phase", "action")
         if phase not in {"action", "after_world"}:
             report.error(
@@ -1022,6 +1131,64 @@ def validate_storylets(
                 f"intents.{intent_id}.requires_storylet_match is true but no action storylet "
                 "declares that intent."
             )
+
+
+def validate_perception_block(
+    data: dict[str, Any],
+    known_paths: set[str],
+    character_ids: set[str],
+    report: ValidationReport,
+) -> None:
+    """Validate the story-declared public-state wall and quote warnings."""
+    perception = data.get("perception")
+    if perception is not None:
+        if not isinstance(perception, dict):
+            report.error("perception must be a mapping.")
+        else:
+            allowed = {"world_state", "scene_state", "character_state"}
+            for group, entries in perception.items():
+                context = f"perception.{group}"
+                if group == "facts_label":
+                    if not isinstance(entries, str) or not entries:
+                        report.error(f"{context} must be a non-empty string.")
+                    continue
+                if group not in allowed:
+                    report.error(f"{context}: unknown group (allowed: {sorted(allowed)}).")
+                    continue
+                if not isinstance(entries, dict):
+                    report.error(f"{context} must be a mapping of state key to label.")
+                    continue
+                for key, label in entries.items():
+                    if not isinstance(label, str) or not label:
+                        report.error(f"{context}.{key}: label must be a non-empty string.")
+                    if group == "world_state":
+                        validate_state_path(f"world.{key}", known_paths, character_ids, report, context)
+                    elif group == "scene_state":
+                        validate_state_path(f"scene.{key}", known_paths, character_ids, report, context)
+    elif data.get("schema_version") == 2:
+        report.warn(
+            "perception block is missing: the status bar and quote card will "
+            "disclose nothing beyond narration."
+        )
+
+    warnings_block = data.get("quote_warnings")
+    if warnings_block is None:
+        return
+    if not isinstance(warnings_block, list):
+        report.error("quote_warnings must be a list.")
+        return
+    for index, warning in enumerate(warnings_block):
+        context = f"quote_warnings[{index}]"
+        if not isinstance(warning, dict):
+            report.error(f"{context} must be a mapping.")
+            continue
+        if not isinstance(warning.get("text"), str) or not warning.get("text"):
+            report.error(f"{context}.text must be a non-empty string.")
+        when = warning.get("when")
+        if not isinstance(when, dict) or not when:
+            report.error(f"{context}.when must be a non-empty condition mapping.")
+            continue
+        validate_condition_block(when, known_paths, character_ids, report, f"{context}.when")
 
 
 def validate_resolution_limits(
@@ -1163,11 +1330,60 @@ def validate_content_graph(
         initial_scene = positions.get(player_id)
     else:
         initial_scene = world.get("scene") if isinstance(world, dict) else None
+    if isinstance(initial_scene, str):
+        reachable_scenes.add(initial_scene)
+
+    # Authored exits are first-class player movement. Reachability is a
+    # potential-path check, so conditional exits count even when their runtime
+    # conditions are not initially true. Storylet destinations collected above
+    # remain valid seeds, and exits can continue from either kind of destination.
+    changed = True
+    while changed:
+        changed = False
+        for source in list(reachable_scenes):
+            scene = scenes.get(source)
+            if not isinstance(scene, dict):
+                continue
+            for exit_spec in scene.get("exits") or []:
+                if not isinstance(exit_spec, dict):
+                    continue
+                target = exit_spec.get("to")
+                if isinstance(target, str) and target in scenes and target not in reachable_scenes:
+                    reachable_scenes.add(target)
+                    changed = True
     for scene_id in scenes:
         if scene_id != initial_scene and scene_id not in reachable_scenes:
             report.warn(
-                f"scenes.{scene_id} is unreachable: no storylet moves the player to it "
-                "and it is not the initial scene."
+                f"scenes.{scene_id} is unreachable: no storylet or authored exit path "
+                "can move the player to it, and it is not the initial scene."
+            )
+
+    # An action_response with no action or object grounding can ride along with
+    # any turn and impersonate its outcome. Automatic events are valid, but
+    # must explicitly declare world_beat so narration and fallback rendering
+    # keep them separate. The custom-specific warning below remains more
+    # precise for free-text transitions with heavy effects.
+    heavy_keys = (*EFFECT_MUTATION_KEYS, "add_facts")
+    for storylet in storylets:
+        if not isinstance(storylet, dict):
+            continue
+        trigger = storylet.get("trigger")
+        effect = storylet.get("effect")
+        if not isinstance(trigger, dict) or not isinstance(effect, dict):
+            continue
+        blocks = [effect] + ([effect["temporary"]] if isinstance(effect.get("temporary"), dict) else [])
+        has_heavy_effect = any(key in block for block in blocks for key in heavy_keys)
+        intents = [trigger["intent"]] if "intent" in trigger else list(trigger.get("intent_any") or [])
+        has_objects = bool(trigger.get("object_any") or trigger.get("object_all"))
+        if not intents and not has_objects and storylet.get("attribution") != "world_beat":
+            report.warn(
+                f"storylets.{storylet.get('id')}: action_response has no intent/object constraint; "
+                "declare attribution: world_beat or ground it to the player action."
+            )
+        if "custom" in intents and not has_objects and has_heavy_effect:
+            report.warn(
+                f"storylets.{storylet.get('id')}: triggered by 'custom' with heavy effects "
+                "but no object_any/object_all constraint; any free-text action would fire it."
             )
 
     # A transition the scene's intent menu cannot express is invisible to the
@@ -1239,7 +1455,9 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
 
     known_paths = collect_state_paths(data)
     node_ids, directed_edges = validate_world_board(data, scenes, characters, report)
-    item_ids = validate_items(data, scenes, characters, node_ids, report)
+    item_ids = validate_items(
+        data, scenes, characters, known_paths, node_ids, report
+    )
     validate_world_rules(
         data, scenes, characters, known_paths, node_ids, directed_edges, item_ids, report
     )
@@ -1254,6 +1472,7 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
     )
     validate_endings(endings, known_paths, set(characters), report)
     validate_resolution_limits(data, known_paths, set(characters), report)
+    validate_perception_block(data, known_paths, set(characters), report)
     validate_content_graph(data, scenes, storylets, report)
 
     return report

@@ -2,6 +2,8 @@
 
 日期：2026-07-08
 
+> 历史说明（2026-07-14）：本文保留 v0.1 高控制度短篇实验的实施依据，其中“优先匹配 storylet、所有有效行动统一时间代价、完整报价”不再是终局默认契约。开放行动阶段以 `docs/authoring-contract.md`、README v0.2 和 `docs/engine-principles.md` 最新修订为准。
+
 本文档用于指导 AIRPG 第一个 MVP 的实现。目标不是先搭完整平台，而是用一个高控制度、半人工、可观测的短篇实验，验证核心体验是否成立。
 
 ## 1. MVP 核心命题
@@ -673,7 +675,7 @@ POST /api/feedback
 - 叙事渲染：`renderer.py` 的模板文本（entry_text + narrative_hint + 状态摘要）。
 - 输入分类：结构化输入下恒为 `in_rules`，`out_of_bounds` 留给自然语言输入。
 
-### 阶段 3：LLM 接入，2-3 天
+### 阶段 3：LLM 接入（已完成，2026-07-12；2026-07-13 完成首轮试玩修复）
 
 修改边界见 `docs/engine-principles.md` 第 5 节（LLM 只做理解与渲染，判定核心接口冻结）。
 
@@ -824,15 +826,26 @@ POST /api/feedback
 - ~~实现唯一物品位置与口袋、显式使用意图、玩家返回出口，并补“无徽章破局”回归路线。~~
 - ~~实现条件对象、关键交互导演提示、无匹配动作不扣时与确定性完整报价。~~
 - ~~定义 LLM ActionPlan Protocol 0.1：玩家感知、能力步骤、状态提议、验证结果、提交结果与世界权限边界。~~
+- ~~实现感知墙（`perception.py`）与静态能力路由器（`capabilities.py`）：报价披露过滤、权限映射、v0.1 承兑范围（2026-07-12）。~~
+- ~~实现 LLMClient 抽象、Mock/Replay provider、trace 落盘（协议 §11），在 `custom` 自由文本上打通"理解—验证—一次重规划—报价—提交"纵向闭环（`llm.py` / `llm_loop.py` / `trace.py`，CLI `--llm mock`）；规则模式保留为测试与降级路径（2026-07-12）。~~
+
+已完成（开放行动基线，2026-07-14）：
+
+- ~~完成关系驱动都市日常样板《晚风中的一桌饭》，并改为默认无倒计时、低风险行动自动提交。~~
+- ~~建立作者契约、开放性结果来源指标，以及最小 checkpoint / 撤回 / 状态分支语义。~~
+- ~~实现 `SuggestedAction` 动态行动提案：DeepSeek / mock 生成、确定性校验与去重、revision 失效、CLI 选择冻结 plan。~~
+- ~~实现首个通用能力 `social.request_item`：公开用途不泄露隐藏物品，确定性处理所有权、关系门槛、物品转移或明确拒绝。~~
+- ~~定义并校验 `DirectorBeat`，限制 Director 只能调度作者预定义的非玩家角色和已有地点 / 目标。~~
+- ~~将 Director Beat 接入提交后的候选生成、确定性复验和同回合原子提交；模型故障不回滚玩家行动。~~
+- ~~新增不预写普通行动 storylet 的开放场景 fixture，验证通用能力和既有人物调度不依赖组合枚举。~~
 
 接下来按顺序：
 
-1. 按 `docs/llm-action-plan-protocol.md` 实现 PlayerPerception 构建器、LLMClient、Mock/Replay 与静态 CapabilityRouter，先从 `custom` 自由方案打通“计划—验证—一次重规划—报价—提交—导演反应”；现有规则模式保留为测试与降级路径。
-2. 实现 `/api/session`、`/api/action/quote`、`/api/action/resolve`、`/api/feedback`（包一层 `GameSession`）。
-3. 做最简 Web UI（`web/`）。
-4. 写 LLM 玩家代理，自动跑 20-50 局（阶段 4.5）。
-5. 找 5-10 人测试。
+1. 实现最小 Local Canon，先支持受预算限制的局部地点与局势；核心人物禁止临场生成。
+2. 为社会能力补上显式条件交换结果，并为 Director 增加结构化日程、长期计划状态和节拍冷却。
+3. 从现有路由抽象正式 Capability Module Contract，并用真实能力效果逐步替换 intent 静态风险 / 报价配置。
+4. 实现 checkpoint 持久化、完整消息树和 Web UI；随后写 LLM 玩家代理并找 5-10 人测试。
 
 第一句工程目标：
 
-> 先让一个玩家在浏览器里用“意图按钮 + 自然语言方案 + 风险报价 + 判定后果”的方式，完整玩完《午夜前的档案室》。
+> 先证明同一套“自由表达 / 动态提案 → 通用能力裁决 → 可撤回的确定性提交 → 事实叙事”链路能在少量作者锚点下支撑不同题材，再引入 Local Canon 和 Web 产品外壳。

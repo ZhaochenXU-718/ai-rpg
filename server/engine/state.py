@@ -25,7 +25,7 @@ def build_initial_state(story: dict[str, Any]) -> dict[str, Any]:
         "positions": initial.get("positions", {}),
         "item_locations": initial.get("item_locations", {}),
         "characters": {},
-        "clues": [],
+        "facts": [],
     }
     for char_id, char in (story.get("characters") or {}).items():
         state["characters"][char_id] = copy.deepcopy(char.get("initial_state", {}))

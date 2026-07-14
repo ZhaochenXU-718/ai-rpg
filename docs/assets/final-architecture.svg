@@ -1,0 +1,96 @@
+<svg width="680" viewBox="0 0 680 560" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>AIRPG 终局系统形态</title>
+<desc>玩家用自然语言与运行时交互：理解 LLM 生成行动计划，能力路由验证，报价卡确认，判定核心原子提交，导演与 NPC 反应，渲染 LLM 叙事。创作者提供故事 YAML、选装能力模块，并使用校验与回放工具链。</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#57606a" stroke-width="1.5"/>
+  </marker>
+  <style>
+    .th { font: 500 14px "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #1f2328; }
+    .ts { font: 400 12px "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #57606a; }
+    .box { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1; }
+    .llm { fill: #ddf4ff; stroke: #54aeff; stroke-width: 1; }
+    .author { fill: #fff8c5; stroke: #d4a72c; stroke-width: 1; }
+    .arr { stroke: #57606a; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    .leader { stroke: #8c959f; stroke-width: 1; stroke-dasharray: 4 3; fill: none; }
+  </style>
+</defs>
+
+<rect x="0" y="0" width="680" height="560" fill="#ffffff"/>
+
+<!-- 玩家泳道 -->
+<rect class="box" x="40" y="60" width="120" height="442" rx="8"/>
+<text class="th" x="100" y="88" text-anchor="middle">玩家</text>
+<text class="ts" x="100" y="108" text-anchor="middle">自然语言游玩</text>
+
+<!-- 运行时管线 -->
+<rect class="llm" x="245" y="60" width="190" height="52" rx="8"/>
+<text class="th" x="340" y="82" text-anchor="middle">理解 LLM</text>
+<text class="ts" x="340" y="99" text-anchor="middle">自由输入 → 行动计划</text>
+
+<rect class="box" x="245" y="138" width="190" height="52" rx="8"/>
+<text class="th" x="340" y="160" text-anchor="middle">能力路由与验证</text>
+<text class="ts" x="340" y="177" text-anchor="middle">白名单裁剪 · 权限分级</text>
+
+<rect class="box" x="245" y="216" width="190" height="52" rx="8"/>
+<text class="th" x="340" y="238" text-anchor="middle">报价卡</text>
+<text class="ts" x="340" y="255" text-anchor="middle">风险 · 代价 · 预计影响</text>
+
+<rect class="box" x="245" y="294" width="190" height="52" rx="8"/>
+<text class="th" x="340" y="316" text-anchor="middle">判定核心 · 事实账本</text>
+<text class="ts" x="340" y="333" text-anchor="middle">原子提交 · 唯一裁判</text>
+
+<rect class="llm" x="245" y="372" width="190" height="52" rx="8"/>
+<text class="th" x="340" y="394" text-anchor="middle">导演 · NPC 代理</text>
+<text class="ts" x="340" y="411" text-anchor="middle">世界反应 · 动机扮演</text>
+
+<rect class="llm" x="245" y="450" width="190" height="52" rx="8"/>
+<text class="th" x="340" y="472" text-anchor="middle">渲染 LLM</text>
+<text class="ts" x="340" y="489" text-anchor="middle">叙事散文 + 公平回执</text>
+
+<!-- 管线箭头 -->
+<line class="arr" x1="340" y1="112" x2="340" y2="134"/>
+<line class="arr" x1="340" y1="190" x2="340" y2="212"/>
+<line class="arr" x1="340" y1="268" x2="340" y2="290"/>
+<text class="ts" x="350" y="285">玩家确认后</text>
+<line class="arr" x1="340" y1="346" x2="340" y2="368"/>
+<text class="ts" x="350" y="363">世界步</text>
+<line class="arr" x1="340" y1="424" x2="340" y2="446"/>
+<text class="ts" x="350" y="441">感知墙事实清单</text>
+
+<!-- 玩家交互箭头 -->
+<line class="arr" x1="160" y1="86" x2="241" y2="86"/>
+<text class="ts" x="168" y="78">自由输入</text>
+<line class="arr" x1="245" y1="242" x2="164" y2="242"/>
+<text class="ts" x="168" y="234">确认 / 放弃</text>
+<line class="arr" x1="245" y1="476" x2="164" y2="476"/>
+<text class="ts" x="168" y="468">叙事 + 回执</text>
+
+<!-- 创作者泳道 -->
+<text class="th" x="570" y="48" text-anchor="middle">创作者</text>
+<rect class="author" x="500" y="60" width="140" height="52" rx="8"/>
+<text class="th" x="570" y="82" text-anchor="middle">故事 YAML</text>
+<text class="ts" x="570" y="99" text-anchor="middle">世界 · 锚点 · 边界</text>
+
+<rect class="author" x="500" y="138" width="140" height="52" rx="8"/>
+<text class="th" x="570" y="160" text-anchor="middle">能力模块选装</text>
+<text class="ts" x="570" y="177" text-anchor="middle">对话 · 战斗 · 日程</text>
+
+<rect class="author" x="500" y="402" width="140" height="52" rx="8"/>
+<text class="th" x="570" y="424" text-anchor="middle">创作工具链</text>
+<text class="ts" x="570" y="441" text-anchor="middle">校验 · 试玩 · 回放</text>
+
+<!-- 创作者接口箭头 -->
+<line class="arr" x1="500" y1="100" x2="439" y2="148"/>
+<line class="arr" x1="500" y1="164" x2="439" y2="164"/>
+<line class="leader" x1="435" y1="320" x2="500" y2="410"/>
+<text class="ts" x="448" y="352">trace</text>
+
+<!-- 图例 -->
+<rect class="llm" x="245" y="524" width="12" height="12" rx="3"/>
+<text class="ts" x="263" y="534">LLM 承担</text>
+<rect class="box" x="350" y="524" width="12" height="12" rx="3"/>
+<text class="ts" x="368" y="534">确定性引擎</text>
+<rect class="author" x="470" y="524" width="12" height="12" rx="3"/>
+<text class="ts" x="488" y="534">创作者资产</text>
+</svg>

@@ -1,6 +1,6 @@
 # AIRPG LLM 行动协议
 
-状态：草案 `0.1`
+状态：`0.1` 纵向链路已实现；行动提案与通用能力扩展于 2026-07-14 落地
 实现：`server/engine/llm_protocol.py`
 
 ## 1. 目标
@@ -16,7 +16,7 @@
 - 所有载荷可以 JSON 序列化、校验、记录和重放。
 - ActionPlan 从第一版开始使用 `capability + action`，为后续能力模块化保留稳定接口。
 
-本阶段不定义真实模型 provider、Prompt、多 Agent、RAG 或正式 CapabilityRouter。
+当前已经提供 DeepSeek、启发式 mock、脚本与 replay provider，并实现第一版 CapabilityRouter。多 Agent、RAG 和正式可插拔 Capability Module Contract 仍不在本协议范围内。
 
 ## 2. 四层事实
 
@@ -100,7 +100,7 @@ optional: false
 - `social.influence`
 - `creative_resolution.create_visual_distraction`
 
-LLM 可以组合多个工具，但不能调用当前 `PlayerPerception.capability_tools`中没有提供的机械能力。未来允许创造新实体或事实时，也必须通过专门的创建工具完成。
+协议允许未来组合多个工具，但当前运行时坚持“一个计划 = 一个消耗回合的能力步骤”。LLM 不能调用当前 `PlayerPerception.capability_tools`中没有提供的机械能力。未来允许创造新实体或事实时，也必须通过专门的创建工具完成。
 
 ## 6. ActionPlan
 
@@ -249,15 +249,44 @@ CommittedOutcome 记录实际结果：
 
 ```text
 custom player_text
+→ PlayerPerception（server/engine/perception.py）
+→ LLMProvider.propose_plan（server/engine/llm.py：Scripted / HeuristicMock / Replay）
 → ActionPlan
-→ CapabilityRouter
-→ ValidationResult
-→ 报价与确认
-→ 适配到现有 resolver/事务
+→ CapabilityRouter（server/engine/capabilities.py）
+→ ValidationResult（错误且可重试 → 一次重规划）
+→ 报价与确认（提议即验证载荷，披露过感知墙）
+→ 适配到现有 resolver/事务（server/engine/llm_loop.py + session.resolve_plan）
 → CommittedOutcome
 ```
 
+以上链路已实现并有 trace 落盘（`server/engine/trace.py`，§11 字段），CLI 以 `--llm mock` 默认启用。真实 provider 实现 `propose_plan` 后即可进入自由文本链路；需要生成行动卡时还应实现 `propose_suggestions`，并注册进 `PROVIDERS`。
+
 `requires_storylet_match`暂时继续保护无 LLM 的严格结构化动作；创造性 LLM 路径不以 storylet 是否预写作为唯一执行条件。
+
+### 10.1 v0.1 引擎承兑范围
+
+协议表达能力大于当前引擎，写 prompt 时以本表为准，不要教 LLM 使用引擎不认的功能：
+
+| 协议特性 | v0.1 引擎行为 |
+|---|---|
+| `steps`（多步计划） | 只接受**恰好一个**当前可用能力步骤；多步返回 `plan.single_capability_step_required`（retryable）。一个计划 = 一个回合；多步事务留待能力协议稳定后再设计 |
+| `capability` 词表 | 内容意图派生的 `intent.*`，以及首个引擎能力 `social.request_item`；工具列表统一来自 `PlayerPerception.capability_tools` |
+| `proposed_changes` + `SOFT_STATE` | 经 `resolution_limits` 裁剪后并入兜底 patch；`SET`/`INCREMENT` 支持 |
+| 空 `proposed_changes` | 若所选意图声明了 `fallback_proposal`，采用该内容兜底并返回 adjustment，保证 LLM 路径不弱于同意图菜单路径；模型显式给出但被拒绝的提议不会触发兜底 |
+| `proposed_changes` + `PRESENTATION` | 叙事层内容，不进状态，返回 adjustment |
+| `proposed_changes` + `MECHANICAL` / `CANON` | 一律剥离（adjustment）：机械变化由引擎从步骤推导，canon 只能由作者事件卡产生 |
+| `ChangeOperation.APPEND` / `REMOVE` | 不支持，adjustment 忽略 |
+| `StateChangeProposal.duration_turns` | 不支持，按永久变化处理并附 adjustment |
+| `perception_revision` 过期 | `plan.stale_perception` 错误（retryable），必须基于最新感知重规划 |
+| `CommittedChange.authority` | 由引擎按路径推导：`positions.*`/`item_locations.*` → mechanical，白名单路径 → soft_state，其余 → canon |
+
+### 10.2 动态行动提案与 Director Beat
+
+行动提案不是另一套执行协议。LLM 生成 `SuggestedActionDraft` 后，引擎会逐张验证其中的 `ActionPlan`，只展示可执行、未过期且去重后的卡片。选择卡片时执行其已经冻结的 plan 与 validation，不再把卡片文字交给模型二次理解。自由输入始终保留，状态 revision 改变后旧卡全部失效。
+
+世界 / NPC 主动行为使用独立的 `DirectorBeat`，不能混进玩家行动提案。Director 只会收到在场或相邻的作者角色候选及其既有动机；模型返回 0—2 个候选节拍后，引擎按提交后状态复验人物、位置、路线、重复调度、二次移动与 revision。通过的进场变化和表现层反应与玩家行动写入同一份 `CommittedOutcome` 和 checkpoint；不存在创建重要人物的协议字段。结果通过 `CommittedOutcome.director_beats` 与 `world_events` 留痕。完整规则见 [action-suggestions-and-director-beats](action-suggestions-and-director-beats.md)。
+
+`social.request_item` 是第一个不依赖具体“意图 × 人物 × 物品” storylet 的通用能力。模型只看到公开用途与在场人物，不看到隐藏物品 ID；引擎根据物品位置、内容策略、情境与关系确定同意转移或明确拒绝。两种结果都是可审计的已提交结果。
 
 ## 11. Trace 最低要求
 
@@ -270,13 +299,14 @@ custom player_text
 - 重规划前后计划；
 - 玩家确认的报价；
 - CommittedOutcome；
+- Director 原始响应、接受 / 淘汰节拍与失败回退（启用 Director 时）；
 - 模型、Prompt 版本、延迟、Token 和成本。
+- 叙事响应，或进入模板回退的明确原因（如 `narration_fallback: empty_response`）。
 
 这些记录用于复现错误、离线 Replay、协议升级和后续模块边界分析。
 
 ## 12. 暂不决定的事项
 
-- 使用哪个模型或 provider；
 - 多 Agent 的导演与角色拆分；
 - 长期记忆和 RAG；
 - 正式 Capability Module Contract；
