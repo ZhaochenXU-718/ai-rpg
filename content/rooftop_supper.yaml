@@ -76,6 +76,7 @@ items:
     description: "陈阿姨多做的三菜一汤，饭盒外还带着热气。"
     portable: true
     consumable: false
+    visible_when_carried: true
   picnic_mat:
     name: "折叠野餐垫"
     description: "罗叔借出的旧野餐垫，洗得很干净，正好能铺在天台折叠桌上。"
@@ -86,6 +87,7 @@ items:
     description: "小雨刚洗好的市集桌布，她愿意先借来铺晚饭，吃完再收走。"
     portable: true
     consumable: false
+    visible_when_carried: true
 
 initial_state:
   world:

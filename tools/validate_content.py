@@ -178,7 +178,7 @@ def collect_objects(scenes: dict[str, Any]) -> set[str]:
 
 
 def collect_state_paths(data: dict[str, Any]) -> set[str]:
-    paths: set[str] = set()
+    paths: set[str] = {"disclosures", "commitments"}
 
     def walk(prefix: str, value: Any) -> None:
         if isinstance(value, dict):
@@ -225,7 +225,8 @@ def validate_state_path(
 
     root = base_path.split(".", 1)[0]
     if root in {
-        "world", "player", "scene", "flags", "positions", "item_locations", "characters"
+        "world", "player", "scene", "flags", "positions", "item_locations",
+        "disclosures", "commitments", "characters",
     }:
         report.warn(f"{context}: state path '{path}' is not initialized; it will be created at runtime.")
         return
@@ -396,6 +397,10 @@ def validate_items(
         for field in ("portable", "consumable"):
             if not isinstance(item.get(field), bool):
                 report.error(f"{context}.{field} must be a boolean.")
+        if "visible_when_carried" in item and not isinstance(
+            item["visible_when_carried"], bool
+        ):
+            report.error(f"{context}.visible_when_carried must be a boolean.")
 
         policy = item.get("request_policy")
         if policy is None:

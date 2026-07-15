@@ -84,6 +84,7 @@ items:
     description: "洗净后叠在架子上。"
     portable: true
     consumable: false
+    visible_when_carried: true
 
 initial_state:
   world:
@@ -100,6 +101,15 @@ initial_state:
 ```
 
 每个作者人物必须在 `positions` 中有且只有一个场景位置；每个关键物品必须在 `item_locations` 中有唯一放置。常用放置：`carried_by` 指向人物，`board` 指向地点；容器放置可用于隐藏物品，但披露仍受感知墙与事实协议约束。
+
+`visible_when_carried` 默认 `false`。设为 `true` 表示该物品由同场人物携带/保管时，其存在和当前归属对主体明显可见，可以进入叙事与事实抽取 prompt。秘密库存不要开启该字段；放在 `board` 的物品按场景可见，放在 `container` 的物品默认不可见。
+
+运行时另外维护两个作者不能直接 seed 的权威命名空间：
+
+- `disclosures.<secret_id>`：已披露听众、摘要与回合；
+- `commitments.<commitment_id>`：承诺双方、内容、关联物品、due、open / fulfilled / broken / cancelled 状态。
+
+它们与其他 state 一起进入 checkpoint、撤回和保留分支。
 
 ## 5. 人物卡
 
@@ -187,7 +197,21 @@ schema v2 禁止 `available_characters` 和 `available_objects.people`；在场�
 
 一个 block 内全部为 AND。`exit_conditions.any` 中任一 block 命中即可；`ending_reached: true` 可用于场景退出提示。
 
-## 9. 事实锚点
+锚点或结局需要订阅运行时事实时，可以使用 dotted path，例如 `commitments.promise_canvas.status: fulfilled`。动态 `commitment_id` 必须来自可预期的内容/抽取约定；完全临场的 ID 更适合由未来记忆层消费。
+
+## 9. Phase 2 事实类型
+
+候选散文当前只允许抽取以下权威事实，provider 不能输出任意 state patch：
+
+- 人物移动：目标必须是当前位置可用出口；
+- 物品转移：物品必须可见、portable、from placement 与账本完全一致，交接双方同场；
+- 秘密披露：当前只允许作者人物本人向同场听众披露自己的 `secret`；
+- 新承诺：双方同场，关联物品存在且可见；
+- 承诺更新：只允许已有 open 承诺进入 fulfilled / broken / cancelled，关联物品兑现需要同批交付。
+
+自由文本 `constraints` / `boundaries` 会进入生成与抽取上下文，但当前只有人物/物品集合、空间图、在场、归属与已声明秘密等结构化边界能由代码确定性检查。通用世界边界 DSL 尚未定义。
+
+## 10. 事实锚点
 
 ```yaml
 storylets:
@@ -222,7 +246,7 @@ storylets:
 
 作者锚点是受信任 Canon 来源。任何移动 ID、物品放置、状态路径和场景引用仍必须通过内容校验。
 
-## 10. 结局
+## 11. 结局
 
 ```yaml
 endings:
@@ -236,7 +260,7 @@ endings:
 
 条件是 dotted path 等值比较；多个条件为 AND。多个结局同时满足时，较小 priority 优先。
 
-## 11. Local Canon 生成边界
+## 12. Local Canon 生成边界
 
 ```yaml
 generation:

@@ -1,6 +1,6 @@
 # AIRPG 行动提案、DirectorPlan 与 Local Canon
 
-状态：协议 0.2 已实现（2026-07-15）
+状态：协议 0.3 已实现（2026-07-15）
 
 相关实现：`suggestions.py`、`director.py`、`local_canon.py`、`llm_protocol.py`
 
@@ -45,7 +45,7 @@ Director 获得本回合已提交结果、当前地点、目标、世界边界�
 - `react`：在场人物作克制反应；
 - `advance_plan`：在场人物推进作者声明的动机。
 
-引擎复验 revision、actor、target、人物权威位置、目标场景、邻接路线、同回合二次移动和重复人物。只有通过的进场变化才能写入位置账本；反应文本不能自行改变物品、秘密、承诺或任务。
+引擎复验 revision、actor、target、人物权威位置、目标场景、邻接路线、同回合二次移动和重复人物。只有通过的进场变化才能写入位置账本；玩家看到的进场提示由引擎根据已提交人物与地点确定性生成。当前提交后 Director 的 `react` / `advance_plan` 摘要没有经过 Phase 2 抽取，因此只留在 trace，不进入玩家输出或 recent memory，不能自行改变物品、秘密、承诺或任务。
 
 Director 服务失败只写 trace 和提示，不取消玩家回合。
 
@@ -69,4 +69,4 @@ v1 不生成人物、不允许生成实体嵌套、不处理承诺/任务/关系
 
 ## 6. 当前边界
 
-Director Beat 仍是保守调度骨架，不是 Director v2 的完整场景编排。NpcTurn 只有协议，尚未接 agent。普通玩家行动在 Phase 2 前不会通过行动卡直接产生位置、物品或承诺变化。
+Director Beat 仍是保守调度骨架，不是 Director v2 的完整场景编排。NpcTurn 只有协议，尚未接 agent。行动卡和自由输入现在都进入 Phase 2 后验管线；只有抽取并通过铁律检查的位置、物品、披露或承诺变化才能提交。

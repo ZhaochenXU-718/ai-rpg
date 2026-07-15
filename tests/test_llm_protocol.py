@@ -10,12 +10,14 @@ from server.engine.llm_protocol import (
     CommittedChange,
     CommittedDirectorBeat,
     CommittedTurn,
+    CommitmentFact,
     DirectorBeat,
     DirectorBeatKind,
     DirectorPlan,
     EntityKind,
     FactAuthority,
     FactBatch,
+    FactExtraction,
     IronLawDomain,
     IronLawViolation,
     NpcTurn,
@@ -26,6 +28,7 @@ from server.engine.llm_protocol import (
     SuggestedActionSet,
     director_plan_json_schema,
     fact_batch_json_schema,
+    fact_extraction_json_schema,
     new_protocol_id,
     npc_turn_json_schema,
     suggested_action_json_schema,
@@ -55,11 +58,21 @@ def player_perception() -> PerceptionSnapshot:
 
 class NarrativeFirstProtocolTest(unittest.TestCase):
     def test_fact_batch_round_trip_and_schema(self) -> None:
+        extracted = CommitmentFact(
+            commitment_id="promise_canvas",
+            promisor_id="keeper",
+            promisee_id="player",
+            description="明天交付防雨布",
+            related_item_id="rain_canvas",
+            due="明天",
+            evidence="周师傅答应明天交付防雨布",
+        )
         batch = FactBatch(
             state_revision=3,
             player_text="我问周师傅防雨布能不能借用。",
             narrative="你把用途和归还时间都说清楚了。",
             references=("keeper",),
+            extracted_facts=(extracted,),
         )
         payload = batch.to_dict()
         self.assertEqual(FactBatch.from_dict(payload), batch)
@@ -68,6 +81,16 @@ class NarrativeFirstProtocolTest(unittest.TestCase):
         schema = fact_batch_json_schema()
         self.assertFalse(schema["additionalProperties"])
         self.assertIn("state_changes", schema["properties"])
+
+        extraction = FactExtraction(state_revision=3, facts=(extracted,))
+        self.assertEqual(
+            FactExtraction.from_dict(extraction.to_dict()), extraction
+        )
+        self.assertIn("facts", fact_extraction_json_schema()["properties"])
+        untrusted_patch = extraction.to_dict()
+        untrusted_patch["state_changes"] = {"positions.player": "elsewhere"}
+        with self.assertRaises(ValidationError):
+            FactExtraction.from_dict(untrusted_patch)
 
     def test_perception_is_subject_scoped_and_has_no_capability_menu(self) -> None:
         perception = player_perception()

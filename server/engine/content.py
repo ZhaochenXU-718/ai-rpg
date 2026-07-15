@@ -162,6 +162,29 @@ class Story:
                 found.append(item_id)
         return found
 
+    def visible_items_at(
+        self, state: dict[str, Any], node_id: str | None = None
+    ) -> list[str]:
+        """Return board items plus explicitly public items carried in-scene.
+
+        A carried item is private by default. Authors opt in with
+        ``visible_when_carried: true`` when its presence/custody is obvious.
+        """
+        node_id = node_id or self.current_location(state)
+        visible = list(self.items_at(state, node_id))
+        positions = state.get("positions") or {}
+        for item_id, item in self.items.items():
+            placement = (state.get("item_locations") or {}).get(item_id)
+            if (
+                isinstance(item, dict)
+                and item.get("visible_when_carried") is True
+                and isinstance(placement, dict)
+                and placement.get("type") == "carried_by"
+                and positions.get(placement.get("id")) == node_id
+            ):
+                visible.append(item_id)
+        return list(dict.fromkeys(visible))
+
     def available_exits(
         self,
         state: dict[str, Any],
@@ -275,7 +298,7 @@ class Story:
             for obj_id in group
         }
         objects.update(self.characters_at(state, scene_id))
-        objects.update(self.items_at(state, scene_id))
+        objects.update(self.visible_items_at(state, scene_id))
         objects.update(self.generated_situations_at(state, scene_id))
         return objects
 
@@ -284,7 +307,7 @@ class Story:
         objects = {obj_id for group in groups.values() for obj_id in group}
         if state is not None:
             objects.update(self.characters_at(state, scene_id))
-            objects.update(self.items_at(state, scene_id))
+            objects.update(self.visible_items_at(state, scene_id))
             objects.update(self.generated_situations_at(state, scene_id))
         return objects
 

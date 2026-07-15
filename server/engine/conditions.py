@@ -1,6 +1,6 @@
 """The single condition evaluator shared by triggers, exit_conditions and endings.
 
-Syntax follows docs/content-schema.md section 9. There is deliberately only
+Syntax follows docs/content-schema.md section 8. There is deliberately only
 one implementation of condition semantics in the codebase.
 """
 

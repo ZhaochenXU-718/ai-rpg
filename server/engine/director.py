@@ -342,18 +342,35 @@ def run_director_cycle(
                 reason="通过验证的既有人物进场节拍",
             ),)
 
+        # Director still runs after the fact batch has committed.  Its free-form
+        # summary therefore has not passed through Phase 2 extraction and must
+        # not become player-visible prose or recent memory.  ENTER_SCENE is the
+        # one authoritative beat here; render only an engine-owned description
+        # of the movement that was just validated and applied.
+        narrative_hint = (
+            f"已验证人物{beat.kind.value}节拍："
+            f"{story.character_name(beat.actor_id)}"
+            f"（{story.location_name(state, beat.target_location_id)}）。"
+        )
+        if beat.kind == DirectorBeatKind.ENTER_SCENE:
+            narrative_hint = (
+                f"{story.character_name(beat.actor_id)}来到"
+                f"{story.location_name(state, beat.target_location_id)}。"
+            )
+
         committed = CommittedDirectorBeat(
             beat_id=beat.beat_id,
             validation_id=validation.validation_id,
             kind=beat.kind,
             actor_id=beat.actor_id,
             target_location_id=beat.target_location_id,
-            narrative_hint=beat.summary,
+            narrative_hint=narrative_hint,
             committed_changes=committed_changes,
         )
         cycle.accepted.append(committed)
         result.director_beats.append(committed)
-        result.narrative_hints.append(beat.summary)
+        if beat.kind == DirectorBeatKind.ENTER_SCENE:
+            result.narrative_hints.append(narrative_hint)
         used_actors.add(beat.actor_id)
 
     # Local Canon proposals ride the same cycle but face their own admission

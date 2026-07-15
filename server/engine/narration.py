@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .llm import LLMProvider, NarrativeRequest
+from .llm_protocol import IronLawViolation
 from .session import GameSession
 from .trace import TraceRecorder
 
@@ -32,6 +33,7 @@ def build_narrative_facts(
     session: GameSession,
     player_text: str,
     references: tuple[str, ...],
+    violations: tuple[IronLawViolation, ...] = (),
 ) -> dict[str, Any]:
     perception = session.perception()
     scene = session.story.scene(perception.location_id)
@@ -40,13 +42,14 @@ def build_narrative_facts(
             "名称": entity.label,
             "类型": entity.kind.value,
             "描述": entity.description,
+            "公开状态": entity.public_state,
         }
         for entity in perception.visible_entities
     }
     boundaries = list(
         (session.story.data.get("player_role") or {}).get("constraints") or []
     ) + list((session.story.data.get("global_rules") or {}).get("boundaries") or [])
-    return {
+    facts = {
         "玩家输入": player_text,
         "明确提到的可见实体": [visible[item] for item in references if item in visible],
         "当前场景": {
@@ -58,12 +61,23 @@ def build_narrative_facts(
         "已知事实": list(perception.known_facts),
         "近期叙事": list(perception.recent_events[-3:]),
         "世界边界": [str(rule) for rule in boundaries],
-        "本阶段提交限制": (
-            "Phase 2 的事实抽取和铁律校验尚未接入。本回合只能描写玩家正在尝试，"
-            "不得断言移动完成、物品转移、秘密披露、人物承诺、生死变化或锚点推进。"
+        "事实表达要求": (
+            "可以写行动成功、失败或人物回应。若位置、物品归属、秘密披露或人物承诺"
+            "发生变化，必须在散文中明确写出；不得跳过在场、相邻路线与当前归属。"
         ),
         "输出要求": "输出 2-4 句连贯散文，不解释系统阶段，不输出状态表。",
     }
+    if violations:
+        facts["上次候选的冲突反馈"] = [
+            {
+                "code": violation.code,
+                "message": violation.message,
+                "evidence": violation.evidence,
+            }
+            for violation in violations
+        ]
+        facts["重写要求"] = "修正冲突事实；不要在散文中提及校验或重生成。"
+    return facts
 
 
 def narrate_player_turn(
@@ -71,9 +85,12 @@ def narrate_player_turn(
     provider: LLMProvider,
     player_text: str,
     recorder: TraceRecorder | None = None,
+    violations: tuple[IronLawViolation, ...] = (),
 ) -> tuple[str, tuple[str, ...]]:
     references = match_references(session, player_text)
-    facts = build_narrative_facts(session, player_text, references)
+    facts = build_narrative_facts(
+        session, player_text, references, violations=violations
+    )
     try:
         response = provider.render_narrative(NarrativeRequest(
             kind="turn",
@@ -113,5 +130,8 @@ def narrate_player_turn(
             "usage": response.usage,
             "text": narrative,
             "references": list(references),
+            "regeneration_feedback": [
+                violation.to_dict() for violation in violations
+            ],
         })
     return narrative, references

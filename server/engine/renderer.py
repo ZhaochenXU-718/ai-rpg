@@ -1,4 +1,4 @@
-"""Player-facing rendering for the narrative-first transition runtime."""
+"""Player-facing rendering for committed narrative-first turns."""
 
 from __future__ import annotations
 

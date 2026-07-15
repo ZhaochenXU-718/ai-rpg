@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server.engine.content import Story
 from server.engine.director import current_scene_id
+from server.engine.fact_pipeline import resolve_player_turn
 from server.engine.llm import LLMProviderError, create_provider
-from server.engine.narration import narrate_player_turn
 from server.engine.perception import perception_config
 from server.engine.renderer import (
     render_characters,
@@ -88,8 +88,8 @@ def print_help() -> None:
         "直接输入自然语言行动；也可输入 ideas，再用 idea <编号> 采用一张提案卡。\n"
         "命令：who 在场人物；state 权威状态；facts 已知事实；"
         "undo 撤回并创建分支；timeline 查看分支；help 帮助；quit 退出。\n"
-        "当前已完成 Phase 1 Batch C：散文回合可提交，但移动、物品、披露和承诺"
-        "要等 Phase 2 的事实抽取与铁律校验接入后才会写入账本。"
+        "当前运行 Phase 2 最小后验闭环：散文中的移动、物品、披露和承诺只有"
+        "经过事实抽取与代码级铁律检查后才会写入账本；冲突候选不会消耗回合。"
     )
 
 
@@ -132,20 +132,11 @@ def execute_narrative_turn(
         "state_revision": session.state_revision,
         "player_text": player_text,
     })
-    narrative, references = narrate_player_turn(
-        session, provider, player_text, recorder
-    )
-    recorder.record("fact_extraction_deferred", {
-        "turn": session.turn_no + 1,
-        "reason": "Phase 2 not implemented",
-        "state_changes": [],
-        "facts": [],
-    })
-    result = session.commit_narrative(
+    result = resolve_player_turn(
+        session,
+        provider,
+        recorder,
         player_text,
-        narrative,
-        references=references,
-        director_provider=provider,
     )
     print(render_turn(session.story, result, session.state))
 

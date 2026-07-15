@@ -63,6 +63,7 @@ items:
     description: "洗净后叠在修理铺架子上，可以临时遮住长桌。"
     portable: true
     consumable: false
+    visible_when_carried: true
 
 initial_state:
   world:

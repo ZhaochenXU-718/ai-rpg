@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from server.engine.llm import (
     DirectorRequest,
+    FactExtractionRequest,
     LLMProviderError,
     NarrativeRequest,
     SuggestionRequest,
@@ -17,8 +18,10 @@ from server.engine.llm import (
 from server.engine.llm_deepseek import (
     DeepSeekProvider,
     build_director_messages,
+    build_fact_extraction_messages,
     build_suggestion_messages,
     coerce_director_plan,
+    coerce_fact_extraction,
     coerce_suggestions,
 )
 from server.engine.llm_protocol import (
@@ -116,7 +119,7 @@ class NarrativeProviderTest(unittest.TestCase):
         response = DeepSeekProvider(transport=transport).render_narrative(self.request())
         self.assertIn("饭篮扶稳", response.text)
         self.assertFalse(transport.calls[0][1]["json_mode"])
-        self.assertEqual(response.prompt_version, "deepseek-narrate-v2")
+        self.assertEqual(response.prompt_version, "deepseek-narrate-v3")
         self.assertIn("subject_id", transport.calls[0][0][1]["content"])
 
     def test_empty_narration_retries_once_then_succeeds(self) -> None:
@@ -159,6 +162,67 @@ class SuggestionProviderTest(unittest.TestCase):
         self.assertEqual(len(response.suggestions), 1)
         self.assertEqual(response.prompt_version, "deepseek-suggestions-v2")
         self.assertEqual(response.usage["total_tokens"], 100)
+
+
+class FactExtractionProviderTest(unittest.TestCase):
+    def request(self) -> FactExtractionRequest:
+        return FactExtractionRequest(
+            perception=perception(),
+            player_text="我走进便利店。",
+            narrative="你掀开门帘走进便利店。",
+            ledger={
+                "available_destinations": [
+                    {"id": "convenience_store", "label": "去便利店"}
+                ],
+                "characters": [
+                    {"id": "player", "location_id": "building_lobby"}
+                ],
+            },
+        )
+
+    def extraction_json(self) -> str:
+        return json.dumps({
+            "facts": [{
+                "kind": "character_move",
+                "actor_id": "player",
+                "destination_id": "convenience_store",
+                "evidence": "你掀开门帘走进便利店",
+            }]
+        }, ensure_ascii=False)
+
+    def test_extractor_uses_ledger_ids_and_verbatim_evidence(self) -> None:
+        extraction = coerce_fact_extraction(
+            self.extraction_json(), self.request()
+        )
+        self.assertEqual(extraction.facts[0].destination_id, "convenience_store")
+        prompt = build_fact_extraction_messages(self.request())
+        flat = json.dumps(prompt, ensure_ascii=False)
+        self.assertIn("evidence", flat)
+        self.assertIn("convenience_store", flat)
+        self.assertNotIn("state_changes", flat)
+
+    def test_provider_repairs_invalid_fact_json(self) -> None:
+        transport = FakeTransport(["not json", self.extraction_json()])
+        response = DeepSeekProvider(transport=transport).extract_facts(
+            self.request()
+        )
+        self.assertEqual(len(response.extraction.facts), 1)
+        self.assertEqual(response.prompt_version, "deepseek-fact-extraction-v1")
+        self.assertEqual(response.usage["total_tokens"], 100)
+
+    def test_malformed_fact_cannot_be_silently_dropped_from_a_mixed_batch(self) -> None:
+        mixed = json.loads(self.extraction_json())
+        mixed["facts"].append({
+            "kind": "item_transfer",
+            "item_id": "rain_canvas",
+            "evidence": "不存在完整 placement 的坏事实",
+        })
+
+        with self.assertRaisesRegex(ValueError, "indexes: 1"):
+            coerce_fact_extraction(
+                json.dumps(mixed, ensure_ascii=False),
+                self.request(),
+            )
 
 
 class DirectorProviderTest(unittest.TestCase):

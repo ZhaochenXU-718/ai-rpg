@@ -25,7 +25,7 @@
 
 - `turn_no` 是当前分支内的回合序号，恢复旧节点时回退。
 - `state_revision` 是 session 的权威版本，永不回退；成功提交和恢复旧节点都会递增。
-- PerceptionSnapshot、行动卡、FactBatch、DirectorPlan 和 NpcTurn 都绑定 revision。
+- PerceptionSnapshot、行动卡、FactExtraction、FactBatch、DirectorPlan 和 NpcTurn 都绑定 revision。
 - revision 不匹配的 FactBatch 必须在复制/修改 live state 之前拒绝。
 
 因此撤回后不能复用旧生成结果。需要重新基于恢复后的快照生成。
@@ -40,7 +40,7 @@
 
 ## 5. 原子性
 
-FactBatch、事实锚点、Director 和 Local Canon 先应用到工作副本。全部成功后，session 才替换 live state、增加 turn/revision 并写 checkpoint。异常时 state、consumed、turn、revision 和当前 checkpoint 均保持不变。
+候选散文和 FactExtraction 不进入时间线。检查通过后的 FactBatch、事实锚点、Director 和 Local Canon 先应用到工作副本；全部成功后，session 才替换 live state、生成 `CommittedTurn`、增加 turn/revision 并写 checkpoint。抽取失败、铁律冲突或异常时 state、consumed、turn、revision 和当前 checkpoint 均保持不变。
 
 Director provider 自身故障被降级为可记录的可选层错误，不使已完成的事实批次失败。
 
@@ -64,7 +64,7 @@ CLI 使用 `undo` 和 `timeline`。日志记录 checkpoint、parent、branch、r
 - 完整消息树 UI 与分支选择；
 - 对同一 CommittedTurn 只重生成散文；
 - 已结束故事的结算页分支切换；
-- 重生成/重新检定政策与随机种子展示；
+- 手动选择旧候选、重生成次数策略与随机种子展示；
 - Chapter / Arc 长期记忆随分支的增量索引。
 
 ## 8. 验收不变量

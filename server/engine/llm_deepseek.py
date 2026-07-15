@@ -11,6 +11,8 @@ from typing import Any, Callable
 from .llm import (
     DirectorRequest,
     DirectorResponse,
+    FactExtractionRequest,
+    FactExtractionResponse,
     LLMProvider,
     LLMProviderError,
     NarrativeRequest,
@@ -20,9 +22,16 @@ from .llm import (
 )
 from .llm_protocol import (
     GENERATED_ENTITY_PREFIX,
+    CharacterMoveFact,
+    CommitmentFact,
+    CommitmentUpdateFact,
     DirectorBeat,
     DirectorPlan,
+    FactExtraction,
+    ItemPlacement,
+    ItemTransferFact,
     LocalCanonProposal,
+    SecretDisclosureFact,
     SuggestedAction,
     new_protocol_id,
 )
@@ -30,9 +39,10 @@ from .llm_protocol import (
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
-NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v2"
+NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v3"
 SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v2"
 DIRECTOR_PROMPT_VERSION = "deepseek-director-v3"
+FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v1"
 MAX_REPAIR_ROUNDS = 1
 
 Transport = Callable[
@@ -46,11 +56,12 @@ RENDER_SYSTEM_PROMPT = """\
 
 硬性规则：
 1. 只能陈述事实清单中的人物、物品、地点与事件，不得补写未提供的秘密或结果。
-2. 若清单只允许描写“正在尝试”，不得宣告移动完成、物品转移、秘密披露、人物承诺、生死变化或锚点推进。
-3. 近期叙事只能作为背景，不得写成当前仍在发生。
-4. 服从给定视角与文风；玩家视角使用第二人称“你”。
-5. 输出 2-4 句连贯散文，不提协议、规则、阶段、数值或系统。
-6. 只输出叙事文本本身。
+2. 可以让行动成功、失败或得到人物回应；任何位置、物品、秘密或承诺变化都必须在散文中明确写出，不能含糊带过。
+3. 不得跳过空间距离、物品当前归属或人物在场条件；若事实清单含冲突反馈，必须重写冲突部分。
+4. 近期叙事只能作为背景，不得写成当前仍在发生。
+5. 服从给定视角与文风；玩家视角使用第二人称“你”。
+6. 输出 2-4 句连贯散文，不提协议、规则、阶段、数值或系统。
+7. 只输出叙事文本本身。
 """
 
 
@@ -83,7 +94,7 @@ DIRECTOR_SYSTEM_PROMPT = """\
 1. beats 只能使用候选列表中的 actor_id；不得创建、改名或暗示新人物。
 2. status=present 的人物只能 react 或 advance_plan；status=adjacent 且 can_enter=true 的人物才可 enter_scene。
 3. target_location_id 必须是当前地点；target_ids 只能引用输入已有 ID。
-4. summary 只描述可见动作、神态、短对白或进场，不得擅自改变物品、秘密、承诺、关系、任务或玩家行动结果。
+4. summary 是审计用候选摘要，只描述可见动作、神态、短对白或进场，不得擅自改变物品、秘密、承诺、关系、任务或玩家行动结果；当前保守 Director 不直接展示这段自由文本。
 5. 每个人物最多一个节拍；没有必要就返回空 beats。
 6. local_canon 仅在输入明确给出生成边界且预算有余量时可提议，最多一条；只能使用声明的原型，禁止创建人物。
 7. 只输出 {"beats": [...], "local_canon": [...]}。
@@ -94,7 +105,7 @@ DIRECTOR_SYSTEM_PROMPT = """\
   "actor_id": "候选人物 ID",
   "target_location_id": "当前地点 ID",
   "target_ids": ["已有目标 ID"],
-  "summary": "玩家可见的克制节拍",
+  "summary": "审计用的克制节拍摘要",
   "motivation": "如何服从人物既有动机"
 }
 
@@ -109,6 +120,28 @@ DIRECTOR_SYSTEM_PROMPT = """\
   "expires_after_turns": 3,
   "reason": "此刻需要该局部事实的原因"
 }
+"""
+
+
+FACT_EXTRACTION_SYSTEM_PROMPT = """\
+你是互动叙事引擎的事实抽取器。你不续写故事，只从【本回合散文】抽取已经明确发生的铁律事实并输出 json。
+
+硬性规则：
+1. 只抽取散文明确宣告已经完成的变化；“想、问、尝试、准备、可能、拒绝”不算完成。
+2. 每条 evidence 必须逐字复制本回合散文中的一个非空连续片段。
+3. 只能使用账本给出的 ID、位置、物品放置、秘密与已有承诺；不得创造人物、地点、物品或秘密。
+4. 玩家提出请求不等于 NPC 承诺；只有人物明确答应未来要做某事才抽取 commitment。
+5. item_transfer 必须同时抄写账本中的 from_placement，并写出散文明确完成的 to_placement。
+6. commitment_update 只能引用账本中的已有 commitment_id；物品承诺的 fulfilled 必须同时有完成交付的 item_transfer。
+7. 没有铁律变化时返回空 facts。不得输出普通情绪、动作、环境描写或状态 patch。
+8. 只输出 {"facts": [...]}。
+
+支持的事实格式：
+- {"kind":"character_move","actor_id":"...","destination_id":"...","evidence":"原文"}
+- {"kind":"item_transfer","item_id":"...","from_placement":{"type":"carried_by|board","id":"..."},"to_placement":{"type":"carried_by|board","id":"..."},"evidence":"原文"}
+- {"kind":"secret_disclosure","secret_id":"...","owner_id":"...","disclosed_by_id":"...","audience_ids":["..."],"summary":"披露内容","evidence":"原文"}
+- {"kind":"commitment","commitment_id":"稳定小写 ID","promisor_id":"...","promisee_id":"...","description":"承诺内容","related_item_id":"可选","due":"可选时间","evidence":"原文"}
+- {"kind":"commitment_update","commitment_id":"...","status":"fulfilled|broken|cancelled","evidence":"原文"}
 """
 
 
@@ -137,6 +170,21 @@ def build_suggestion_messages(request: SuggestionRequest) -> list[dict[str, str]
     }
     return [
         {"role": "system", "content": SUGGESTION_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
+def build_fact_extraction_messages(
+    request: FactExtractionRequest,
+) -> list[dict[str, str]]:
+    payload = {
+        "状态版本": request.perception.state_revision,
+        "玩家原话": request.player_text,
+        "本回合散文": request.narrative,
+        "铁律账本": request.ledger,
+    }
+    return [
+        {"role": "system", "content": FACT_EXTRACTION_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
@@ -187,6 +235,14 @@ def _sanitize_machine_id(value: Any, fallback: str) -> str:
     return machine_id
 
 
+def _sanitize_state_key(value: Any, fallback: str) -> str:
+    state_key = re.sub(r"[^a-z0-9_-]+", "_", str(value or "").strip().lower())
+    state_key = state_key.strip("_-")
+    if not state_key or not state_key[0].isalpha():
+        state_key = fallback
+    return state_key
+
+
 def coerce_suggestions(
     content: str,
     request: SuggestionRequest,
@@ -214,6 +270,92 @@ def coerce_suggestions(
     if not suggestions:
         raise ValueError("no valid suggestion cards")
     return tuple(suggestions)
+
+
+def _coerce_item_placement(raw: Any) -> ItemPlacement:
+    if not isinstance(raw, dict):
+        raise ValueError("item placement must be an object")
+    return ItemPlacement(type=raw.get("type"), id=raw.get("id"))
+
+
+def coerce_fact_extraction(
+    content: str,
+    request: FactExtractionRequest,
+) -> FactExtraction:
+    data = _load_json_object(content)
+    if not isinstance(data.get("facts"), list):
+        raise ValueError("fact extraction response must contain a facts array")
+
+    facts = []
+    invalid_indexes: list[int] = []
+    for index, raw in enumerate(data["facts"]):
+        if not isinstance(raw, dict):
+            invalid_indexes.append(index)
+            continue
+        kind = raw.get("kind")
+        evidence = str(raw.get("evidence") or "").strip()
+        try:
+            if kind == "character_move":
+                fact = CharacterMoveFact(
+                    actor_id=str(raw.get("actor_id") or ""),
+                    destination_id=str(raw.get("destination_id") or ""),
+                    evidence=evidence,
+                )
+            elif kind == "item_transfer":
+                fact = ItemTransferFact(
+                    item_id=str(raw.get("item_id") or ""),
+                    from_placement=_coerce_item_placement(raw.get("from_placement")),
+                    to_placement=_coerce_item_placement(raw.get("to_placement")),
+                    evidence=evidence,
+                )
+            elif kind == "secret_disclosure":
+                fact = SecretDisclosureFact(
+                    secret_id=str(raw.get("secret_id") or ""),
+                    owner_id=str(raw.get("owner_id") or ""),
+                    disclosed_by_id=str(raw.get("disclosed_by_id") or ""),
+                    audience_ids=tuple(
+                        str(item) for item in raw.get("audience_ids") or []
+                    ),
+                    summary=str(raw.get("summary") or "").strip(),
+                    evidence=evidence,
+                )
+            elif kind == "commitment":
+                related_item = raw.get("related_item_id")
+                fact = CommitmentFact(
+                    commitment_id=_sanitize_state_key(
+                        raw.get("commitment_id"), f"promise_{index + 1}"
+                    ),
+                    promisor_id=str(raw.get("promisor_id") or ""),
+                    promisee_id=str(raw.get("promisee_id") or ""),
+                    description=str(raw.get("description") or "").strip(),
+                    related_item_id=(
+                        str(related_item) if related_item not in (None, "") else None
+                    ),
+                    due=str(raw.get("due") or "").strip(),
+                    evidence=evidence,
+                )
+            elif kind == "commitment_update":
+                fact = CommitmentUpdateFact(
+                    commitment_id=_sanitize_state_key(
+                        raw.get("commitment_id"), f"promise_{index + 1}"
+                    ),
+                    status=raw.get("status"),
+                    evidence=evidence,
+                )
+            else:
+                invalid_indexes.append(index)
+                continue
+        except Exception:
+            invalid_indexes.append(index)
+            continue
+        facts.append(fact)
+    if invalid_indexes:
+        joined = ", ".join(str(index) for index in invalid_indexes)
+        raise ValueError(f"invalid extracted fact entries at indexes: {joined}")
+    return FactExtraction(
+        state_revision=request.perception.state_revision,
+        facts=tuple(facts),
+    )
 
 
 def _sanitize_generated_id(value: Any) -> str:
@@ -417,6 +559,43 @@ class DeepSeekProvider(LLMProvider):
                 "content": f"上一条提案无法解析（{last_error}）。请只输出 suggestions json。",
             })
         raise LLMProviderError(f"DeepSeek 行动提案连续无法解析：{last_error}")
+
+    def extract_facts(
+        self,
+        request: FactExtractionRequest,
+    ) -> FactExtractionResponse:
+        messages = build_fact_extraction_messages(request)
+        started = time.monotonic()
+        usage_total: dict[str, Any] = {}
+        last_error = "empty response"
+        for _ in range(MAX_REPAIR_ROUNDS + 1):
+            content, usage = self._call(
+                messages,
+                temperature=0.0,
+                max_tokens=900,
+            )
+            self._merge_usage(usage_total, usage)
+            if not content.strip():
+                last_error = "empty content"
+            else:
+                try:
+                    extraction = coerce_fact_extraction(content, request)
+                except ValueError as exc:
+                    last_error = str(exc)
+                else:
+                    return FactExtractionResponse(
+                        extraction=extraction,
+                        raw=content,
+                        model=self.model,
+                        prompt_version=FACT_EXTRACTION_PROMPT_VERSION,
+                        latency_ms=round((time.monotonic() - started) * 1000, 2),
+                        usage=usage_total,
+                    )
+            messages.append({
+                "role": "user",
+                "content": f"上一条事实抽取无法解析（{last_error}）。请只输出 facts json。",
+            })
+        raise LLMProviderError(f"DeepSeek 事实抽取连续无法解析：{last_error}")
 
     def propose_director(self, request: DirectorRequest) -> DirectorResponse:
         messages = build_director_messages(request)

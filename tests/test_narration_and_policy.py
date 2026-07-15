@@ -49,7 +49,7 @@ class NarrationFactsTest(unittest.TestCase):
         )
         self.assertEqual(references, ("aunt_chen",))
 
-    def test_fact_sheet_hides_remote_items_and_states_phase_limit(self) -> None:
+    def test_fact_sheet_hides_remote_items_and_requires_explicit_changes(self) -> None:
         references = match_references(self.session, "我和陈阿姨聊聊。")
         facts = build_narrative_facts(
             self.session, "我和陈阿姨聊聊。", references
@@ -58,7 +58,7 @@ class NarrationFactsTest(unittest.TestCase):
         self.assertIn("陈阿姨", flat)
         self.assertNotIn("蓝白格布", flat)
         self.assertNotIn("checked_cloth", flat)
-        self.assertIn("不得断言移动完成", facts["本阶段提交限制"])
+        self.assertIn("必须在散文中明确写出", facts["事实表达要求"])
         self.assertNotIn("secret", flat)
 
     def test_provider_prose_and_honest_fallback(self) -> None:

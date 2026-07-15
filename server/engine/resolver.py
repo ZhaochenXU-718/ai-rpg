@@ -1,9 +1,8 @@
 """Narrative-first fact commit and anchor scanning.
 
-Phase 1 establishes the revision-bound commit seam without pretending Phase 2
-is already implemented.  ``FactBatch`` is the canonical transport, but CLI
-turns currently construct only prose batches with no state changes.  Phase 2
-will add extraction and iron-law validation before this function is called.
+``FactBatch`` is the canonical, already-admitted transport. Untrusted prose
+extractions are checked in ``iron_laws.py`` before this deterministic module
+applies them, scans Canon anchors and evaluates endings.
 """
 
 from __future__ import annotations
@@ -15,7 +14,12 @@ from typing import Any
 from .conditions import check_condition_block, evaluate_endings
 from .content import Story
 from .effects import apply_mutations
-from .llm_protocol import CommittedDirectorBeat, CommittedLocalCanon, FactBatch
+from .llm_protocol import (
+    CommittedDirectorBeat,
+    CommittedLocalCanon,
+    CommittedTurn,
+    FactBatch,
+)
 from .local_canon import expire_situations
 from .state import get_value, set_value
 
@@ -39,6 +43,7 @@ class TurnResult:
     notes: list[str] = field(default_factory=list)
     ending: str | None = None
     prior_events: list[str] = field(default_factory=list)
+    committed_turn: CommittedTurn | None = None
 
 
 def _record_changes(
@@ -113,8 +118,8 @@ def commit_facts(
 ) -> TurnResult:
     """Atomically apply a fact batch, then scan anchors and endings.
 
-    Iron-law conflict checks intentionally do not live here yet; Phase 2 will
-    validate a structured extraction before invoking this deterministic seam.
+    Iron-law conflict checks deliberately live before this seam. Keeping this
+    function mechanical makes work-copy atomicity straightforward to audit.
     """
     scene_before = story.current_location(state)
     result = TurnResult(

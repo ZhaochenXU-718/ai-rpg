@@ -84,7 +84,7 @@
 
 不再提交：意图菜单、数值白名单（`resolution_limits`）、物品请求策略、普通行动 storylet、逐意图报价配置。
 
-## 现状对照（2026-07-15，Phase 1 批次 C 完成）
+## 现状对照（2026-07-15，Phase 2 最小后验闭环完成）
 
 **继承自 pre-pivot 分支的可复用资产**：确定性账本与原子提交、感知墙、内存 checkpoint / 撤回 / 状态分支、trace、提案卡（`ideas` / `idea <n>`）、Local Canon 准入（原型 / 预算 / 命名 / 冲突检查）、DirectorBeat 骨架、内容校验器、DeepSeek / mock provider 层、开放场景夹具。
 
@@ -94,12 +94,14 @@
 
 **批次 C 已完成**：协议面升级为叙事优先 0.2，删除 `ActionPlan`、capability action、旧 `ValidationResult` 与计划 prompt；provider 原生提供散文、轻量提案卡和 `DirectorPlan`。`FactBatch` 成为带 `state_revision` 的正式提交协议，陈旧批次会被拒绝；感知接口扩展为玩家 / NPC 多主体快照，NPC 私有动机、口吻、关系与秘密不会进入玩家 prompt。作者契约、内容 schema、引擎原则、状态时间线、提案卡 / Director 文档和总图已同步，协议见 [narrative-first-protocol](docs/narrative-first-protocol.md)。
 
-**当前诚实边界**：协议收敛不等于 Phase 2 已完成。CLI 的普通散文回合仍不写入移动、关键物品、秘密披露或人物承诺；`FactBatch` 目前由可信内部路径构造，尚未接入“散文事实抽取 → 代码级铁律冲突检查 → 有限重生成”。多主体感知已为 NPC agent 预留正确输入边界，但 NPC 独立回合与长期私有记忆也尚未实现。
+**Phase 2 最小闭环已完成**：协议升级为 0.3，provider 从候选散文返回无 patch 权限的 `FactExtraction`；代码检查人物移动、关键物品转移、人物本人披露、新承诺与承诺兑现 / 爽约 / 取消，再生成 `FactBatch` 原子提交。任一事实冲突会整批拒绝并默认重写一次；最终失败不增加回合、revision 或 checkpoint。每次成功提交现在生成 `CommittedTurn`，trace 记录抽取、violation、重生成和最终提交。开放夹具已跑通“周师傅承诺次日交付防雨布 → 后续交付并兑现承诺”。
+
+**当前诚实边界**：DeepSeek 已实现真实 extractor；mock extractor 刻意 fail-closed，只提交空事实，不用手写自然语言路由猜权威变化。自由文本 `boundaries` 仍主要约束生成，当前代码只能确定性检查实体集合、可见性、空间图、物品归属、秘密所有者和承诺状态等结构化边界。提交后运行的保守 Director 不得再注入未经抽取的玩家可见事实：`react` / `advance_plan` 摘要只留 trace，合法进场只显示引擎根据已提交移动生成的提示。NPC 独立回合、人物私有长期记忆、Director v2 和通用世界边界 DSL 尚未实现。
 
 **演进顺序**：
 
 1. **拆除机械判定面（已完成）**：按处置清单删除报价 / 数值裁剪 / 能力路由 / 请求策略 / 意图面，CLI 收敛为自然语言 + 提案卡，样板故事重定基线，全量测试保持绿色；
-2. **铁律账本 + 后验校验最小循环**：事实抽取协议 + 代码级冲突检查 + 重生成上限，在开放夹具上跑通；
+2. **铁律账本 + 后验校验最小循环（已完成）**：事实抽取协议 + 代码级冲突检查 + 重生成上限，在开放夹具上跑通；
 3. **Director v2**：每回合场景编排与锚点推进（替代保守的节拍调度员）；
 4. **NPC agent**：动机 + 私有记忆 + 承诺清单——验收用例：试玩中"周师傅的帆布承诺"必须被兑现或明确爽约；
 5. **Chapter 摘要与长篇试玩**：叙事记忆分层，跑第一个多小时故事；
@@ -122,6 +124,7 @@
 | 2026-07-15 | v0.7 | 完成 Phase 1 批次 A：活动内容移除退役机械字段，rapport 定性化，普通行动 storylet 收缩为事实锚点；《午夜前的档案室》封存为 pre-pivot 历史样本 |
 | 2026-07-15 | v0.8 | 完成 Phase 1 批次 B：删除旧机械行动运行时与 walkthrough 执行器；建立叙事优先 `FactBatch` 提交缝，CLI 收敛为自然语言 / 可编辑提案卡 / 状态时间线；保留并重接 Director、Local Canon、感知墙与 checkpoint |
 | 2026-07-15 | v0.9 | 完成 Phase 1 批次 C：删除旧计划协议与 prompt，建立叙事优先 0.2 协议、原生 provider 接口、带 revision 的 `FactBatch` 和多主体感知；同步当前契约文档与终局总图 |
+| 2026-07-15 | v1.0 | 完成 Phase 2 最小后验闭环：协议 0.3 `FactExtraction`、五类铁律事实检查、一次有限重生成、真实 `CommittedTurn` 与开放夹具承诺 / 交付验收 |
 
 ## 快速开始
 
@@ -129,7 +132,7 @@
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 无外部模型的叙事优先 CLI 冒烟
+# 无外部模型的叙事优先 CLI 冒烟（事实抽取 fail-closed）
 python server/cli.py content/rooftop_supper.yaml --llm mock
 # 使用 DeepSeek 生成散文（需设置 DEEPSEEK_API_KEY）
 python server/cli.py content/rooftop_supper.yaml --llm deepseek
@@ -139,4 +142,4 @@ python tools/validate_content.py content/rooftop_supper.yaml
 python -m pytest tests/ -q
 ```
 
-> 注：仓库当前完成了转向第 1 阶段的批次 A / B / C。活动内容已能进入叙事优先 CLI，但普通回合在 Phase 2 前只提交散文与已声明的事实锚点，不会伪造铁律事实。《午夜前的档案室》只作为 `pre_pivot_archive` 内容校验样本保留，CLI 会拒绝启动它；完整旧运行时请查看历史分支。
+> 注：仓库当前完成了 Phase 1 批次 A / B / C 与 Phase 2 最小后验闭环。DeepSeek CLI 可以抽取并提交通过检查的铁律事实；mock CLI 保守返回空抽取，只用于无网络冒烟，不会伪造成功。《午夜前的档案室》只作为 `pre_pivot_archive` 内容校验样本保留，CLI 会拒绝启动它；完整旧运行时请查看历史分支。

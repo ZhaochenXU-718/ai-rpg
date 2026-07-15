@@ -26,6 +26,7 @@ def beat(
     location: str,
     *,
     revision: int = 0,
+    summary: str = "既有人物根据自己的安排介入当前场景。",
 ) -> DirectorBeat:
     return DirectorBeat(
         beat_id=f"beat_{actor_id}_{kind.value}",
@@ -34,7 +35,7 @@ def beat(
         actor_id=actor_id,
         target_location_id=location,
         target_ids=("player",),
-        summary="既有人物根据自己的安排介入当前场景。",
+        summary=summary,
         motivation="响应当前局势，同时保持原有动机。",
     )
 
@@ -110,6 +111,7 @@ class DirectorBeatCommitTest(unittest.TestCase):
             DirectorBeatKind.ENTER_SCENE,
             "convenience_store",
             revision=1,
+            summary="陈阿姨来到便利店，并答应把雨布送给玩家。",
         )
         result = self.session.commit_fact_batch(
             self.move_batch(),
@@ -122,11 +124,38 @@ class DirectorBeatCommitTest(unittest.TestCase):
             f"director.{scheduled.beat_id}",
             result.change_sources,
         )
+        self.assertEqual(result.narrative_hints, ["陈阿姨来到梧桐便利店。"])
+        self.assertNotIn("答应", result.director_beats[0].narrative_hint)
         self.assertEqual(len(self.session.checkpoint_history()), 2)
 
         self.session.undo()
         self.assertEqual(self.session.state["positions"]["player"], "building_lobby")
         self.assertEqual(self.session.state["positions"]["aunt_chen"], "building_lobby")
+
+    def test_unextracted_reaction_summary_stays_out_of_player_memory(self) -> None:
+        scheduled = beat(
+            "aunt_chen",
+            DirectorBeatKind.REACT,
+            "building_lobby",
+            revision=1,
+            summary="陈阿姨答应明天把雨布送给玩家。",
+        )
+        batch = FactBatch(
+            state_revision=self.session.state_revision,
+            player_text="我向陈阿姨点点头。",
+            narrative="你向陈阿姨点了点头。",
+        )
+
+        result = self.session.commit_fact_batch(
+            batch,
+            director_provider=ScriptedProvider([], director_batches=[(scheduled,)]),
+        )
+
+        self.assertEqual(len(result.director_beats), 1)
+        self.assertNotIn(scheduled.summary, result.narrative_hints)
+        self.assertNotEqual(result.director_beats[0].narrative_hint, scheduled.summary)
+        self.assertIn(scheduled.summary, result.director_trace["raw"])
+        self.assertNotIn(scheduled.summary, self.session.recent_events)
 
     def test_invalid_beat_does_not_cancel_fact_commit(self) -> None:
         invalid = beat(

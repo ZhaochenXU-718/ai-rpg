@@ -1,8 +1,9 @@
 """Narrative-first protocols shared by providers and the world engine.
 
-Protocol 0.2 removes the pre-pivot ActionPlan/capability/validation surface.
-Providers may write prose and propose cards, Director plans or future NPC
-turns, but only a validated FactBatch may cross into authoritative state.
+Protocol 0.3 adds untrusted structured prose extraction to the narrative-first
+0.2 provider surface. Providers may write prose and propose facts, cards,
+Director plans or future NPC turns, but only a code-admitted FactBatch may
+cross into authoritative state.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import copy
 import uuid
 from enum import Enum
-from typing import Any, Annotated, Literal
+from typing import Any, Annotated, Literal, Union
 
 from pydantic import (
     BaseModel,
@@ -23,11 +24,15 @@ from pydantic import (
 )
 
 
-PROTOCOL_VERSION = "0.2"
-ProtocolVersion = Literal["0.2"]
+PROTOCOL_VERSION = "0.3"
+ProtocolVersion = Literal["0.3"]
 MachineId = Annotated[
     str,
     StringConstraints(strip_whitespace=True, pattern=r"^[a-z][a-z0-9_.-]*$"),
+]
+StateKeyId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, pattern=r"^[a-z][a-z0-9_-]*$"),
 ]
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
@@ -162,11 +167,113 @@ class SuggestedActionSet(ProtocolModel):
         return self
 
 
-class FactBatch(ProtocolModel):
-    """Post-generation facts waiting at the authoritative commit boundary.
+class ItemPlacement(ProtocolModel):
+    """One authoritative item placement used for optimistic custody checks."""
 
-    During Phase 1 only prose-only batches are constructed by the CLI. Phase
-    2 will populate state_changes after extraction and iron-law validation.
+    type: Literal["board", "carried_by", "container", "removed"]
+    id: NonEmptyStr | None = None
+
+    @model_validator(mode="after")
+    def placement_is_coherent(self):
+        if self.type == "removed" and self.id is not None:
+            raise ValueError("removed item placement must not have an id")
+        if self.type != "removed" and self.id is None:
+            raise ValueError(f"{self.type} item placement requires an id")
+        return self
+
+
+class CharacterMoveFact(ProtocolModel):
+    fact_id: MachineId = Field(default_factory=lambda: new_protocol_id("fact"))
+    kind: Literal["character_move"] = "character_move"
+    actor_id: NonEmptyStr
+    destination_id: NonEmptyStr
+    evidence: NonEmptyStr
+
+
+class ItemTransferFact(ProtocolModel):
+    fact_id: MachineId = Field(default_factory=lambda: new_protocol_id("fact"))
+    kind: Literal["item_transfer"] = "item_transfer"
+    item_id: NonEmptyStr
+    from_placement: ItemPlacement
+    to_placement: ItemPlacement
+    evidence: NonEmptyStr
+
+    @model_validator(mode="after")
+    def placement_changes(self):
+        if self.from_placement == self.to_placement:
+            raise ValueError("item transfer needs different placements")
+        return self
+
+
+class SecretDisclosureFact(ProtocolModel):
+    fact_id: MachineId = Field(default_factory=lambda: new_protocol_id("fact"))
+    kind: Literal["secret_disclosure"] = "secret_disclosure"
+    secret_id: NonEmptyStr
+    owner_id: NonEmptyStr
+    disclosed_by_id: NonEmptyStr
+    audience_ids: tuple[NonEmptyStr, ...]
+    summary: NonEmptyStr
+    evidence: NonEmptyStr
+
+    @model_validator(mode="after")
+    def audiences_are_valid(self):
+        if not self.audience_ids:
+            raise ValueError("secret disclosure needs at least one audience")
+        _ensure_unique(list(self.audience_ids), "audience_ids")
+        return self
+
+
+class CommitmentFact(ProtocolModel):
+    fact_id: MachineId = Field(default_factory=lambda: new_protocol_id("fact"))
+    kind: Literal["commitment"] = "commitment"
+    commitment_id: StateKeyId
+    promisor_id: NonEmptyStr
+    promisee_id: NonEmptyStr
+    description: NonEmptyStr
+    related_item_id: NonEmptyStr | None = None
+    due: str = ""
+    evidence: NonEmptyStr
+
+
+class CommitmentUpdateFact(ProtocolModel):
+    fact_id: MachineId = Field(default_factory=lambda: new_protocol_id("fact"))
+    kind: Literal["commitment_update"] = "commitment_update"
+    commitment_id: StateKeyId
+    status: Literal["fulfilled", "broken", "cancelled"]
+    evidence: NonEmptyStr
+
+
+ExtractedFact = Annotated[
+    Union[
+        CharacterMoveFact,
+        ItemTransferFact,
+        SecretDisclosureFact,
+        CommitmentFact,
+        CommitmentUpdateFact,
+    ],
+    Field(discriminator="kind"),
+]
+
+
+class FactExtraction(ProtocolModel):
+    """Untrusted facts extracted from one prose candidate."""
+
+    extraction_id: MachineId = Field(default_factory=lambda: new_protocol_id("extract"))
+    state_revision: NonNegativeInt
+    facts: tuple[ExtractedFact, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def fact_ids_are_unique(self):
+        _ensure_unique([fact.fact_id for fact in self.facts], "facts.fact_id")
+        return self
+
+
+class FactBatch(ProtocolModel):
+    """Facts admitted by code and waiting at the atomic commit boundary.
+
+    Providers return ``FactExtraction``. Only the iron-law checker may turn
+    that untrusted extraction into state changes carried by this model.
     """
 
     batch_id: MachineId = Field(default_factory=lambda: new_protocol_id("batch"))
@@ -176,12 +283,17 @@ class FactBatch(ProtocolModel):
     state_changes: dict[str, Any] = Field(default_factory=dict)
     facts: tuple[NonEmptyStr, ...] = ()
     references: tuple[NonEmptyStr, ...] = ()
+    extracted_facts: tuple[ExtractedFact, ...] = ()
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
     @model_validator(mode="after")
     def entries_are_unique(self):
         _ensure_unique(list(self.facts), "facts")
         _ensure_unique(list(self.references), "references")
+        _ensure_unique(
+            [fact.fact_id for fact in self.extracted_facts],
+            "extracted_facts.fact_id",
+        )
         return self
 
 
@@ -436,6 +548,10 @@ class CommittedTurn(ProtocolModel):
 
 def fact_batch_json_schema() -> dict[str, Any]:
     return copy.deepcopy(FactBatch.model_json_schema())
+
+
+def fact_extraction_json_schema() -> dict[str, Any]:
+    return copy.deepcopy(FactExtraction.model_json_schema())
 
 
 def suggested_action_json_schema() -> dict[str, Any]:

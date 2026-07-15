@@ -17,6 +17,8 @@ from .llm_protocol import (
     DirectorBeatKind,
     DirectorPlan,
     EntityKind,
+    ExtractedFact,
+    FactExtraction,
     LocalCanonProposal,
     NpcTurn,
     PerceptionSnapshot,
@@ -54,6 +56,26 @@ class SuggestionRequest:
 @dataclass(frozen=True)
 class SuggestionResponse:
     suggestions: tuple[SuggestedAction, ...]
+    raw: str
+    model: str
+    prompt_version: str = "n/a"
+    latency_ms: float = 0.0
+    usage: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FactExtractionRequest:
+    """A prose candidate plus the minimum ledger needed to ground facts."""
+
+    perception: PerceptionSnapshot
+    player_text: str
+    narrative: str
+    ledger: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class FactExtractionResponse:
+    extraction: FactExtraction
     raw: str
     model: str
     prompt_version: str = "n/a"
@@ -125,6 +147,9 @@ class LLMProvider:
     def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:
         raise LLMProviderError(f"provider '{self.name}' does not support suggestions")
 
+    def extract_facts(self, request: FactExtractionRequest) -> FactExtractionResponse:
+        raise LLMProviderError(f"provider '{self.name}' does not support fact extraction")
+
     def propose_director(self, request: DirectorRequest) -> DirectorResponse:
         raise LLMProviderError(f"provider '{self.name}' does not support Director plans")
 
@@ -143,11 +168,15 @@ class ScriptedProvider(LLMProvider):
         suggestion_batches: list[tuple[SuggestedAction, ...]] | None = None,
         director_batches: list[tuple[DirectorBeat, ...]] | None = None,
         local_canon_batches: list[tuple[LocalCanonProposal, ...]] | None = None,
+        fact_extractions: list[
+            FactExtraction | tuple[ExtractedFact, ...]
+        ] | None = None,
     ) -> None:
         self._narratives = list(narratives or [])
         self._suggestion_batches = list(suggestion_batches or [])
         self._director_batches = list(director_batches or [])
         self._local_canon_batches = list(local_canon_batches or [])
+        self._fact_extractions = list(fact_extractions or [])
 
     def render_narrative(self, request: NarrativeRequest) -> NarrativeResponse | None:
         if not self._narratives:
@@ -167,6 +196,20 @@ class ScriptedProvider(LLMProvider):
                 [suggestion.to_dict() for suggestion in suggestions],
                 ensure_ascii=False,
             ),
+            model="scripted",
+        )
+
+    def extract_facts(self, request: FactExtractionRequest) -> FactExtractionResponse:
+        if not self._fact_extractions:
+            raise LLMProviderError("scripted provider has no fact extraction left")
+        queued = self._fact_extractions.pop(0)
+        extraction = queued if isinstance(queued, FactExtraction) else FactExtraction(
+            state_revision=request.perception.state_revision,
+            facts=queued,
+        )
+        return FactExtractionResponse(
+            extraction=extraction,
+            raw=json.dumps(extraction.to_dict(), ensure_ascii=False),
             model="scripted",
         )
 
@@ -191,6 +234,20 @@ class HeuristicMockProvider(LLMProvider):
     """Story-neutral development provider using only scoped perception."""
 
     name = "mock"
+
+    def extract_facts(self, request: FactExtractionRequest) -> FactExtractionResponse:
+        """Fail closed: the development mock never invents authoritative facts."""
+        started = time.monotonic()
+        extraction = FactExtraction(
+            state_revision=request.perception.state_revision,
+            facts=(),
+        )
+        return FactExtractionResponse(
+            extraction=extraction,
+            raw=json.dumps(extraction.to_dict(), ensure_ascii=False),
+            model="heuristic-mock-extractor-0.1",
+            latency_ms=round((time.monotonic() - started) * 1000, 2),
+        )
 
     def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:
         started = time.monotonic()

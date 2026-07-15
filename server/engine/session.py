@@ -12,13 +12,45 @@ from .conditions import evaluate_endings
 from .content import Story
 from .director import run_director_cycle
 from .llm import LLMProvider
-from .llm_protocol import FactBatch, PerceptionAudience, PerceptionSnapshot
+from .llm_protocol import (
+    CommittedChange,
+    CommittedTurn,
+    FactAuthority,
+    FactBatch,
+    PerceptionAudience,
+    PerceptionSnapshot,
+)
 from .logger import TurnLogger
 from .perception import build_player_perception, build_subject_perception
 from .resolver import TurnResult, commit_facts
 from .state import build_initial_state
 
 RECENT_EVENT_WINDOW = 5
+
+
+def _fact_authority(source: str) -> FactAuthority:
+    if source.startswith("anchor."):
+        return FactAuthority.CANON_ANCHOR
+    if source.startswith("local_canon."):
+        return FactAuthority.LOCAL_CANON
+    return FactAuthority.IRON_LAW
+
+
+def _committed_changes(result: TurnResult) -> tuple[CommittedChange, ...]:
+    return tuple(
+        CommittedChange(
+            path=path,
+            previous=previous,
+            new=new,
+            authority=_fact_authority(source),
+            source=source,
+            reason=f"accepted by {source}",
+        )
+        for (path, previous, new), source in zip(
+            result.changes, result.change_sources
+        )
+        if previous != new
+    )
 
 
 @dataclass(frozen=True)
@@ -241,7 +273,7 @@ class GameSession:
         references: tuple[str, ...] = (),
         director_provider: LLMProvider | None = None,
     ) -> TurnResult:
-        """Commit a prose-only transitional turn with no asserted fact changes."""
+        """Low-level prose-only commit for anchors/tests; the CLI uses Phase 2."""
         return self.commit_fact_batch(
             FactBatch(
                 state_revision=self.state_revision,
@@ -304,7 +336,22 @@ class GameSession:
         self.consumed = working_consumed
         self.turn_no = next_turn
         self.ending = result.ending
-        self.state_revision += 1
+        self.state_revision = revision_before + 1
+        result.committed_turn = CommittedTurn(
+            batch_id=batch.batch_id,
+            turn_no=next_turn,
+            state_revision_before=revision_before,
+            state_revision_after=self.state_revision,
+            scene_before=result.scene_before,
+            scene_after=result.scene_after,
+            narrative=result.narrative,
+            committed_changes=_committed_changes(result),
+            director_beats=tuple(result.director_beats),
+            local_canon=tuple(result.local_canon),
+            anchor_ids=tuple(result.fired),
+            new_facts=tuple(result.new_facts),
+            ending=result.ending,
+        )
         self.last_result = result
         new_events = [result.narrative, *result.narrative_hints]
         self._recent_events.extend(event for event in new_events if event)
@@ -322,5 +369,9 @@ class GameSession:
             "committed_paths": [path for path, _, _ in result.changes],
             "new_facts": list(result.new_facts),
             "anchors": list(result.fired),
+            "commit_id": result.committed_turn.commit_id,
+            "extracted_fact_ids": [
+                fact.fact_id for fact in batch.extracted_facts
+            ],
         })
         return result

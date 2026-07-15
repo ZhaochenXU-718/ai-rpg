@@ -168,14 +168,18 @@ def build_subject_perception(
         ))
         seen.add(char_id)
 
-    for item_id in story.items_at(state, location_id):
+    for item_id in story.visible_items_at(state, location_id):
+        if item_id in inventory_ids:
+            continue
         item = story.items.get(item_id) or {}
+        placement = (state.get("item_locations") or {}).get(item_id)
         entities.append(_entity(
             item_id,
             story.item_labels().get(item_id, item_id),
             EntityKind.ITEM,
             actionable=item_id in actionable,
             description=str(item.get("description") or ""),
+            public_state={"placement": placement} if placement else {},
         ))
         seen.add(item_id)
 
@@ -222,6 +226,9 @@ def build_subject_perception(
             EntityKind.ITEM,
             actionable=True,
             description=str((story.items.get(item_id) or {}).get("description") or ""),
+            public_state={
+                "placement": (state.get("item_locations") or {}).get(item_id)
+            },
         )
         for item_id in inventory_ids
     )
