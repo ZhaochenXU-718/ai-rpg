@@ -2,6 +2,7 @@ id: midnight_archive
 title: "午夜前的档案室"
 version: 0.3.0
 schema_version: 2
+content_profile: pre_pivot_archive  # 历史机械模式样本；不参与叙事优先运行时回归。
 language: zh-CN
 genre: mystery_infiltration
 target_duration_minutes: 20-30

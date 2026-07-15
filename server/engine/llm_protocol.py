@@ -1,9 +1,8 @@
-"""Structured contract between LLM cognition and the AIRPG world engine.
+"""Narrative-first protocols shared by providers and the world engine.
 
-The LLM may understand, plan, propose and replan, but these models never
-mutate runtime state.  The engine validates an ActionPlan and only committed
-changes become world truth.  Renderers and directors consume the resulting
-CommittedOutcome, not the original proposal.
+Protocol 0.2 removes the pre-pivot ActionPlan/capability/validation surface.
+Providers may write prose and propose cards, Director plans or future NPC
+turns, but only a validated FactBatch may cross into authoritative state.
 """
 
 from __future__ import annotations
@@ -24,9 +23,8 @@ from pydantic import (
 )
 
 
-PROTOCOL_VERSION = "0.1"
-ProtocolVersion = Literal["0.1"]
-PrimaryGoalStatus = Literal["achieved", "partial", "not_achieved", "unverified"]
+PROTOCOL_VERSION = "0.2"
+ProtocolVersion = Literal["0.2"]
 MachineId = Annotated[
     str,
     StringConstraints(strip_whitespace=True, pattern=r"^[a-z][a-z0-9_.-]*$"),
@@ -49,17 +47,22 @@ class ProtocolModel(BaseModel):
         return cls.model_validate(value)
 
 
-class AuthorityLevel(str, Enum):
-    """How much engine authority a proposed state change requires."""
+def new_protocol_id(prefix: MachineId) -> str:
+    prefix = _MACHINE_ID_ADAPTER.validate_python(prefix)
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
-    PRESENTATION = "presentation"
-    SOFT_STATE = "soft_state"
-    MECHANICAL = "mechanical"
-    # Validated generative facts (authoring-contract section 4): proposed by
-    # the Director channel, admitted only through archetype, budget and
-    # conflict checks. Never writable from an ActionPlan proposal.
-    LOCAL_CANON = "local_canon"
-    CANON = "canon"
+
+def _ensure_unique(values: list[str], field_name: str) -> None:
+    if len(values) != len(set(values)):
+        raise ValueError(f"{field_name} must not contain duplicates")
+
+
+class PerceptionAudience(str, Enum):
+    """Whose knowledge boundary produced a perception snapshot."""
+
+    PLAYER = "player"
+    NPC = "npc"
+    DIRECTOR = "director"
 
 
 class EntityKind(str, Enum):
@@ -72,42 +75,6 @@ class EntityKind(str, Enum):
     OTHER = "other"
 
 
-class ChangeOperation(str, Enum):
-    SET = "set"
-    INCREMENT = "increment"
-    APPEND = "append"
-    REMOVE = "remove"
-
-
-class RiskLikelihood(str, Enum):
-    UNLIKELY = "unlikely"
-    POSSIBLE = "possible"
-    LIKELY = "likely"
-    CERTAIN = "certain"
-
-
-class IssueSeverity(str, Enum):
-    ERROR = "error"
-    WARNING = "warning"
-    ADJUSTMENT = "adjustment"
-
-
-class DirectorBeatKind(str, Enum):
-    ENTER_SCENE = "enter_scene"
-    REACT = "react"
-    ADVANCE_PLAN = "advance_plan"
-
-
-def new_protocol_id(prefix: MachineId) -> str:
-    prefix = _MACHINE_ID_ADAPTER.validate_python(prefix)
-    return f"{prefix}_{uuid.uuid4().hex[:12]}"
-
-
-def _ensure_unique(values: list[str], field_name: str) -> None:
-    if len(values) != len(set(values)):
-        raise ValueError(f"{field_name} must not contain duplicates")
-
-
 class PerceivedEntity(ProtocolModel):
     entity_id: NonEmptyStr
     label: NonEmptyStr
@@ -117,27 +84,16 @@ class PerceivedEntity(ProtocolModel):
     public_state: dict[str, Any] = Field(default_factory=dict)
 
 
-class CapabilityTool(ProtocolModel):
-    capability: MachineId
-    action: MachineId
-    description: NonEmptyStr
-    arguments_schema: dict[str, Any] = Field(default_factory=dict)
-    allowed_authority_levels: tuple[AuthorityLevel, ...] = ()
+class PerceptionSnapshot(ProtocolModel):
+    """One subject-scoped view of the world.
 
-    @property
-    def tool_id(self) -> str:
-        return f"{self.capability}.{self.action}"
+    The same schema can carry player, NPC or Director views; the builder that
+    supplies it owns the disclosure policy. A snapshot never contains a
+    capability menu or an implicit permission to mutate state.
+    """
 
-    @field_validator("allowed_authority_levels")
-    @classmethod
-    def authority_levels_are_unique(cls, values: tuple[AuthorityLevel, ...]):
-        _ensure_unique([value.value for value in values], "allowed_authority_levels")
-        return values
-
-
-class PlayerPerception(ProtocolModel):
-    """Player-visible snapshot supplied to the action-understanding LLM."""
-
+    audience: PerceptionAudience
+    subject_id: NonEmptyStr
     story_id: NonEmptyStr
     session_id: NonEmptyStr
     turn_no: NonNegativeInt
@@ -148,216 +104,132 @@ class PlayerPerception(ProtocolModel):
     visible_entities: tuple[PerceivedEntity, ...] = ()
     inventory: tuple[PerceivedEntity, ...] = ()
     known_facts: tuple[NonEmptyStr, ...] = ()
-    available_intents: tuple[MachineId, ...] = ()
-    capability_tools: tuple[CapabilityTool, ...] = ()
     recent_events: tuple[NonEmptyStr, ...] = ()
     public_state: dict[str, Any] = Field(default_factory=dict)
+    subject_context: dict[str, Any] = Field(default_factory=dict)
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
     @model_validator(mode="after")
     def entries_are_unique(self):
         _ensure_unique(
-            [entity.entity_id for entity in self.visible_entities], "visible_entities"
+            [entity.entity_id for entity in self.visible_entities],
+            "visible_entities",
         )
-        _ensure_unique([entity.entity_id for entity in self.inventory], "inventory")
-        _ensure_unique([tool.tool_id for tool in self.capability_tools], "capability_tools")
-        _ensure_unique(list(self.known_facts), "known_facts")
-        _ensure_unique(list(self.available_intents), "available_intents")
-        return self
-
-
-class CapabilityAction(ProtocolModel):
-    capability: MachineId
-    action: MachineId
-    arguments: dict[str, Any]
-    purpose: NonEmptyStr
-    optional: bool = False
-
-    @property
-    def tool_id(self) -> str:
-        return f"{self.capability}.{self.action}"
-
-
-class StateChangeProposal(ProtocolModel):
-    path: NonEmptyStr
-    operation: ChangeOperation
-    value: Any
-    authority: AuthorityLevel
-    reason: NonEmptyStr
-    step_index: NonNegativeInt | None = None
-    duration_turns: Annotated[int, Field(ge=1)] | None = None
-
-    @model_validator(mode="after")
-    def increment_requires_number(self):
-        if self.operation == ChangeOperation.INCREMENT and (
-            not isinstance(self.value, (int, float)) or isinstance(self.value, bool)
-        ):
-            raise ValueError("increment value must be a number")
-        return self
-
-
-class RiskProposal(ProtocolModel):
-    description: NonEmptyStr
-    likelihood: RiskLikelihood
-    changes: tuple[StateChangeProposal, ...] = ()
-    mitigation: NonEmptyStr | None = None
-
-
-class ActionPlan(ProtocolModel):
-    """LLM interpretation and capability-tool plan; never executable directly."""
-
-    plan_id: NonEmptyStr
-    perception_revision: NonNegativeInt
-    player_text: NonEmptyStr
-    interpretation: NonEmptyStr
-    goal: NonEmptyStr
-    steps: tuple[CapabilityAction, ...]
-    intent_id: NonEmptyStr | None = None
-    references: tuple[NonEmptyStr, ...] = ()
-    proposed_changes: tuple[StateChangeProposal, ...] = ()
-    risks: tuple[RiskProposal, ...] = ()
-    assumptions: tuple[NonEmptyStr, ...] = ()
-    confidence: Annotated[float, Field(ge=0, le=1)] = 1.0
-    needs_clarification: bool = False
-    clarification_question: NonEmptyStr | None = None
-    revision: NonNegativeInt = 0
-    parent_plan_id: NonEmptyStr | None = None
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @model_validator(mode="after")
-    def plan_is_coherent(self):
-        _ensure_unique(list(self.references), "references")
-        _ensure_unique(list(self.assumptions), "assumptions")
-        if self.needs_clarification:
-            if not self.clarification_question:
-                raise ValueError(
-                    "clarification_question is required when needs_clarification=true"
-                )
-        elif self.clarification_question is not None:
-            raise ValueError(
-                "clarification_question requires needs_clarification=true"
-            )
-        elif not self.steps:
-            raise ValueError("steps must not be empty for an executable plan")
-        if self.revision > 0 and not self.parent_plan_id:
-            raise ValueError("parent_plan_id is required when revision > 0")
-        all_changes = list(self.proposed_changes)
-        for risk in self.risks:
-            all_changes.extend(risk.changes)
-        for change in all_changes:
-            if change.step_index is not None and change.step_index >= len(self.steps):
-                raise ValueError("proposed change step_index is outside steps")
-        return self
-
-
-class ValidationIssue(ProtocolModel):
-    code: MachineId
-    severity: IssueSeverity
-    message: NonEmptyStr
-    retryable: bool
-    step_index: NonNegativeInt | None = None
-    path: NonEmptyStr | None = None
-
-
-class ValidationResult(ProtocolModel):
-    """Engine decision over an ActionPlan at a specific state revision."""
-
-    validation_id: NonEmptyStr
-    plan_id: NonEmptyStr
-    state_revision: NonNegativeInt
-    can_execute: bool
-    can_replan: bool
-    accepted_step_indices: tuple[NonNegativeInt, ...] = ()
-    accepted_changes: tuple[StateChangeProposal, ...] = ()
-    adjusted_costs: tuple[StateChangeProposal, ...] = ()
-    issues: tuple[ValidationIssue, ...] = ()
-    missing_information: tuple[NonEmptyStr, ...] = ()
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @model_validator(mode="after")
-    def decision_is_coherent(self):
         _ensure_unique(
-            [str(index) for index in self.accepted_step_indices],
-            "accepted_step_indices",
+            [entity.entity_id for entity in self.inventory],
+            "inventory",
         )
-        has_error = any(issue.severity == IssueSeverity.ERROR for issue in self.issues)
-        if self.can_execute and has_error:
-            raise ValueError("can_execute cannot be true with error issues")
-        if self.can_execute and not self.accepted_step_indices:
-            raise ValueError("accepted_step_indices is required when executable")
-        if not self.can_execute and not has_error and not self.missing_information:
-            raise ValueError("a rejected result requires an error or missing information")
-        accepted = set(self.accepted_step_indices)
-        if any(
-            change.step_index is not None and change.step_index not in accepted
-            for change in self.accepted_changes
-        ):
-            raise ValueError("accepted change refers to a step that was not accepted")
+        _ensure_unique(list(self.known_facts), "known_facts")
         return self
 
 
-class SuggestedActionDraft(ProtocolModel):
-    """LLM-authored card before deterministic plan validation."""
+class SuggestedAction(ProtocolModel):
+    """Editable prose inspiration, never a frozen execution plan."""
 
-    suggestion_id: NonEmptyStr
+    suggestion_id: MachineId
     perception_revision: NonNegativeInt
     title: NonEmptyStr
     action_text: NonEmptyStr
     focus: MachineId
     rationale: NonEmptyStr
-    plan: ActionPlan
+    expected_iron_law_touches: tuple[NonEmptyStr, ...] = ()
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
-    @model_validator(mode="after")
-    def draft_matches_frozen_plan(self):
-        if self.plan.perception_revision != self.perception_revision:
-            raise ValueError("suggestion and plan perception revisions must match")
-        if self.plan.player_text != self.action_text:
-            raise ValueError("action_text must equal the frozen plan player_text")
-        return self
-
-
-class SuggestedAction(SuggestedActionDraft):
-    """Player-facing card whose exact frozen plan already passed validation."""
-
-    validation: ValidationResult
-
-    @model_validator(mode="after")
-    def validation_matches_plan(self):
-        if self.validation.plan_id != self.plan.plan_id:
-            raise ValueError("suggestion validation must belong to its plan")
-        if self.validation.state_revision != self.perception_revision:
-            raise ValueError("suggestion validation revision must match perception")
-        if not self.validation.can_execute:
-            raise ValueError("player-facing suggestions must be executable")
-        return self
+    @field_validator("expected_iron_law_touches")
+    @classmethod
+    def touches_are_unique(cls, values: tuple[str, ...]):
+        _ensure_unique(list(values), "expected_iron_law_touches")
+        return values
 
 
 class SuggestedActionSet(ProtocolModel):
-    suggestion_set_id: NonEmptyStr
+    suggestion_set_id: MachineId
     perception_revision: NonNegativeInt
     actions: tuple[SuggestedAction, ...]
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
     @model_validator(mode="after")
-    def set_is_coherent(self):
-        if not 1 <= len(self.actions) <= 5:
-            raise ValueError("a suggestion set must contain 1 to 5 actions")
+    def actions_match_snapshot(self):
+        if not self.actions:
+            raise ValueError("actions must not be empty")
         _ensure_unique(
             [action.suggestion_id for action in self.actions],
-            "suggestion ids",
+            "actions.suggestion_id",
         )
-        if any(
-            action.perception_revision != self.perception_revision
-            for action in self.actions
-        ):
-            raise ValueError("all suggestions must use the set perception revision")
+        for action in self.actions:
+            if action.perception_revision != self.perception_revision:
+                raise ValueError("all actions must use the set perception_revision")
         return self
 
 
-class DirectorBeat(ProtocolModel):
-    """A proposed beat over an authored character; never creates an entity."""
+class FactBatch(ProtocolModel):
+    """Post-generation facts waiting at the authoritative commit boundary.
 
+    During Phase 1 only prose-only batches are constructed by the CLI. Phase
+    2 will populate state_changes after extraction and iron-law validation.
+    """
+
+    batch_id: MachineId = Field(default_factory=lambda: new_protocol_id("batch"))
+    state_revision: NonNegativeInt
+    player_text: NonEmptyStr
+    narrative: NonEmptyStr
+    state_changes: dict[str, Any] = Field(default_factory=dict)
+    facts: tuple[NonEmptyStr, ...] = ()
+    references: tuple[NonEmptyStr, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def entries_are_unique(self):
+        _ensure_unique(list(self.facts), "facts")
+        _ensure_unique(list(self.references), "references")
+        return self
+
+
+class IronLawDomain(str, Enum):
+    PRESENCE = "presence"
+    ITEM_CUSTODY = "item_custody"
+    DISCLOSURE = "disclosure"
+    COMMITMENT = "commitment"
+    ANCHOR = "anchor"
+    IRREVERSIBLE = "irreversible"
+    WORLD_BOUNDARY = "world_boundary"
+
+
+class IronLawViolation(ProtocolModel):
+    """Code-level rejection emitted before a FactBatch may commit."""
+
+    code: MachineId
+    domain: IronLawDomain
+    message: NonEmptyStr
+    retryable: bool = True
+    path: NonEmptyStr | None = None
+    evidence: NonEmptyStr | None = None
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+
+class IssueSeverity(str, Enum):
+    ERROR = "error"
+    WARNING = "warning"
+    ADJUSTMENT = "adjustment"
+
+
+class ValidationIssue(ProtocolModel):
+    """Generic engine admission issue used by Director and Local Canon."""
+
+    code: MachineId
+    severity: IssueSeverity
+    message: NonEmptyStr
+    retryable: bool
+    path: NonEmptyStr | None = None
+
+
+class DirectorBeatKind(str, Enum):
+    ENTER_SCENE = "enter_scene"
+    REACT = "react"
+    ADVANCE_PLAN = "advance_plan"
+
+
+class DirectorBeat(ProtocolModel):
     beat_id: MachineId
     state_revision: NonNegativeInt
     kind: DirectorBeatKind
@@ -368,15 +240,16 @@ class DirectorBeat(ProtocolModel):
     motivation: NonEmptyStr
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
-    @model_validator(mode="after")
-    def targets_are_unique(self):
-        _ensure_unique(list(self.target_ids), "target_ids")
-        return self
+    @field_validator("target_ids")
+    @classmethod
+    def targets_are_unique(cls, values: tuple[str, ...]):
+        _ensure_unique(list(values), "target_ids")
+        return values
 
 
 class DirectorBeatValidation(ProtocolModel):
-    validation_id: NonEmptyStr
-    beat_id: NonEmptyStr
+    validation_id: MachineId
+    beat_id: MachineId
     state_revision: NonNegativeInt
     can_schedule: bool
     issues: tuple[ValidationIssue, ...] = ()
@@ -384,9 +257,7 @@ class DirectorBeatValidation(ProtocolModel):
 
     @model_validator(mode="after")
     def decision_is_coherent(self):
-        has_error = any(
-            issue.severity == IssueSeverity.ERROR for issue in self.issues
-        )
+        has_error = any(issue.severity == IssueSeverity.ERROR for issue in self.issues)
         if self.can_schedule == has_error:
             raise ValueError(
                 "can_schedule must be true exactly when validation has no errors"
@@ -395,7 +266,7 @@ class DirectorBeatValidation(ProtocolModel):
 
 
 class LocalCanonKind(str, Enum):
-    """v1 generative fact kinds; characters are deliberately not includable."""
+    """Generated fact kinds; important characters remain author-owned."""
 
     LOCATION = "location"
     SITUATION = "situation"
@@ -405,24 +276,14 @@ GENERATED_ENTITY_PREFIX = "gen_"
 
 
 class LocalCanonProposal(ProtocolModel):
-    """A proposed persistent local fact; only the engine may admit it.
-
-    Entity ids live in a mandatory ``gen_`` namespace so generated facts can
-    never shadow an authored id and their provenance stays visible in every
-    trace and state dump.
-    """
-
-    proposal_id: NonEmptyStr
+    proposal_id: MachineId
     state_revision: NonNegativeInt
     kind: LocalCanonKind
     archetype_id: MachineId
     entity_id: MachineId
     name: NonEmptyStr
     description: NonEmptyStr
-    # For locations: the authored location it attaches to.
-    # For situations: the authored location where the situation holds.
     parent_location_id: NonEmptyStr
-    # Situations only: relative lifetime in turns; None follows the archetype.
     expires_after_turns: Annotated[int, Field(ge=1)] | None = None
     reason: NonEmptyStr
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
@@ -434,13 +295,13 @@ class LocalCanonProposal(ProtocolModel):
                 f"generated entity ids must start with '{GENERATED_ENTITY_PREFIX}'"
             )
         if self.kind == LocalCanonKind.LOCATION and self.expires_after_turns is not None:
-            raise ValueError("v1 generated locations are persistent-local; no expiry")
+            raise ValueError("generated locations are persistent-local; no expiry")
         return self
 
 
 class LocalCanonValidation(ProtocolModel):
-    validation_id: NonEmptyStr
-    proposal_id: NonEmptyStr
+    validation_id: MachineId
+    proposal_id: MachineId
     state_revision: NonNegativeInt
     can_commit: bool
     issues: tuple[ValidationIssue, ...] = ()
@@ -448,9 +309,7 @@ class LocalCanonValidation(ProtocolModel):
 
     @model_validator(mode="after")
     def decision_is_coherent(self):
-        has_error = any(
-            issue.severity == IssueSeverity.ERROR for issue in self.issues
-        )
+        has_error = any(issue.severity == IssueSeverity.ERROR for issue in self.issues)
         if self.can_commit == has_error:
             raise ValueError(
                 "can_commit must be true exactly when validation has no errors"
@@ -458,20 +317,74 @@ class LocalCanonValidation(ProtocolModel):
         return self
 
 
+class DirectorPlan(ProtocolModel):
+    """Non-authoritative Director proposal revalidated by the engine."""
+
+    plan_id: MachineId = Field(default_factory=lambda: new_protocol_id("director"))
+    state_revision: NonNegativeInt
+    beats: tuple[DirectorBeat, ...] = ()
+    local_canon: tuple[LocalCanonProposal, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def entries_are_unique(self):
+        _ensure_unique([beat.beat_id for beat in self.beats], "beats.beat_id")
+        _ensure_unique(
+            [proposal.proposal_id for proposal in self.local_canon],
+            "local_canon.proposal_id",
+        )
+        if any(beat.state_revision != self.state_revision for beat in self.beats):
+            raise ValueError("all beats must use the plan state_revision")
+        if any(
+            proposal.state_revision != self.state_revision
+            for proposal in self.local_canon
+        ):
+            raise ValueError("all local canon proposals must use the plan state_revision")
+        return self
+
+
+class NpcTurn(ProtocolModel):
+    """Future NPC-agent output; facts remain proposals until extraction."""
+
+    npc_turn_id: MachineId = Field(default_factory=lambda: new_protocol_id("npc"))
+    state_revision: NonNegativeInt
+    actor_id: NonEmptyStr
+    utterance: str = ""
+    action: str = ""
+    target_ids: tuple[NonEmptyStr, ...] = ()
+    proposed_facts: tuple[NonEmptyStr, ...] = ()
+    memory_notes: tuple[NonEmptyStr, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def turn_is_coherent(self):
+        if not self.utterance.strip() and not self.action.strip():
+            raise ValueError("an NPC turn needs an utterance or action")
+        _ensure_unique(list(self.target_ids), "target_ids")
+        _ensure_unique(list(self.proposed_facts), "proposed_facts")
+        return self
+
+
+class FactAuthority(str, Enum):
+    """Provenance of committed truth, not permission requested by an LLM."""
+
+    IRON_LAW = "iron_law"
+    LOCAL_CANON = "local_canon"
+    CANON_ANCHOR = "canon_anchor"
+
+
 class CommittedChange(ProtocolModel):
     path: NonEmptyStr
     previous: Any
     new: Any
-    authority: AuthorityLevel
+    authority: FactAuthority
     source: MachineId
     reason: str = ""
 
 
 class CommittedDirectorBeat(ProtocolModel):
-    """One validated Director beat included in the surrounding turn commit."""
-
     beat_id: MachineId
-    validation_id: NonEmptyStr
+    validation_id: MachineId
     kind: DirectorBeatKind
     actor_id: NonEmptyStr
     target_location_id: NonEmptyStr
@@ -481,10 +394,8 @@ class CommittedDirectorBeat(ProtocolModel):
 
 
 class CommittedLocalCanon(ProtocolModel):
-    """One admitted generative fact included in the surrounding turn commit."""
-
-    proposal_id: NonEmptyStr
-    validation_id: NonEmptyStr
+    proposal_id: MachineId
+    validation_id: MachineId
     kind: LocalCanonKind
     entity_id: MachineId
     archetype_id: MachineId
@@ -495,49 +406,45 @@ class CommittedLocalCanon(ProtocolModel):
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
 
-class CommittedOutcome(ProtocolModel):
-    """Actual world result; the only payload that result narration may trust."""
+class CommittedTurn(ProtocolModel):
+    """Provider-neutral record of truth after one successful atomic commit."""
 
-    outcome_id: NonEmptyStr
-    plan_id: NonEmptyStr
-    validation_id: NonEmptyStr
+    commit_id: MachineId = Field(default_factory=lambda: new_protocol_id("commit"))
+    batch_id: MachineId
     turn_no: NonNegativeInt
     state_revision_before: NonNegativeInt
     state_revision_after: NonNegativeInt
     scene_before: NonEmptyStr
     scene_after: NonEmptyStr
-    result_tier: NonEmptyStr
-    primary_goal_status: PrimaryGoalStatus = "unverified"
-    cost_only: bool = False
-    resolution_sources: tuple[MachineId, ...] = ()
-    accepted_step_indices: tuple[NonNegativeInt, ...] = ()
+    narrative: NonEmptyStr
     committed_changes: tuple[CommittedChange, ...] = ()
     director_beats: tuple[CommittedDirectorBeat, ...] = ()
     local_canon: tuple[CommittedLocalCanon, ...] = ()
-    fired_storylets: tuple[NonEmptyStr, ...] = ()
-    world_events: tuple[NonEmptyStr, ...] = ()
+    anchor_ids: tuple[MachineId, ...] = ()
     new_facts: tuple[NonEmptyStr, ...] = ()
-    rejected_effects: tuple[ValidationIssue, ...] = ()
     ending: NonEmptyStr | None = None
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
     @model_validator(mode="after")
     def revisions_are_monotonic(self):
-        if self.state_revision_after < self.state_revision_before:
-            raise ValueError("state_revision_after must be >= state_revision_before")
-        _ensure_unique(
-            [str(index) for index in self.accepted_step_indices],
-            "accepted_step_indices",
-        )
-        _ensure_unique(list(self.resolution_sources), "resolution_sources")
+        if self.state_revision_after <= self.state_revision_before:
+            raise ValueError("a committed turn must advance state_revision")
+        _ensure_unique(list(self.anchor_ids), "anchor_ids")
+        _ensure_unique(list(self.new_facts), "new_facts")
         return self
 
 
-def action_plan_json_schema() -> dict[str, Any]:
-    """Provider-neutral JSON Schema for structured ActionPlan generation."""
-    return copy.deepcopy(ActionPlan.model_json_schema())
+def fact_batch_json_schema() -> dict[str, Any]:
+    return copy.deepcopy(FactBatch.model_json_schema())
 
 
-def suggested_action_draft_json_schema() -> dict[str, Any]:
-    """Provider-neutral schema for one unvalidated suggestion card."""
-    return copy.deepcopy(SuggestedActionDraft.model_json_schema())
+def suggested_action_json_schema() -> dict[str, Any]:
+    return copy.deepcopy(SuggestedAction.model_json_schema())
+
+
+def director_plan_json_schema() -> dict[str, Any]:
+    return copy.deepcopy(DirectorPlan.model_json_schema())
+
+
+def npc_turn_json_schema() -> dict[str, Any]:
+    return copy.deepcopy(NpcTurn.model_json_schema())

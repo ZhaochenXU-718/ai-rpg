@@ -37,7 +37,7 @@
 → 玩家继续、撤回修改或从提交点创建分支
 ```
 
-> 原"终局形态总图"（docs/assets/final-architecture.svg）描绘的是 pre-pivot 管线，待重绘。
+> [终局形态总图](docs/assets/final-architecture.svg) 已按叙事优先管线重绘：自由生成之后必须经过事实抽取、铁律校验与原子提交，才能进入权威状态。
 
 ## 三大核心模块
 
@@ -84,15 +84,21 @@
 
 不再提交：意图菜单、数值白名单（`resolution_limits`）、物品请求策略、普通行动 storylet、逐意图报价配置。
 
-## 现状对照（2026-07-14 转向起点）
+## 现状对照（2026-07-15，Phase 1 批次 C 完成）
 
 **继承自 pre-pivot 分支的可复用资产**：确定性账本与原子提交、感知墙、内存 checkpoint / 撤回 / 状态分支、trace、提案卡（`ideas` / `idea <n>`）、Local Canon 准入（原型 / 预算 / 命名 / 冲突检查）、DirectorBeat 骨架、内容校验器、DeepSeek / mock provider 层、开放场景夹具。
 
-**待拆除**：报价与逐意图风险配置、静态能力路由、`resolution_limits` 数值裁剪、`social.request_item`、数值软状态、意图协议面（ActionPlan 路由语义）。完整的保留 / 改造 / 拆除清单见 [dev-notes-v2/2026-07-14.md](dev-notes-v2/2026-07-14.md)。
+**批次 A 已完成**：活动故事与开放夹具已切换为 `narrative_first` 内容档案，移除 `intents`、`resolution_limits`、`quote_warnings`、物品 `request_policy` 与场景 `suggested_intents`；数值 rapport 改为定性初始关系；普通行动 storylet 退役，只保留事实锚点。《午夜前的档案室》标记为 `pre_pivot_archive` 历史样本。
+
+**批次 B 已完成**：活动运行时删除报价、逐意图风险配置、静态能力路由、数值裁剪、`social.request_item`、旧 LLM 循环和结构化 walkthrough 执行器；`session` / `resolver` 收缩为 `FactBatch` 原子提交缝、事实锚点扫描、Director / Local Canon、checkpoint / 撤回 / 分支。CLI 现在只接受自然语言或可编辑提案卡，并保留 `facts`、`undo`、`timeline` 等状态工具。归档内容可校验，但不能启动新会话。
+
+**批次 C 已完成**：协议面升级为叙事优先 0.2，删除 `ActionPlan`、capability action、旧 `ValidationResult` 与计划 prompt；provider 原生提供散文、轻量提案卡和 `DirectorPlan`。`FactBatch` 成为带 `state_revision` 的正式提交协议，陈旧批次会被拒绝；感知接口扩展为玩家 / NPC 多主体快照，NPC 私有动机、口吻、关系与秘密不会进入玩家 prompt。作者契约、内容 schema、引擎原则、状态时间线、提案卡 / Director 文档和总图已同步，协议见 [narrative-first-protocol](docs/narrative-first-protocol.md)。
+
+**当前诚实边界**：协议收敛不等于 Phase 2 已完成。CLI 的普通散文回合仍不写入移动、关键物品、秘密披露或人物承诺；`FactBatch` 目前由可信内部路径构造，尚未接入“散文事实抽取 → 代码级铁律冲突检查 → 有限重生成”。多主体感知已为 NPC agent 预留正确输入边界，但 NPC 独立回合与长期私有记忆也尚未实现。
 
 **演进顺序**：
 
-1. **拆除机械判定面**：按处置清单删除报价 / 数值裁剪 / 能力路由 / 请求策略 / 意图面，CLI 收敛为自然语言 + 提案卡，样板故事重定基线，全量测试保持绿色；
+1. **拆除机械判定面（已完成）**：按处置清单删除报价 / 数值裁剪 / 能力路由 / 请求策略 / 意图面，CLI 收敛为自然语言 + 提案卡，样板故事重定基线，全量测试保持绿色；
 2. **铁律账本 + 后验校验最小循环**：事实抽取协议 + 代码级冲突检查 + 重生成上限，在开放夹具上跑通；
 3. **Director v2**：每回合场景编排与锚点推进（替代保守的节拍调度员）；
 4. **NPC agent**：动机 + 私有记忆 + 承诺清单——验收用例：试玩中"周师傅的帆布承诺"必须被兑现或明确爽约；
@@ -113,6 +119,9 @@
 | 2026-07-14 | v0.4 | 将 Director Beat 接入提交后候选生成、确定性复验和同回合 checkpoint；新增无普通 storylet 的开放场景回归 |
 | 2026-07-14 | v0.5 | 实现最小 Local Canon：`generation` 生成边界 schema、`local_canon` 权限层、Director 提议通道与准入 / 预算 / 过期 / 分支回滚；演进顺序第 5 项完成 |
 | 2026-07-14 | v0.6 | **叙事优先转向**（`pivot/narrative-first` 分支）：前验路由改为后验铁律校验；核心模块重排为导演 / 记忆 / NPC agent；数值软状态退役为定性事实；机械判定收缩到铁律清单，报价 / 能力路由 / 数值裁剪待拆除 |
+| 2026-07-15 | v0.7 | 完成 Phase 1 批次 A：活动内容移除退役机械字段，rapport 定性化，普通行动 storylet 收缩为事实锚点；《午夜前的档案室》封存为 pre-pivot 历史样本 |
+| 2026-07-15 | v0.8 | 完成 Phase 1 批次 B：删除旧机械行动运行时与 walkthrough 执行器；建立叙事优先 `FactBatch` 提交缝，CLI 收敛为自然语言 / 可编辑提案卡 / 状态时间线；保留并重接 Director、Local Canon、感知墙与 checkpoint |
+| 2026-07-15 | v0.9 | 完成 Phase 1 批次 C：删除旧计划协议与 prompt，建立叙事优先 0.2 协议、原生 provider 接口、带 revision 的 `FactBatch` 和多主体感知；同步当前契约文档与终局总图 |
 
 ## 快速开始
 
@@ -120,13 +129,14 @@
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 游玩（LLM 模式需要 DEEPSEEK_API_KEY；输入自然语言，或 ideas / idea <n> 使用提案卡）
-python server/cli.py --llm deepseek   # 未指定故事时从 content 目录选择
+# 无外部模型的叙事优先 CLI 冒烟
+python server/cli.py content/rooftop_supper.yaml --llm mock
+# 使用 DeepSeek 生成散文（需设置 DEEPSEEK_API_KEY）
 python server/cli.py content/rooftop_supper.yaml --llm deepseek
-# 校验内容
+# 校验叙事优先内容
 python tools/validate_content.py content/rooftop_supper.yaml
 # 测试
 python -m pytest tests/ -q
 ```
 
-> 注：仓库当前处于转向的第 1 阶段（拆除机械判定面）之前，运行时仍是 pre-pivot 管线；上述命令均可用，但报价、意图等机械面将按处置清单逐步移除。
+> 注：仓库当前完成了转向第 1 阶段的批次 A / B / C。活动内容已能进入叙事优先 CLI，但普通回合在 Phase 2 前只提交散文与已声明的事实锚点，不会伪造铁律事实。《午夜前的档案室》只作为 `pre_pivot_archive` 内容校验样本保留，CLI 会拒绝启动它；完整旧运行时请查看历史分支。

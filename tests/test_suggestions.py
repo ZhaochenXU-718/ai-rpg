@@ -4,13 +4,10 @@ import unittest
 from pathlib import Path
 
 from server.engine.content import Story
-from server.engine.llm import HeuristicMockProvider
-from server.engine.llm_loop import commit_action
+from server.engine.llm import HeuristicMockProvider, ScriptedProvider
+from server.engine.llm_protocol import SuggestedAction
 from server.engine.session import GameSession, SessionError
-from server.engine.suggestions import (
-    generate_action_suggestions,
-    prepare_suggested_action,
-)
+from server.engine.suggestions import generate_action_suggestions, prepare_suggested_action
 from server.engine.trace import TraceRecorder
 
 
@@ -20,70 +17,61 @@ STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
 
 class SuggestedActionsTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.story = Story.load(STORY_PATH)
-        self.session = GameSession(self.story, log_dir=None)
+        self.session = GameSession(Story.load(STORY_PATH), log_dir=None)
         self.provider = HeuristicMockProvider()
         self.recorder = TraceRecorder(None, self.session.session_id)
-        self.session.resolve(
-            intent_id="talk",
-            objects=["aunt_chen"],
-            generic_patch={"aunt_chen.rapport": 1},
-        )
-        self.session.resolve(intent_id="move", objects=["convenience_store"])
 
-    def test_generation_exposes_only_distinct_validated_cards(self) -> None:
+    def test_cards_are_distinct_editable_prose_not_frozen_plans(self) -> None:
         suggestions = generate_action_suggestions(
             self.session, self.provider, self.recorder
         )
-
         self.assertGreaterEqual(len(suggestions.actions), 3)
         self.assertLessEqual(len(suggestions.actions), 5)
+        self.assertEqual(suggestions.perception_revision, self.session.state_revision)
         self.assertEqual(
-            suggestions.perception_revision,
-            self.session.state_revision,
+            len({action.action_text for action in suggestions.actions}),
+            len(suggestions.actions),
         )
-        signatures = {
-            (
-                action.plan.steps[0].tool_id,
-                str(action.plan.steps[0].arguments),
-            )
-            for action in suggestions.actions
-        }
-        self.assertEqual(len(signatures), len(suggestions.actions))
-        self.assertTrue(all(
-            action.validation.can_execute for action in suggestions.actions
-        ))
+        self.assertTrue(all(not hasattr(action, "plan") for action in suggestions.actions))
+        self.assertTrue(all(not hasattr(action, "validation") for action in suggestions.actions))
 
-    def test_selecting_card_executes_its_frozen_plan_without_reinterpretation(self) -> None:
+    def test_exit_card_discloses_possible_position_touch(self) -> None:
         suggestions = generate_action_suggestions(
             self.session, self.provider, self.recorder
         )
-        request_card = next(
-            action
-            for action in suggestions.actions
-            if action.plan.steps[0].tool_id == "social.request_item"
+        movement = next(
+            action for action in suggestions.actions
+            if "人物位置" in action.expected_iron_law_touches
         )
+        self.assertIn("动身", movement.action_text)
 
-        loop_result = prepare_suggested_action(self.session, request_card)
-        self.assertEqual(loop_result.plan, request_card.plan)
-        self.assertFalse(loop_result.confirmation_required)
-        outcome = commit_action(self.session, loop_result, self.recorder)
-
-        self.assertEqual(
-            self.session.state["item_locations"]["picnic_mat"],
-            {"type": "carried_by", "id": "player"},
-        )
-        self.assertEqual(outcome.primary_goal_status, "achieved")
-
-    def test_cards_expire_after_any_state_revision_change(self) -> None:
+    def test_selection_returns_editable_action_text_and_cards_expire(self) -> None:
         suggestions = generate_action_suggestions(
             self.session, self.provider, self.recorder
         )
-        old_card = suggestions.actions[0]
-        self.session.resolve(intent_id="observe", objects=["order_map"])
+        card = suggestions.actions[0]
+        self.assertEqual(prepare_suggested_action(self.session, card), card.action_text)
 
+        self.session.commit_narrative("我先看看。", "你停下来观察四周。")
         with self.assertRaisesRegex(SessionError, "已经过期"):
-            prepare_suggested_action(self.session, old_card)
+            prepare_suggested_action(self.session, card)
+
+    def test_stale_provider_card_is_not_rewrapped_as_current(self) -> None:
+        stale_text = "我采用一张基于陈旧世界视图的卡片。"
+        provider = ScriptedProvider(suggestion_batches=[(SuggestedAction(
+            suggestion_id="suggestion_stale",
+            perception_revision=self.session.state_revision + 1,
+            title="陈旧卡片",
+            action_text=stale_text,
+            focus="cautious",
+            rationale="测试陈旧 revision。",
+        ),)])
+        suggestions = generate_action_suggestions(
+            self.session, provider, self.recorder
+        )
+        self.assertNotIn(stale_text, {
+            action.action_text for action in suggestions.actions
+        })
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 # ISEKAI ZERO 竞品分析与 AIRPG 方向评估
 
 日期：2026-07-14  
-状态：产品与架构方向讨论稿
+状态：产品与架构方向讨论稿（转向前诊断快照）
+
+> 本文保留 2026-07-14 做出叙事优先转向时的竞品证据与问题诊断。第 5 节的“当前形态”和部分实施建议描述的是 pre-pivot 代码，已由 Phase 1 批次 A / B / C 拆除；当前架构与协议请以 [`README.md`](../README.md) 和 [`narrative-first-protocol.md`](narrative-first-protocol.md) 为准。
 
 ## 0. 执行摘要
 
@@ -244,7 +246,7 @@ AIRPG 当前的目标循环是：
 
 相关实现：
 
-- [`capabilities.py`](../server/engine/capabilities.py) 只接受 Soft State 提议；
+- 已退役的 `capabilities.py` 当时只接受 Soft State 提议；
 - [`resolver.py`](../server/engine/resolver.py) 仍以 intent、对象和 storylet 作为主要执行表面；
 - [`engine-principles.md`](engine-principles.md) 明确规定未预写尝试只能产生时间与软代价，Canon 不动。
 
@@ -570,9 +572,8 @@ AIRPG 已经在确定性裁决、感知墙、状态权限和原子提交上建�
 
 - [`README.md`](../README.md)
 - [`engine-principles.md`](engine-principles.md)
-- [`llm-action-plan-protocol.md`](llm-action-plan-protocol.md)
+- [`narrative-first-protocol.md`](narrative-first-protocol.md)
 - [`content-schema.md`](content-schema.md)
-- [`server/engine/capabilities.py`](../server/engine/capabilities.py)
 - [`server/engine/resolver.py`](../server/engine/resolver.py)
 - [`server/engine/perception.py`](../server/engine/perception.py)
 - [`server/engine/narration.py`](../server/engine/narration.py)

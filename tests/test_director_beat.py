@@ -5,12 +5,12 @@ from pathlib import Path
 
 from server.engine.content import Story
 from server.engine.director import validate_director_beat
-from server.engine.llm import ScriptedProvider
+from server.engine.llm import DirectorResponse, ScriptedProvider
 from server.engine.llm_protocol import (
-    ActionPlan,
-    CapabilityAction,
     DirectorBeat,
     DirectorBeatKind,
+    DirectorPlan,
+    FactBatch,
 )
 from server.engine.session import GameSession
 from server.engine.state import build_initial_state
@@ -44,30 +44,16 @@ class DirectorBeatValidationTest(unittest.TestCase):
         self.story = Story.load(STORY_PATH)
         self.state = build_initial_state(self.story.data)
 
-    def test_authored_present_character_may_react(self) -> None:
+    def test_present_character_may_react(self) -> None:
         result = validate_director_beat(
             self.story,
             self.state,
             beat("aunt_chen", DirectorBeatKind.REACT, "building_lobby"),
             state_revision=0,
         )
-
         self.assertTrue(result.can_schedule)
-        self.assertFalse(result.issues)
 
-        environment_result = validate_director_beat(
-            self.story,
-            self.state,
-            beat(
-                "aunt_chen",
-                DirectorBeatKind.REACT,
-                "building_lobby",
-            ).model_copy(update={"target_ids": ("notice_board",)}),
-            state_revision=0,
-        )
-        self.assertTrue(environment_result.can_schedule)
-
-    def test_authored_adjacent_character_may_be_proposed_for_entry(self) -> None:
+    def test_adjacent_authored_character_may_enter(self) -> None:
         self.state["positions"]["player"] = "convenience_store"
         result = validate_director_beat(
             self.story,
@@ -75,41 +61,23 @@ class DirectorBeatValidationTest(unittest.TestCase):
             beat("aunt_chen", DirectorBeatKind.ENTER_SCENE, "convenience_store"),
             state_revision=0,
         )
-
         self.assertTrue(result.can_schedule)
 
-    def test_unknown_actor_cannot_be_created_by_a_beat(self) -> None:
-        result = validate_director_beat(
+    def test_unknown_actor_and_stale_revision_are_rejected(self) -> None:
+        unknown = validate_director_beat(
             self.story,
             self.state,
             beat("invented_mentor", DirectorBeatKind.ENTER_SCENE, "building_lobby"),
             state_revision=0,
         )
-
-        self.assertFalse(result.can_schedule)
-        self.assertIn(
-            "director.actor_not_authored",
-            {issue.code for issue in result.issues},
-        )
-
-    def test_stale_beat_is_rejected(self) -> None:
-        result = validate_director_beat(
+        stale = validate_director_beat(
             self.story,
             self.state,
-            beat(
-                "aunt_chen",
-                DirectorBeatKind.REACT,
-                "building_lobby",
-                revision=2,
-            ),
+            beat("aunt_chen", DirectorBeatKind.REACT, "building_lobby", revision=2),
             state_revision=3,
         )
-
-        self.assertFalse(result.can_schedule)
-        self.assertIn(
-            "director.stale_beat",
-            {issue.code for issue in result.issues},
-        )
+        self.assertIn("director.actor_not_authored", {i.code for i in unknown.issues})
+        self.assertIn("director.stale_beat", {i.code for i in stale.issues})
 
     def test_actor_cannot_move_twice_in_one_commit(self) -> None:
         self.state["positions"]["player"] = "convenience_store"
@@ -120,134 +88,89 @@ class DirectorBeatValidationTest(unittest.TestCase):
             state_revision=0,
             moved_actor_ids={"aunt_chen"},
         )
-
-        self.assertFalse(result.can_schedule)
-        self.assertIn(
-            "director.actor_already_moved",
-            {issue.code for issue in result.issues},
-        )
+        self.assertIn("director.actor_already_moved", {i.code for i in result.issues})
 
 
 class DirectorBeatCommitTest(unittest.TestCase):
     def setUp(self) -> None:
         self.story = Story.load(STORY_PATH)
         self.session = GameSession(self.story, log_dir=None)
-        self.session.resolve(intent_id="move", objects=["convenience_store"])
 
-    def observe_plan(self) -> ActionPlan:
-        text = "我看了看冰柜里的冷饮。"
-        return ActionPlan(
-            plan_id="plan_observe_cold_drinks",
-            perception_revision=self.session.state_revision,
-            player_text=text,
-            interpretation="观察便利店冰柜里的冷饮。",
-            goal="inspect_cold_drinks",
-            intent_id="observe",
-            steps=(CapabilityAction(
-                capability="intent",
-                action="observe",
-                arguments={"objects": ["cold_drinks"]},
-                purpose="观察冷饮",
-            ),),
-            references=("cold_drinks",),
+    def move_batch(self) -> FactBatch:
+        return FactBatch(
+            state_revision=self.session.state_revision,
+            player_text="我走进便利店。",
+            narrative="你穿过门帘走进便利店。",
+            state_changes={"positions.player": "convenience_store"},
         )
 
-    def test_entry_beat_is_part_of_the_same_checkpoint_and_outcome(self) -> None:
-        plan = self.observe_plan()
-        validation = self.session.validate_plan(plan)
+    def test_entry_beat_is_in_the_same_checkpoint(self) -> None:
         scheduled = beat(
             "aunt_chen",
             DirectorBeatKind.ENTER_SCENE,
             "convenience_store",
-            revision=self.session.state_revision + 1,
+            revision=1,
         )
-        provider = ScriptedProvider(
-            [],
-            director_batches=[(scheduled,)],
-        )
-        checkpoint_count = len(self.session.checkpoint_history())
-
-        outcome = self.session.resolve_plan(
-            plan,
-            validation,
-            director_provider=provider,
+        result = self.session.commit_fact_batch(
+            self.move_batch(),
+            director_provider=ScriptedProvider([], director_batches=[(scheduled,)]),
         )
 
-        self.assertEqual(
-            self.session.state["positions"]["aunt_chen"],
-            "convenience_store",
-        )
-        self.assertEqual(len(outcome.director_beats), 1)
+        self.assertEqual(self.session.state["positions"]["aunt_chen"], "convenience_store")
+        self.assertEqual(result.director_beats[0].actor_id, "aunt_chen")
         self.assertIn(
             f"director.{scheduled.beat_id}",
-            outcome.world_events,
+            result.change_sources,
         )
-        self.assertTrue(any(
-            change.path == "positions.aunt_chen"
-            and change.source == f"director.{scheduled.beat_id}"
-            for change in outcome.committed_changes
-        ))
-        self.assertEqual(
-            len(self.session.checkpoint_history()),
-            checkpoint_count + 1,
-        )
+        self.assertEqual(len(self.session.checkpoint_history()), 2)
 
         self.session.undo()
-        self.assertEqual(
-            self.session.state["positions"]["player"],
-            "convenience_store",
-        )
-        self.assertEqual(
-            self.session.state["positions"]["aunt_chen"],
-            "building_lobby",
-        )
+        self.assertEqual(self.session.state["positions"]["player"], "building_lobby")
+        self.assertEqual(self.session.state["positions"]["aunt_chen"], "building_lobby")
 
-    def test_invalid_director_beat_does_not_cancel_the_player_action(self) -> None:
-        plan = self.observe_plan()
-        validation = self.session.validate_plan(plan)
+    def test_invalid_beat_does_not_cancel_fact_commit(self) -> None:
         invalid = beat(
             "invented_mentor",
             DirectorBeatKind.ENTER_SCENE,
             "convenience_store",
-            revision=self.session.state_revision + 1,
+            revision=1,
         )
-        provider = ScriptedProvider([], director_batches=[(invalid,)])
-
-        outcome = self.session.resolve_plan(
-            plan,
-            validation,
-            director_provider=provider,
+        result = self.session.commit_fact_batch(
+            self.move_batch(),
+            director_provider=ScriptedProvider([], director_batches=[(invalid,)]),
         )
+        self.assertEqual(self.session.state["positions"]["player"], "convenience_store")
+        self.assertEqual(result.director_beats, [])
+        self.assertTrue(result.director_trace["rejected"])
 
-        self.assertEqual(outcome.turn_no, 2)
-        self.assertFalse(outcome.director_beats)
-        self.assertTrue(self.session.last_result.director_trace["rejected"])
-        self.assertNotIn("invented_mentor", self.session.state["positions"])
-
-    def test_director_provider_failure_does_not_strand_the_player_commit(self) -> None:
+    def test_provider_failure_does_not_strand_fact_commit(self) -> None:
         class FailingDirectorProvider(ScriptedProvider):
-            def propose_director_beats(self, request):
+            def propose_director(self, request):
                 raise RuntimeError("temporary network failure")
 
-        plan = self.observe_plan()
-        validation = self.session.validate_plan(plan)
-        checkpoint_count = len(self.session.checkpoint_history())
-
-        outcome = self.session.resolve_plan(
-            plan,
-            validation,
+        result = self.session.commit_fact_batch(
+            self.move_batch(),
             director_provider=FailingDirectorProvider([]),
         )
+        self.assertEqual(self.session.state_revision, 1)
+        self.assertEqual(self.session.state["positions"]["player"], "convenience_store")
+        self.assertIn("temporary network failure", result.director_trace["error"])
 
-        self.assertEqual(outcome.turn_no, 2)
-        self.assertEqual(self.session.state_revision, 2)
-        self.assertEqual(
-            len(self.session.checkpoint_history()),
-            checkpoint_count + 1,
+    def test_stale_plan_envelope_is_rejected_without_canceling_commit(self) -> None:
+        class StaleDirectorProvider(ScriptedProvider):
+            def propose_director(self, request):
+                plan = DirectorPlan(state_revision=request.state_revision - 1)
+                return DirectorResponse(plan=plan, raw="{}", model="stale-test")
+
+        result = self.session.commit_fact_batch(
+            self.move_batch(),
+            director_provider=StaleDirectorProvider([]),
         )
-        self.assertIn(
-            "temporary network failure",
-            self.session.last_result.director_trace["error"],
+        self.assertEqual(self.session.state_revision, 1)
+        self.assertEqual(self.session.state["positions"]["player"], "convenience_store")
+        self.assertEqual(
+            result.director_trace["rejected"][0]["issues"][0]["code"],
+            "director.stale_plan",
         )
 
 

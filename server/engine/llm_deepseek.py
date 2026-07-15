@@ -1,16 +1,4 @@
-"""DeepSeek provider for action plans, suggestions, narration and Director beats.
-
-DeepSeek exposes an OpenAI-compatible API (https://api-docs.deepseek.com)
-with JSON output mode, so the transport is the ``openai`` SDK pointed at
-``https://api.deepseek.com``.  Known JSON-mode caveats handled here: the
-prompt must contain the word "json", the API occasionally returns empty
-content, and the model may wrap output in code fences — one repair round
-retries with the parse error before giving up.
-
-The provider only builds prompts and parses plans.  Perception filtering,
-validation, clamping and commit stay in the engine; a hallucinated entity
-or oversized proposal is rejected downstream like any other bad plan.
-"""
+"""DeepSeek implementation of the narrative-first provider surface."""
 
 from __future__ import annotations
 
@@ -27,183 +15,116 @@ from .llm import (
     LLMProviderError,
     NarrativeRequest,
     NarrativeResponse,
-    PlanRequest,
-    PlanResponse,
     SuggestionRequest,
     SuggestionResponse,
 )
 from .llm_protocol import (
     GENERATED_ENTITY_PREFIX,
-    ActionPlan,
-    CapabilityAction,
     DirectorBeat,
+    DirectorPlan,
     LocalCanonProposal,
-    RiskProposal,
-    StateChangeProposal,
-    SuggestedActionDraft,
+    SuggestedAction,
     new_protocol_id,
 )
 
+
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-# deepseek-chat / deepseek-reasoner are deprecated on 2026-07-24; flash is
-# the fast non-thinking tier, right for per-turn understanding latency.
 DEFAULT_MODEL = "deepseek-v4-flash"
-PROMPT_VERSION = "deepseek-plan-v1"
-SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v1"
-DIRECTOR_PROMPT_VERSION = "deepseek-director-v2"
+NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v2"
+SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v2"
+DIRECTOR_PROMPT_VERSION = "deepseek-director-v3"
 MAX_REPAIR_ROUNDS = 1
 
-# Transport: (messages, options) -> (content, usage). Injectable for tests.
-Transport = Callable[[list[dict[str, str]], dict[str, Any]], tuple[str, dict[str, Any]]]
-
-SYSTEM_PROMPT = """\
-你是互动叙事游戏中的行动理解器。玩家用自然语言描述行动方案，你把它转成一个 json 行动计划（ActionPlan）。你不是裁判：计划能否执行、产生什么后果由游戏引擎判定。
-
-硬性规则：
-1. 只能引用【感知快照】中出现的实体 ID、意图和工具。玩家看不到的东西，你也不知道。
-2. steps 恰好一个元素，必须从 capability_tools 复制 capability/action，并让 arguments 符合该工具的 arguments_schema。
-3. 优先使用能直接表达玩家目标的专用能力，例如“向某人请求物品”应使用 social.request_item，而不是降级成 talk。只有没有专用能力时才从 available_intents 选择 intent 工具；"custom" 是最后手段。
-4. proposed_changes 只能提议【可提议状态空间】patchable 里列出的路径：authority 一律 "soft_state"；数字用 operation "increment" 且幅度不超过该路径的 max_step，枚举值用 "set"。确定性能力（例如 social.request_item）的物品转移由引擎裁决，不得由模型提议。
-5. 以下情况输出 needs_clarification=true、steps=[]，并在 clarification_question 里用世界内的口吻向玩家解释或提问：
-   - 方案违反【世界边界】（例如凭空造物、离开被封锁的区域）——解释为什么行不通；
-   - 目标或做法无法从文本中确定——问清楚。
-6. 若有【上一轮验证反馈】，据此修正计划，不要重复同样的错误。
-7. interpretation 用一两句话复述你对玩家意图的理解，玩家会据此确认；risks 用世界内语言描述可能的代价。
-8. 只输出一个 json 对象，不要输出任何其它文本。
-
-输出 json 格式：
-{
-  "interpretation": "对玩家意图的复述",
-  "goal": "机器可读短目标，小写下划线",
-  "intent_id": "所选意图 ID",
-  "steps": [{"capability": "...", "action": "...", "arguments": {}, "purpose": "..."}],
-  "references": ["涉及的实体 ID"],
-  "proposed_changes": [{"path": "...", "operation": "increment", "value": 1, "authority": "soft_state", "reason": "..."}],
-  "risks": [{"description": "...", "likelihood": "unlikely|possible|likely|certain"}],
-  "assumptions": ["计划依赖但未证实的判断"],
-  "confidence": 0.8,
-  "needs_clarification": false,
-  "clarification_question": null
-}
-"""
+Transport = Callable[
+    [list[dict[str, str]], dict[str, Any]],
+    tuple[str, dict[str, Any]],
+]
 
 
 RENDER_SYSTEM_PROMPT = """\
-你是互动叙事游戏的旁白。根据【事实清单】把刚发生的一回合写成叙事文本。
+你是互动叙事游戏的旁白。根据【事实清单】写出刚发生的一回合。
 
 硬性规则：
-1. 只能陈述事实清单里出现的事情，不得发明新的物品、人物、空间结构或事件。
-2. 不得暗示或剧透事实清单之外的信息（未发现的秘密、他人的位置、结局走向）。
-3. 若清单标注"本回合无预设事件"或"行动未执行"，如实写出尝试与落空，不得虚构成功或新发现。
-4. 严格区分"玩家行动回应提示"、"世界节拍提示"和"世界反应提示"；世界节拍不是玩家行动直接造成的，不得写成玩家行动的成功结果。
-5. "过去回合发生"只能作为背景，不能写成当前仍在发生；行动目标的位置描述必须服从事实清单。
-6. 第二人称"你"，2-4 句，遵循【文风约束】；不要提及规则、数值或系统。
-7. 只输出叙事文本本身。
+1. 只能陈述事实清单中的人物、物品、地点与事件，不得补写未提供的秘密或结果。
+2. 若清单只允许描写“正在尝试”，不得宣告移动完成、物品转移、秘密披露、人物承诺、生死变化或锚点推进。
+3. 近期叙事只能作为背景，不得写成当前仍在发生。
+4. 服从给定视角与文风；玩家视角使用第二人称“你”。
+5. 输出 2-4 句连贯散文，不提协议、规则、阶段、数值或系统。
+6. 只输出叙事文本本身。
 """
 
 
 SUGGESTION_SYSTEM_PROMPT = """\
-你是互动叙事游戏的行动提案器。根据玩家当前可见信息生成 3-5 张不同侧重点的玩家行动卡，并输出 json。
+你是互动叙事游戏的行动提案器。根据当前感知快照生成不同侧重点的可编辑行动卡，并输出 json。
 
 硬性规则：
-1. 只能引用感知快照里的实体和 capability_tools；每张卡恰好使用一个工具，arguments 必须符合该工具 schema。
-2. 卡片只描述玩家准备说什么或做什么，不保证尚未裁决的结果，不泄露具体隐藏物品、秘密或人物位置。
-3. 不得创造新人物。人物进场和世界事件属于 Director Beat，不得伪装成玩家行动卡。
-4. action_text 是可直接执行的第一人称行动或对白；plan.player_text 必须与其完全相同。
-5. 每张卡应在工具、目标或侧重点上有实质差异；自由输入始终与卡片等价。
-6. proposed_changes 只允许 soft_state；social.request_item 等确定性能力不要自行提议物品转移。
-7. 只输出 {"suggestions": [...]}，不要输出其它文本。
+1. 只能引用感知快照中可见的人物、物品、环境和出口；不得利用隐藏事实。
+2. 卡片只写玩家准备说什么或做什么，不保证尚未提交的结果。
+3. 不得创建人物、替 NPC 作承诺、宣告获得物品、抵达地点或披露秘密。
+4. action_text 使用第一人称自然语言，可由玩家直接采用或任意改写。
+5. 卡片之间应在目标、方式或侧重点上有实质差异；没有合适卡片时宁可少给。
+6. 不得输出 plan、steps、capability、intent、状态 patch 或验证结果。
+7. 只输出 {"suggestions": [...]}。
 
 单张卡格式：
 {
   "title": "短标题",
   "action_text": "我……",
   "focus": "practical|social|investigate|cautious|creative",
-  "rationale": "这一提案的侧重点",
-  "plan": {
-    "interpretation": "对行动的复述",
-    "goal": "机器可读短目标",
-    "steps": [{"capability": "...", "action": "...", "arguments": {}, "purpose": "..."}],
-    "references": [],
-    "proposed_changes": [],
-    "risks": [],
-    "assumptions": [],
-    "confidence": 0.8
-  }
+  "rationale": "为什么这个提案适合当前可见局面"
 }
 """
 
 
 DIRECTOR_SYSTEM_PROMPT = """\
-你是互动叙事游戏的 Director。玩家行动和确定性世界规则已经执行完毕；你只能从候选列表中选择 0-2 个既有人物，为同一次提交补充一个克制的进场、反应或计划节拍，并输出 json。
+你是互动叙事游戏的 Director。读取已提交回合、人物候选与生成边界，提出一个非权威 DirectorPlan，并输出 json。
 
 硬性规则：
-1. 只能使用【候选人物】里的 actor_id，不得创造、改名或暗示任何新人物。
+1. beats 只能使用候选列表中的 actor_id；不得创建、改名或暗示新人物。
 2. status=present 的人物只能 react 或 advance_plan；status=adjacent 且 can_enter=true 的人物才可 enter_scene。
-3. target_location_id 必须等于当前地点；target_ids 只能引用输入中的 player_id、玩家行动目标或候选人物。
-4. summary 只能描述当前可见的动作、神态、短对白或人物进场，不得发明物品、伤害、关系变化、秘密披露、任务完成或其他机械结果。
-5. 人物行为应符合其 motivation、role 和当前局势。没有必要的介入就返回空 beats；不要为了热闹强行让人物说话或进场。
-6. 每个人物最多一个节拍。你不是裁判，不能改变玩家行动结果。
-7. 只输出 {"beats": [...], "local_canon": [...]}，不要输出其它文本；没有内容的数组留空。
+3. target_location_id 必须是当前地点；target_ids 只能引用输入已有 ID。
+4. summary 只描述可见动作、神态、短对白或进场，不得擅自改变物品、秘密、承诺、关系、任务或玩家行动结果。
+5. 每个人物最多一个节拍；没有必要就返回空 beats。
+6. local_canon 仅在输入明确给出生成边界且预算有余量时可提议，最多一条；只能使用声明的原型，禁止创建人物。
+7. 只输出 {"beats": [...], "local_canon": [...]}。
 
-单个节拍格式：
+单个节拍：
 {
   "kind": "enter_scene|react|advance_plan",
   "actor_id": "候选人物 ID",
   "target_location_id": "当前地点 ID",
   "target_ids": ["已有目标 ID"],
   "summary": "玩家可见的克制节拍",
-  "motivation": "该节拍如何服从人物既有动机"
+  "motivation": "如何服从人物既有动机"
 }
 
-关于 local_canon（生成式局部事实）：
-1. 仅当输入包含【生成边界】且其中预算有剩余时，才可以提议；否则 local_canon 必须为空数组。
-2. 只能使用【生成边界】列出的 archetype_id；kind 只能是 location 或 situation。禁止创造人物——重要人物只能来自作者角色池。
-3. entity_id 必须以 gen_ 开头且全新；name 不得与任何既有人物、物品、地点重名。
-4. parent_location_id 必须是作者定义的地点，且在原型允许范围内；situation 的持续回合不得超过原型上限。
-5. description 是玩家将看到的事实描述，不得泄露秘密、不得宣称机械结果（不能替玩家获得物品或改变数值）。
-6. 每次最多提议 1 条，且只在它让当前场景明显更可信、可玩时才提议；宁缺毋滥。
-
-单条 local_canon 格式：
+单条 local_canon：
 {
   "kind": "location|situation",
   "archetype_id": "生成边界中的原型 ID",
   "entity_id": "gen_ 开头的新 ID",
   "name": "简短名称",
-  "description": "玩家可见的事实描述",
+  "description": "玩家可见的局部事实",
   "parent_location_id": "作者定义的地点 ID",
   "expires_after_turns": 3,
-  "reason": "为什么此刻需要这个局部事实"
+  "reason": "此刻需要该局部事实的原因"
 }
 """
 
 
-def build_messages(request: PlanRequest) -> list[dict[str, str]]:
-    payload: dict[str, Any] = {
-        "玩家方案": request.player_text,
-        "感知快照": request.perception.to_dict(),
-        "世界边界": list(request.world_rules),
-        "可提议状态空间": request.proposal_space,
+def build_narrative_messages(request: NarrativeRequest) -> list[dict[str, str]]:
+    payload = {
+        "叙事类型": request.kind,
+        "感知范围": {
+            "audience": request.perception.audience.value,
+            "subject_id": request.perception.subject_id,
+            "state_revision": request.perception.state_revision,
+        },
+        "事实清单": request.facts,
+        "文风约束": request.style,
     }
-    if request.pending_clarification:
-        payload["待澄清问题"] = request.pending_clarification
-        payload["说明"] = (
-            "玩家的这次输入是在回答上面的待澄清问题；结合上一轮计划理解它。"
-            "若输入明显换了话题，则按全新方案理解。"
-        )
-        if request.previous_plan is not None:
-            payload["上一轮计划"] = {
-                "理解": request.previous_plan.interpretation,
-                "原话": request.previous_plan.player_text,
-                "涉及": list(request.previous_plan.references),
-            }
-    if request.previous_validation is not None:
-        payload["上一轮验证反馈"] = {
-            "被拒原因": [issue.message for issue in request.previous_validation.issues],
-            "上一轮计划目标": request.previous_plan.goal if request.previous_plan else None,
-        }
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": RENDER_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
@@ -212,8 +133,7 @@ def build_suggestion_messages(request: SuggestionRequest) -> list[dict[str, str]
     payload = {
         "数量上限": request.count,
         "感知快照": request.perception.to_dict(),
-        "世界边界": list(request.world_rules),
-        "可提议状态空间": request.proposal_space,
+        "世界边界": list(request.boundaries),
     }
     return [
         {"role": "system", "content": SUGGESTION_SYSTEM_PROMPT},
@@ -230,9 +150,9 @@ def build_director_messages(request: DirectorRequest) -> list[dict[str, str]]:
         "player_id": request.player_id,
         "玩家行动": request.player_action,
         "玩家行动目标": list(request.action_targets),
-        "已提交结果": request.committed_result,
+        "已提交回合": request.committed_turn,
         "候选人物": list(request.candidates),
-        "世界边界": list(request.world_rules),
+        "世界边界": list(request.boundaries),
         "节拍上限": request.max_beats,
     }
     if request.generation:
@@ -249,163 +169,51 @@ def _strip_fences(content: str) -> str:
     return match.group(1) if match else content
 
 
-def _filter_fields(model_cls, data: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in data.items() if key in model_cls.model_fields}
-
-
-def coerce_plan(content: str, request: PlanRequest) -> ActionPlan:
-    """Parse model output into a valid ActionPlan; raise ValueError to repair.
-
-    Lenient on shape (drops unknown fields, fills defaults), strict on
-    meaning (protocol validators still run).  An executable plan with no
-    steps degrades to a clarification instead of a guess — fairness rule:
-    when understanding fails, ask, don't improvise.
-    """
+def _load_json_object(content: str) -> dict[str, Any]:
     try:
         data = json.loads(_strip_fences(content))
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid json: {exc}") from exc
     if not isinstance(data, dict):
-        raise ValueError("plan must be a json object")
+        raise ValueError("response must be a json object")
+    return data
 
-    steps = []
-    for step in data.get("steps") or []:
-        if not isinstance(step, dict):
-            continue
-        step = _filter_fields(CapabilityAction, step)
-        step.setdefault("capability", "intent")
-        step.setdefault("arguments", {})
-        step.setdefault("purpose", "执行玩家方案")
-        if step.get("action"):
-            steps.append(step)
 
-    changes = []
-    for change in data.get("proposed_changes") or []:
-        if not isinstance(change, dict) or not change.get("path"):
-            continue
-        change = _filter_fields(StateChangeProposal, change)
-        value = change.get("value")
-        change.setdefault(
-            "operation",
-            "increment" if isinstance(value, (int, float)) and not isinstance(value, bool) else "set",
-        )
-        change.setdefault("authority", "soft_state")
-        change.setdefault("reason", "模型提议")
-        changes.append(change)
-
-    risks = []
-    for risk in data.get("risks") or []:
-        if not isinstance(risk, dict) or not risk.get("description"):
-            continue
-        risk = _filter_fields(RiskProposal, risk)
-        risk.setdefault("likelihood", "possible")
-        risk.pop("changes", None)  # v0.1: prose risks only from the model
-        risks.append(risk)
-
-    needs_clarification = bool(data.get("needs_clarification"))
-    question = data.get("clarification_question")
-    if not needs_clarification and not steps:
-        needs_clarification = True
-        question = question or "我没有把握执行这个方案，能说得更具体一点吗？"
-    if needs_clarification:
-        steps = []
-        changes = []
-        question = question or "能把你的做法说得更具体一点吗？"
-    else:
-        question = None
-
-    try:
-        confidence = min(1.0, max(0.0, float(data.get("confidence", 0.7))))
-    except (TypeError, ValueError):
-        confidence = 0.7
-
-    plan_data: dict[str, Any] = {
-        "plan_id": new_protocol_id("plan"),
-        "perception_revision": request.perception.state_revision,
-        "player_text": request.player_text,
-        "interpretation": str(data.get("interpretation") or "").strip() or "（模型未给出解释）",
-        "goal": str(data.get("goal") or "player_action"),
-        "intent_id": data.get("intent_id"),
-        "steps": steps,
-        "references": [str(ref) for ref in data.get("references") or []],
-        "proposed_changes": changes,
-        "risks": risks,
-        "assumptions": [str(item) for item in data.get("assumptions") or []],
-        "confidence": confidence,
-        "needs_clarification": needs_clarification,
-        "clarification_question": question,
-        # Revision chains cover both in-loop replans and clarification
-        # replies across inputs: any previous plan makes this a revision.
-        "revision": (
-            request.previous_plan.revision + 1
-            if request.previous_plan is not None
-            else 0
-        ),
-        "parent_plan_id": (
-            request.previous_plan.plan_id if request.previous_plan is not None else None
-        ),
-    }
-    try:
-        return ActionPlan.model_validate(plan_data)
-    except Exception as exc:
-        raise ValueError(f"plan failed protocol validation: {exc}") from exc
+def _sanitize_machine_id(value: Any, fallback: str) -> str:
+    machine_id = re.sub(r"[^a-z0-9_.-]+", "_", str(value or "").strip().lower())
+    machine_id = machine_id.strip("_.-")
+    if not machine_id or not machine_id[0].isalpha():
+        machine_id = fallback
+    return machine_id
 
 
 def coerce_suggestions(
     content: str,
     request: SuggestionRequest,
-) -> tuple[SuggestedActionDraft, ...]:
-    try:
-        data = json.loads(_strip_fences(content))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid json: {exc}") from exc
-    if not isinstance(data, dict) or not isinstance(data.get("suggestions"), list):
+) -> tuple[SuggestedAction, ...]:
+    data = _load_json_object(content)
+    if not isinstance(data.get("suggestions"), list):
         raise ValueError("suggestion response must contain a suggestions array")
 
-    drafts: list[SuggestedActionDraft] = []
+    suggestions: list[SuggestedAction] = []
     for card in data["suggestions"][: request.count]:
         if not isinstance(card, dict):
             continue
-        action_text = str(card.get("action_text") or "").strip()
-        title = str(card.get("title") or "").strip()
-        rationale = str(card.get("rationale") or "").strip()
-        if not action_text or not title or not rationale:
+        try:
+            suggestion = SuggestedAction(
+                suggestion_id=new_protocol_id("suggestion"),
+                perception_revision=request.perception.state_revision,
+                title=str(card.get("title") or "").strip(),
+                action_text=str(card.get("action_text") or "").strip(),
+                focus=_sanitize_machine_id(card.get("focus"), "creative"),
+                rationale=str(card.get("rationale") or "").strip(),
+            )
+        except Exception:
             continue
-        raw_plan = card.get("plan") or {}
-        if not isinstance(raw_plan, dict):
-            continue
-        raw_plan = dict(raw_plan)
-        raw_plan.setdefault("interpretation", action_text)
-        plan = coerce_plan(
-            json.dumps(raw_plan, ensure_ascii=False),
-            PlanRequest(
-                perception=request.perception,
-                player_text=action_text,
-                world_rules=request.world_rules,
-                proposal_space=request.proposal_space,
-            ),
-        )
-        if plan.needs_clarification:
-            continue
-        focus = re.sub(
-            r"[^a-z0-9_.-]+",
-            "_",
-            str(card.get("focus") or "practical").strip().lower(),
-        ).strip("_") or "practical"
-        if not focus[0].isalpha():
-            focus = f"focus_{focus}"
-        drafts.append(SuggestedActionDraft(
-            suggestion_id=new_protocol_id("suggestion"),
-            perception_revision=request.perception.state_revision,
-            title=title,
-            action_text=action_text,
-            focus=focus,
-            rationale=rationale,
-            plan=plan,
-        ))
-    if not drafts:
+        suggestions.append(suggestion)
+    if not suggestions:
         raise ValueError("no valid suggestion cards")
-    return tuple(drafts)
+    return tuple(suggestions)
 
 
 def _sanitize_generated_id(value: Any) -> str:
@@ -417,16 +225,14 @@ def _sanitize_generated_id(value: Any) -> str:
     return entity_id
 
 
-def coerce_local_canon_proposals(
+def _coerce_local_canon(
     data: dict[str, Any],
     request: DirectorRequest,
 ) -> tuple[LocalCanonProposal, ...]:
-    """Best-effort parse; anything malformed is dropped, never repaired into
-    authority (the engine's admission checks are the real gate)."""
     if not request.generation:
         return ()
     proposals: list[LocalCanonProposal] = []
-    for raw in data.get("local_canon") or []:
+    for raw in (data.get("local_canon") or [])[:1]:
         if not isinstance(raw, dict):
             continue
         expires = raw.get("expires_after_turns")
@@ -453,15 +259,9 @@ def coerce_local_canon_proposals(
     return tuple(proposals)
 
 
-def coerce_director_response(
-    content: str,
-    request: DirectorRequest,
-) -> tuple[tuple[DirectorBeat, ...], tuple[LocalCanonProposal, ...]]:
-    try:
-        data = json.loads(_strip_fences(content))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid json: {exc}") from exc
-    if not isinstance(data, dict) or not isinstance(data.get("beats"), list):
+def coerce_director_plan(content: str, request: DirectorRequest) -> DirectorPlan:
+    data = _load_json_object(content)
+    if not isinstance(data.get("beats"), list):
         raise ValueError("Director response must contain a beats array")
 
     beats: list[DirectorBeat] = []
@@ -484,14 +284,11 @@ def coerce_director_response(
         beats.append(beat)
     if data["beats"] and not beats:
         raise ValueError("no valid Director beats")
-    return tuple(beats), coerce_local_canon_proposals(data, request)
-
-
-def coerce_director_beats(
-    content: str,
-    request: DirectorRequest,
-) -> tuple[DirectorBeat, ...]:
-    return coerce_director_response(content, request)[0]
+    return DirectorPlan(
+        state_revision=request.state_revision,
+        beats=tuple(beats),
+        local_canon=_coerce_local_canon(data, request),
+    )
 
 
 class DeepSeekProvider(LLMProvider):
@@ -555,13 +352,15 @@ class DeepSeekProvider(LLMProvider):
         usage = response.usage.model_dump() if response.usage is not None else {}
         return content, usage
 
+    @staticmethod
+    def _merge_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
+        for key, value in (usage or {}).items():
+            if isinstance(value, (int, float)):
+                total[key] = total.get(key, 0) + value
+
     def render_narrative(self, request: NarrativeRequest) -> NarrativeResponse | None:
         started = time.monotonic()
-        payload = {"事实清单": request.facts, "文风约束": request.style}
-        messages = [
-            {"role": "system", "content": RENDER_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ]
+        messages = build_narrative_messages(request)
         usage_total: dict[str, Any] = {}
         content = ""
         for attempt in range(2):
@@ -571,59 +370,23 @@ class DeepSeekProvider(LLMProvider):
                 temperature=0.7,
                 max_tokens=400,
             )
-            for key, value in (usage or {}).items():
-                if isinstance(value, (int, float)):
-                    usage_total[key] = usage_total.get(key, 0) + value
+            self._merge_usage(usage_total, usage)
             if content.strip():
                 break
             if attempt == 0:
                 messages.append({
                     "role": "user",
-                    "content": "你返回了空内容。请根据同一份事实清单输出 2-4 句叙事文本。",
+                    "content": "你返回了空内容。请根据同一事实清单输出 2-4 句叙事。",
                 })
         if not content.strip():
             return None
         return NarrativeResponse(
             text=content.strip(),
             model=self.model,
-            prompt_version="deepseek-narrate-v1",
+            prompt_version=NARRATIVE_PROMPT_VERSION,
             latency_ms=round((time.monotonic() - started) * 1000, 2),
             usage=usage_total,
         )
-
-    def propose_plan(self, request: PlanRequest) -> PlanResponse:
-        messages = build_messages(request)
-        started = time.monotonic()
-        usage_total: dict[str, Any] = {}
-        last_error = "empty response"
-        for _ in range(MAX_REPAIR_ROUNDS + 1):
-            content, usage = self._call(messages)
-            for key, value in (usage or {}).items():
-                if isinstance(value, (int, float)):
-                    usage_total[key] = usage_total.get(key, 0) + value
-            if not content.strip():
-                last_error = "empty content"
-                messages.append({"role": "user", "content": "你返回了空内容。请只输出一个 json 对象。"})
-                continue
-            try:
-                plan = coerce_plan(content, request)
-            except ValueError as exc:
-                last_error = str(exc)
-                messages.append({"role": "assistant", "content": content})
-                messages.append({
-                    "role": "user",
-                    "content": f"上一条输出无法解析（{exc}）。请修正并只输出一个 json 对象。",
-                })
-                continue
-            return PlanResponse(
-                plan=plan,
-                raw=content,
-                model=self.model,
-                prompt_version=PROMPT_VERSION,
-                latency_ms=round((time.monotonic() - started) * 1000, 2),
-                usage=usage_total,
-            )
-        raise LLMProviderError(f"DeepSeek 连续输出无法解析：{last_error}")
 
     def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:
         messages = build_suggestion_messages(request)
@@ -632,37 +395,30 @@ class DeepSeekProvider(LLMProvider):
         last_error = "empty response"
         for _ in range(MAX_REPAIR_ROUNDS + 1):
             content, usage = self._call(messages)
-            for key, value in (usage or {}).items():
-                if isinstance(value, (int, float)):
-                    usage_total[key] = usage_total.get(key, 0) + value
+            self._merge_usage(usage_total, usage)
             if not content.strip():
                 last_error = "empty content"
-                messages.append({
-                    "role": "user",
-                    "content": "你返回了空内容。请只输出 suggestions json 对象。",
-                })
-                continue
-            try:
-                suggestions = coerce_suggestions(content, request)
-            except ValueError as exc:
-                last_error = str(exc)
-                messages.append({"role": "assistant", "content": content})
-                messages.append({
-                    "role": "user",
-                    "content": f"上一条提案无法解析（{exc}）。请修正并只输出 json。",
-                })
-                continue
-            return SuggestionResponse(
-                suggestions=suggestions,
-                raw=content,
-                model=self.model,
-                prompt_version=SUGGESTION_PROMPT_VERSION,
-                latency_ms=round((time.monotonic() - started) * 1000, 2),
-                usage=usage_total,
-            )
+            else:
+                try:
+                    suggestions = coerce_suggestions(content, request)
+                except ValueError as exc:
+                    last_error = str(exc)
+                else:
+                    return SuggestionResponse(
+                        suggestions=suggestions,
+                        raw=content,
+                        model=self.model,
+                        prompt_version=SUGGESTION_PROMPT_VERSION,
+                        latency_ms=round((time.monotonic() - started) * 1000, 2),
+                        usage=usage_total,
+                    )
+            messages.append({
+                "role": "user",
+                "content": f"上一条提案无法解析（{last_error}）。请只输出 suggestions json。",
+            })
         raise LLMProviderError(f"DeepSeek 行动提案连续无法解析：{last_error}")
 
-    def propose_director_beats(self, request: DirectorRequest) -> DirectorResponse:
+    def propose_director(self, request: DirectorRequest) -> DirectorResponse:
         messages = build_director_messages(request)
         started = time.monotonic()
         usage_total: dict[str, Any] = {}
@@ -673,33 +429,25 @@ class DeepSeekProvider(LLMProvider):
                 temperature=0.5,
                 max_tokens=700,
             )
-            for key, value in (usage or {}).items():
-                if isinstance(value, (int, float)):
-                    usage_total[key] = usage_total.get(key, 0) + value
+            self._merge_usage(usage_total, usage)
             if not content.strip():
                 last_error = "empty content"
-                messages.append({
-                    "role": "user",
-                    "content": "你返回了空内容。请只输出 beats json 对象。",
-                })
-                continue
-            try:
-                beats, local_canon = coerce_director_response(content, request)
-            except ValueError as exc:
-                last_error = str(exc)
-                messages.append({"role": "assistant", "content": content})
-                messages.append({
-                    "role": "user",
-                    "content": f"上一条导演节拍无法解析（{exc}）。请修正并只输出 json。",
-                })
-                continue
-            return DirectorResponse(
-                beats=beats,
-                raw=content,
-                model=self.model,
-                prompt_version=DIRECTOR_PROMPT_VERSION,
-                latency_ms=round((time.monotonic() - started) * 1000, 2),
-                usage=usage_total,
-                local_canon=local_canon,
-            )
+            else:
+                try:
+                    plan = coerce_director_plan(content, request)
+                except ValueError as exc:
+                    last_error = str(exc)
+                else:
+                    return DirectorResponse(
+                        plan=plan,
+                        raw=content,
+                        model=self.model,
+                        prompt_version=DIRECTOR_PROMPT_VERSION,
+                        latency_ms=round((time.monotonic() - started) * 1000, 2),
+                        usage=usage_total,
+                    )
+            messages.append({
+                "role": "user",
+                "content": f"上一条 DirectorPlan 无法解析（{last_error}）。请只输出 json。",
+            })
         raise LLMProviderError(f"DeepSeek Director 连续无法解析：{last_error}")

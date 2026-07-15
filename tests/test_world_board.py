@@ -7,466 +7,147 @@ from pathlib import Path
 import yaml
 
 from server.engine.content import Story
-from server.engine.director import transition_options
-from server.engine.effects import TemporaryEffects
-from server.engine.renderer import render_turn
-from server.engine.resolver import run_turn
+from server.engine.llm_protocol import FactBatch
 from server.engine.session import GameSession, SessionError
-from server.engine.state import build_initial_state
-from server.engine.world import advance_world
-from server.cli import tokenize_action_line
+from server.engine.world import board_neighbors, next_hop_toward
 from tools.validate_content import validate_content
 
 
 ROOT = Path(__file__).resolve().parent.parent
-STORY_PATH = ROOT / "content" / "midnight_archive.yaml"
-ROOFTOP_STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
+ROOFTOP = ROOT / "content" / "rooftop_supper.yaml"
+ARCHIVE = ROOT / "content" / "midnight_archive.yaml"
 
 
-class WorldStepTests(unittest.TestCase):
-    def test_all_movement_rules_read_the_same_snapshot(self) -> None:
-        data = {
-            "player_role": {"id": "hero"},
-            "characters": {"hero": {}, "alpha": {}, "beta": {}},
-            "world_board": {
-                "nodes": {"n1": {}, "n2": {}, "n3": {}},
-                "edges": [
-                    {"from": "n1", "to": "n2", "bidirectional": True},
-                    {"from": "n2", "to": "n3", "bidirectional": True},
-                ],
-            },
-            "world_rules": [
-                {
-                    "id": "alpha_moves",
-                    "actor": "alpha",
-                    "when": {"positions": {"beta": "n2"}},
-                    "move": {"to": "n2"},
-                },
-                {
-                    "id": "beta_moves",
-                    "actor": "beta",
-                    "when": {"positions": {"alpha": "n1"}},
-                    "move": {"to": "n3"},
-                },
-            ],
-            "initial_state": {
-                "world": {"step": 0},
-                "positions": {"hero": "n1", "alpha": "n1", "beta": "n2"},
-            },
-        }
-        story = Story(data)
-        state = build_initial_state(data)
-
-        result = advance_world(story, state)
-
-        self.assertEqual(result.step_no, 1)
-        self.assertEqual(state["positions"]["alpha"], "n2")
-        self.assertEqual(state["positions"]["beta"], "n3")
-        self.assertEqual(result.rules, ["alpha_moves", "beta_moves"])
-
-
-class PresenceIntegrationTests(unittest.TestCase):
+class SpatialGraphTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.story = Story.load(STORY_PATH)
-        self.state = build_initial_state(self.story.data)
-        self.temporaries = TemporaryEffects()
-        self.consumed: set[str] = set()
+        self.story = Story.load(ROOFTOP)
 
-    def turn(
-        self,
-        number: int,
-        intent: str,
-        objects: list[str],
-        patch: dict | None = None,
-    ):
-        return run_turn(
-            self.story,
-            self.state,
-            self.temporaries,
-            self.consumed,
-            number,
-            intent,
-            objects,
-            patch or {},
-            strict_patch=True,
-        )
-
-    def test_presence_is_derived_and_butler_cannot_be_in_two_places(self) -> None:
-        self.turn(1, "observe", ["family_portrait"])
-        self.turn(2, "sneak", ["side_stair"])
-        self.assertEqual(self.state["positions"]["player"], "servant_corridor")
-        self.assertEqual(self.state["positions"]["maid"], "servant_corridor")
-        self.assertEqual(self.state["positions"]["butler"], "great_hall")
-        self.assertEqual(self.story.characters_at(self.state), ["maid"])
-
-        self.turn(3, "sneak", ["back_stairs"])
-        self.assertEqual(self.state["positions"]["player"], "archive_door")
-        self.assertEqual(self.story.characters_at(self.state), ["guard"])
-        self.assertNotIn("butler", self.story.scene_objects("archive_door", self.state))
-
-        step_before = self.state["world"]["step"]
-        time_before = self.state["world"]["time_left"]
-        rejected = self.turn(4, "negotiate", ["butler"])
-        self.assertTrue(rejected.errors)
-        self.assertEqual(self.state["world"]["step"], step_before)
-        self.assertEqual(self.state["world"]["time_left"], time_before)
-
-        result = self.turn(4, "create_distraction", ["candle_stand"])
-        self.assertEqual(self.state["positions"]["butler"], "archive_door")
-        self.assertIn("butler_pursues_intruder", result.world_rules)
-        self.assertIn("butler_catches_player", result.fired)
-        self.assertIn("butler", self.story.characters_at(self.state))
-
-    def test_inventory_items_are_acquired_and_used_explicitly(self) -> None:
-        self.turn(1, "observe", ["family_portrait"])
-        self.assertEqual(self.story.inventory(self.state), [])
-
-        self.turn(2, "negotiate", ["heir"], {"heir.trust": 1})
-        self.assertEqual(self.story.inventory(self.state), ["old_badge"])
-
-        self.turn(3, "sneak", ["side_stair"])
-        self.turn(4, "negotiate", ["maid"], {"maid.trust": 1})
+    def test_board_neighbors_are_authored_and_bidirectional(self) -> None:
         self.assertEqual(
-            self.story.inventory(self.state),
-            ["servant_key", "old_badge", "maid_note"],
+            board_neighbors(self.story, "building_lobby"),
+            ["convenience_store", "laundromat", "rooftop"],
         )
+        self.assertIn("building_lobby", board_neighbors(self.story, "rooftop"))
 
-        self.turn(5, "sneak", ["back_stairs"])
-        entered = self.turn(6, "use", ["servant_key", "service_door"])
-        self.assertIn("archive_entry_with_key", entered.fired)
-        self.assertEqual(self.state["positions"]["player"], "archive_room")
-
-        solved = self.turn(7, "use", ["old_badge", "locked_cabinet"])
-        self.assertIn("hidden_compartment", solved.fired)
-        self.assertIn("forgery_evidence", self.story.inventory(self.state))
-        self.assertEqual(solved.ending, "truth_exposed")
-
-    def test_unowned_item_is_rejected_without_cost_or_world_step(self) -> None:
-        time_before = self.state["world"]["time_left"]
-        step_before = self.state["world"]["step"]
-
-        rejected = self.turn(1, "use", ["old_badge", "family_portrait"])
-
-        self.assertTrue(rejected.errors)
-        self.assertEqual(self.state["world"]["time_left"], time_before)
-        self.assertEqual(self.state["world"]["step"], step_before)
-
-    def test_player_can_return_along_an_authored_board_exit(self) -> None:
-        self.turn(1, "observe", ["family_portrait"])
-        self.turn(2, "sneak", ["side_stair"])
-        self.assertEqual(self.state["positions"]["player"], "servant_corridor")
-
-        result = self.turn(3, "move", ["great_hall"])
-
-        self.assertEqual(result.errors, [])
-        self.assertEqual(self.state["positions"]["player"], "great_hall")
-        self.assertEqual(result.scene_after, "great_hall")
-
-    def test_opened_archive_can_be_exited_and_reentered(self) -> None:
-        self.state["positions"]["player"] = "archive_room"
-        self.state["world"]["archive_access"] = "open"
-
-        left = self.turn(1, "move", ["archive_door"])
-        self.assertEqual(left.errors, [])
-        self.assertEqual(self.state["positions"]["player"], "archive_door")
-        self.assertIn("archive_room", self.story.exit_labels(self.state))
-
-        returned = self.turn(2, "move", ["archive_room"])
-        self.assertEqual(returned.errors, [])
-        self.assertEqual(self.state["positions"]["player"], "archive_room")
-
-    def test_hidden_object_visibility_tracks_discovery_state(self) -> None:
-        self.state["positions"]["player"] = "archive_room"
-
-        self.assertNotIn(
-            "hidden_compartment",
-            self.story.visible_scene_objects("archive_room", self.state),
+    def test_shortest_path_returns_one_adjacent_hop(self) -> None:
+        self.assertEqual(
+            next_hop_toward(self.story, "building_lobby", "rooftop"),
+            "rooftop",
         )
-        self.assertNotIn("hidden_compartment", self.story.actionable_objects(self.state))
-
-        result = self.turn(1, "observe", ["locked_cabinet"])
-
-        self.assertIn("evidence_without_badge", result.fired)
-        self.assertEqual(result.result_tier, "partial_success")
-        self.assertIn(
-            "hidden_compartment",
-            self.story.visible_scene_objects("archive_room", self.state),
-        )
-        self.assertIn("hidden_compartment", self.story.actionable_objects(self.state))
-
-    def test_unrelated_observation_does_not_discover_compartment(self) -> None:
-        self.state["positions"]["player"] = "archive_room"
-
-        result = self.turn(1, "observe", ["fireplace"])
-
-        self.assertNotIn("evidence_without_badge", result.fired)
-        self.assertFalse(self.state["flags"]["cabinet_weakness_found"])
-
-    def test_key_uses_discovered_compartment_as_canonical_target(self) -> None:
-        self.state["positions"]["player"] = "archive_room"
-        self.state["positions"]["butler"] = "archive_room"
-        self.state["item_locations"]["servant_key"] = {
-            "type": "carried_by",
-            "id": "player",
-        }
-        self.state["flags"]["cabinet_weakness_found"] = True
-        self.state["world"]["time_left"] = 1
-        self.state["characters"]["butler"]["suspicion"] = 5
-        self.state["player"]["exposed"] = True
-
-        result = self.turn(1, "use", ["servant_key", "hidden_compartment"])
-
-        self.assertIn("force_compartment_with_key", result.fired)
-        self.assertIn("forgery_evidence", self.story.inventory(self.state))
-        self.assertEqual(result.ending, "costly_victory")
-        self.assertEqual(self.state["world"]["time_left"], 0)
-
-    def test_nonmatching_use_is_rejected_without_cost_or_world_step(self) -> None:
-        self.state["positions"]["player"] = "archive_room"
-        self.state["item_locations"]["servant_key"] = {
-            "type": "carried_by",
-            "id": "player",
-        }
-        self.state["flags"]["cabinet_weakness_found"] = True
-        time_before = self.state["world"]["time_left"]
-        step_before = self.state["world"]["step"]
-
-        result = self.turn(1, "use", ["servant_key", "locked_cabinet"])
-
-        self.assertTrue(result.errors)
-        self.assertIn("没有与「使用」", result.errors[0])
-        self.assertEqual(self.state["world"]["time_left"], time_before)
-        self.assertEqual(self.state["world"]["step"], step_before)
-        self.assertIn("行动未执行", render_turn(self.story, result))
-
-    def test_director_surfaces_unlocked_non_transition_interaction(self) -> None:
-        self.state["positions"]["player"] = "archive_room"
-        self.state["item_locations"]["servant_key"] = {
-            "type": "carried_by",
-            "id": "player",
-        }
-        self.state["flags"]["cabinet_weakness_found"] = True
-
-        options = transition_options(self.story, self.state, self.consumed)
-
-        force = next(option for option in options if option["title"] == "用仆役钥匙撬开暗格")
-        self.assertEqual(force["intents"], ["use"])
-        self.assertEqual(force["objects"], ["servant_key", "hidden_compartment"])
+        self.assertIsNone(next_hop_toward(self.story, "building_lobby", "missing"))
 
 
-class SessionValidationTests(unittest.TestCase):
+class FactCommitSkeletonTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.story = Story.load(STORY_PATH)
+        self.story = Story.load(ROOFTOP)
         self.session = GameSession(self.story, log_dir=None)
 
-    def prepare_compartment(self) -> None:
-        self.session.state["positions"]["player"] = "archive_room"
-        self.session.state["item_locations"]["servant_key"] = {
-            "type": "carried_by",
-            "id": "player",
-        }
-        self.session.state["flags"]["cabinet_weakness_found"] = True
+    def test_first_fact_commit_runs_the_opening_anchor_once(self) -> None:
+        first = self.session.commit_fact_batch(FactBatch(
+            state_revision=self.session.state_revision,
+            player_text="我先听陈阿姨说完。",
+            narrative="你在门厅里停下脚步。",
+        ))
+        second = self.session.commit_fact_batch(FactBatch(
+            state_revision=self.session.state_revision,
+            player_text="我再看看公告栏。",
+            narrative="你抬头看了看旧公告。",
+        ))
 
-    def test_invalid_quote_does_not_increment_turn_or_time(self) -> None:
-        self.prepare_compartment()
-        time_before = self.session.state["world"]["time_left"]
-        step_before = self.session.state["world"]["step"]
+        self.assertEqual(first.fired, ["opening_offer"])
+        self.assertTrue(self.session.state["flags"]["opening_delivered"])
+        self.assertEqual(second.fired, [])
+        self.assertEqual(self.session.turn_no, 2)
+        self.assertEqual(self.session.state_revision, 2)
 
-        with self.assertRaisesRegex(SessionError, "至少需要 2 个目标"):
-            self.session.quote("use", ["servant_key"])
+    def test_prose_only_commit_never_asserts_movement_or_item_transfer(self) -> None:
+        before_positions = copy.deepcopy(self.session.state["positions"])
+        before_items = copy.deepcopy(self.session.state["item_locations"])
 
-        self.assertEqual(self.session.turn_no, 0)
-        self.assertEqual(self.session.state["world"]["time_left"], time_before)
-        self.assertEqual(self.session.state["world"]["step"], step_before)
-
-    def test_bare_sneak_without_opening_is_rejected_before_quote(self) -> None:
-        self.session.state["positions"]["player"] = "archive_door"
-
-        with self.assertRaisesRegex(SessionError, "没有与「潜入」"):
-            self.session.quote("sneak", [])
-
-        self.assertEqual(self.session.turn_no, 0)
-        self.assertEqual(self.session.state["world"]["time_left"], 8)
-
-    def test_quote_previews_storylet_effects_without_mutating_state(self) -> None:
-        self.session.state["positions"]["player"] = "servant_corridor"
-        self.session.state["positions"]["maid"] = "servant_corridor"
-        self.session.state["flags"]["maid_warned_player"] = True
-        self.session.consumed.add("maid_warning")
-
-        quote = self.session.quote("negotiate", ["maid"])
-        changes = {path: (previous, new) for path, previous, new in quote["expected_changes"]}
-
-        self.assertEqual(changes["maid.trust"], (2, 3))
-        self.assertEqual(
-            changes["item_locations.servant_key"][1],
-            {"type": "carried_by", "id": "player"},
-        )
-        self.assertEqual(self.session.state["characters"]["maid"]["trust"], 2)
-        self.assertEqual(
-            self.session.state["item_locations"]["servant_key"],
-            {"type": "carried_by", "id": "maid"},
+        result = self.session.commit_narrative(
+            "我拿起饭篮走向天台。",
+            "你伸手示意自己的打算。",
         )
 
-        result = self.session.resolve(quote_id=quote["quote_id"])
-        actual: dict[str, tuple[object, object]] = {}
-        for path, previous, new in result.changes:
-            if path == "world.time_left":
-                continue
-            if path not in actual:
-                actual[path] = (previous, new)
-            else:
-                actual[path] = (actual[path][0], new)
-        actual = {path: change for path, change in actual.items() if change[0] != change[1]}
+        self.assertEqual(self.session.state["positions"], before_positions)
+        self.assertEqual(self.session.state["item_locations"], before_items)
+        self.assertNotIn("positions.player", {path for path, _, _ in result.changes})
+        self.assertNotIn("item_locations.food_basket", {
+            path for path, _, _ in result.changes
+        })
 
-        self.assertEqual(actual, changes)
-        self.assertEqual(self.session.state["characters"]["maid"]["trust"], 3)
+    def test_archive_cannot_start_a_new_runtime_session(self) -> None:
+        with self.assertRaisesRegex(SessionError, "narrative_first"):
+            GameSession(Story.load(ARCHIVE), log_dir=None)
 
 
-class RooftopFreeNarrativePolicyTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.story = Story.load(ROOFTOP_STORY_PATH)
-        self.session = GameSession(self.story, log_dir=None)
+class NarrativeContentValidationTest(unittest.TestCase):
+    def load(self) -> dict:
+        return yaml.safe_load(ROOFTOP.read_text(encoding="utf-8"))
 
-    def test_everyday_story_has_no_countdown_or_pre_action_quotes(self) -> None:
-        self.assertNotIn("time_left", self.session.state["world"])
-        for intent_id, intent in self.story.intents.items():
-            self.assertFalse(self.story.quote_required(intent_id), intent_id)
-            self.assertNotIn("time_left", intent.get("typical_cost") or {}, intent_id)
+    def test_active_and_archived_content_both_validate(self) -> None:
+        active = validate_content(self.load())
+        archived = validate_content(yaml.safe_load(ARCHIVE.read_text(encoding="utf-8")))
+        self.assertEqual(active.errors, [])
+        self.assertEqual(active.warnings, [])
+        self.assertEqual(archived.errors, [])
 
-        # Repeated observation advances the world step for ordering, but cannot
-        # consume a hidden failure clock or force a missed-dinner ending.
-        for index in range(12):
-            target = "elevator_notice" if index % 2 == 0 else "takeout_bench"
-            self.session.resolve(intent_id="observe", objects=[target])
-
-        self.assertEqual(self.session.turn_no, 12)
-        self.assertEqual(self.session.state["world"]["step"], 12)
-        self.assertNotIn("time_left", self.session.state["world"])
-        self.assertIsNone(self.session.ending)
-
-
-class CliParsingTests(unittest.TestCase):
-    def test_chinese_punctuation_separates_targets(self) -> None:
-        self.assertEqual(
-            tokenize_action_line("6 仆役侧门钥匙、仆役窄门"),
-            ["6", "仆役侧门钥匙", "仆役窄门"],
-        )
-
-    def test_numeric_intent_can_be_attached_to_first_target(self) -> None:
-        self.assertEqual(
-            tokenize_action_line("6仆役侧门钥匙"),
-            ["6", "仆役侧门钥匙"],
-        )
-
-
-class SchemaV2ValidationTests(unittest.TestCase):
-    def test_current_story_is_valid_schema_v2(self) -> None:
-        data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
-        report = validate_content(data)
-        self.assertEqual(report.errors, [])
-
-    def test_authored_exits_count_toward_scene_reachability(self) -> None:
-        data = yaml.safe_load(ROOFTOP_STORY_PATH.read_text(encoding="utf-8"))
-        report = validate_content(data)
-
-        self.assertEqual(report.errors, [])
-        self.assertFalse(
-            any("is unreachable" in warning for warning in report.warnings),
-            report.warnings,
-        )
-
-    def test_request_policy_requires_valid_public_purposes(self) -> None:
-        data = yaml.safe_load(ROOFTOP_STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        broken["items"]["picnic_mat"]["request_policy"]["purposes"] = {}
-
-        report = validate_content(broken)
-
-        self.assertTrue(
-            any("request_policy.purposes must not be empty" in error for error in report.errors)
-        )
-
-    def test_request_policy_condition_uses_known_state_paths(self) -> None:
-        data = yaml.safe_load(ROOFTOP_STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        broken["items"]["picnic_mat"]["request_policy"]["when"] = {
-            "flags": {"not_a_real_flag": True}
-        }
-
-        report = validate_content(broken)
-
-        self.assertTrue(
-            any("flags.not_a_real_flag" in warning for warning in report.warnings)
-        )
-
-    def test_static_presence_is_rejected_in_schema_v2(self) -> None:
-        data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        broken["scenes"]["great_hall"]["available_characters"] = ["butler"]
-        report = validate_content(broken)
-        self.assertTrue(any("available_characters is forbidden" in error for error in report.errors))
-
-    def test_every_character_requires_one_initial_position(self) -> None:
-        data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        del broken["initial_state"]["positions"]["guard"]
-        report = validate_content(broken)
-        self.assertTrue(any("missing character 'guard'" in error for error in report.errors))
-
-    def test_position_patch_must_use_move_entities(self) -> None:
-        data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        broken["storylets"][0]["effect"]["state_patch"]["positions.butler"] = "archive_door"
-        report = validate_content(broken)
-        self.assertTrue(any("use move_entities" in error for error in report.errors))
-
-    def test_every_item_requires_one_initial_location(self) -> None:
-        data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        del broken["initial_state"]["item_locations"]["old_badge"]
-        report = validate_content(broken)
-        self.assertTrue(any("missing item 'old_badge'" in error for error in report.errors))
-
-    def test_item_location_patch_must_use_move_items(self) -> None:
-        data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        broken["storylets"][0]["effect"]["state_patch"]["item_locations.old_badge"] = {
-            "type": "carried_by",
-            "id": "player",
-        }
-        report = validate_content(broken)
-        self.assertTrue(any("use move_items" in error for error in report.errors))
-
-    def test_object_visibility_condition_must_be_a_mapping(self) -> None:
-        data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        broken["scenes"]["archive_room"]["available_objects"]["items"][
-            "hidden_compartment"
-        ]["visible_when"] = "always"
-
-        report = validate_content(broken)
-
-        self.assertTrue(any("visible_when must be a mapping" in error for error in report.errors))
-
-    def test_required_storylet_match_needs_an_authored_interaction(self) -> None:
-        data = yaml.safe_load(STORY_PATH.read_text(encoding="utf-8"))
-        broken = copy.deepcopy(data)
-        broken["intents"]["strict_action"] = {
-            "label": "严格动作",
-            "description": "测试动作",
-            "quote_required": True,
-            "requires_storylet_match": True,
-        }
-
-        report = validate_content(broken)
-
-        self.assertTrue(
-            any(
-                "requires_storylet_match is true but no action storylet" in error
-                for error in report.errors
+    def test_retired_top_level_mechanics_are_rejected(self) -> None:
+        for field, value in (
+            ("intents", {}),
+            ("quote_warnings", []),
+            ("resolution_limits", {}),
+            ("world_rules", []),
+        ):
+            broken = self.load()
+            broken[field] = value
+            report = validate_content(broken)
+            self.assertTrue(
+                any(f"{field} is retired" in error for error in report.errors),
+                (field, report.errors),
             )
-        )
+
+    def test_item_request_policy_and_scene_suggestions_are_rejected(self) -> None:
+        broken = self.load()
+        broken["items"]["picnic_mat"]["request_policy"] = {
+            "purposes": {"cover": "铺桌"}
+        }
+        broken["scenes"]["building_lobby"]["suggested_intents"] = ["talk"]
+        report = validate_content(broken)
+        self.assertTrue(any("request_policy is retired" in e for e in report.errors))
+        self.assertTrue(any("suggested_intents is retired" in e for e in report.errors))
+
+    def test_npc_card_requires_motivation_voice_and_relationship(self) -> None:
+        broken = self.load()
+        for field in ("motivation", "voice", "initial_relationship"):
+            del broken["characters"]["clerk_luo"][field]
+        report = validate_content(broken)
+        for field in ("motivation", "voice", "initial_relationship"):
+            self.assertTrue(any(
+                f"missing required field: {field}" in error
+                for error in report.errors
+            ))
+
+    def test_anchor_cannot_route_an_action(self) -> None:
+        broken = self.load()
+        broken["storylets"][0]["trigger"]["intent"] = "talk"
+        report = validate_content(broken)
+        self.assertTrue(any("trigger.intent is retired" in e for e in report.errors))
+
+    def test_schema_v2_still_requires_positions_and_item_locations(self) -> None:
+        missing_character = self.load()
+        del missing_character["initial_state"]["positions"]["ahe"]
+        self.assertTrue(any(
+            "missing character 'ahe'" in e
+            for e in validate_content(missing_character).errors
+        ))
+
+        missing_item = self.load()
+        del missing_item["initial_state"]["item_locations"]["food_basket"]
+        self.assertTrue(any(
+            "missing item 'food_basket'" in e
+            for e in validate_content(missing_item).errors
+        ))
 
 
 if __name__ == "__main__":

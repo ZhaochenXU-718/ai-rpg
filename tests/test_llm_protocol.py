@@ -7,326 +7,200 @@ from pydantic import ValidationError
 
 from server.engine.llm_protocol import (
     PROTOCOL_VERSION,
-    ActionPlan,
-    AuthorityLevel,
-    CapabilityAction,
-    CapabilityTool,
-    ChangeOperation,
     CommittedChange,
     CommittedDirectorBeat,
-    CommittedOutcome,
+    CommittedTurn,
     DirectorBeat,
     DirectorBeatKind,
+    DirectorPlan,
     EntityKind,
-    IssueSeverity,
+    FactAuthority,
+    FactBatch,
+    IronLawDomain,
+    IronLawViolation,
+    NpcTurn,
     PerceivedEntity,
-    PlayerPerception,
-    RiskLikelihood,
-    RiskProposal,
-    StateChangeProposal,
+    PerceptionAudience,
+    PerceptionSnapshot,
     SuggestedAction,
-    SuggestedActionDraft,
     SuggestedActionSet,
-    ValidationIssue,
-    ValidationResult,
-    action_plan_json_schema,
+    director_plan_json_schema,
+    fact_batch_json_schema,
     new_protocol_id,
+    npc_turn_json_schema,
+    suggested_action_json_schema,
 )
 
 
-class LLMProtocolTests(unittest.TestCase):
-    def make_change(self) -> StateChangeProposal:
-        return StateChangeProposal(
-            path="guard.attention",
-            operation=ChangeOperation.SET,
-            value="east_window",
-            authority=AuthorityLevel.SOFT_STATE,
-            reason="闪电反光把守卫的注意力引向东窗",
-            step_index=0,
-            duration_turns=1,
+def player_perception() -> PerceptionSnapshot:
+    return PerceptionSnapshot(
+        audience=PerceptionAudience.PLAYER,
+        subject_id="player",
+        story_id="story_demo",
+        session_id="session_demo",
+        turn_no=3,
+        state_revision=3,
+        location_id="courtyard",
+        location_name="公共院子",
+        current_goal="把长桌遮好",
+        visible_entities=(PerceivedEntity(
+            entity_id="keeper",
+            label="周师傅",
+            kind=EntityKind.CHARACTER,
+            actionable=True,
+        ),),
+        known_facts=("长桌怕雨",),
+    )
+
+
+class NarrativeFirstProtocolTest(unittest.TestCase):
+    def test_fact_batch_round_trip_and_schema(self) -> None:
+        batch = FactBatch(
+            state_revision=3,
+            player_text="我问周师傅防雨布能不能借用。",
+            narrative="你把用途和归还时间都说清楚了。",
+            references=("keeper",),
         )
-
-    def make_plan(self) -> ActionPlan:
-        return ActionPlan(
-            plan_id="plan_demo",
-            perception_revision=6,
-            player_text="用酒盘反光把守卫引向东窗",
-            interpretation="玩家想制造一次短暂的视觉误导",
-            goal="redirect_guard_attention",
-            intent_id="create_distraction",
-            references=("wine_tray", "east_window", "guard"),
-            steps=(
-                CapabilityAction(
-                    capability="creative_resolution",
-                    action="create_visual_distraction",
-                    arguments={
-                        "source": "wine_tray",
-                        "target": "guard",
-                        "direction": "east_window",
-                    },
-                    purpose="让守卫暂时看向东窗",
-                ),
-            ),
-            proposed_changes=(self.make_change(),),
-            risks=(
-                RiskProposal(
-                    description="守卫可能发现反光来自玩家",
-                    likelihood=RiskLikelihood.POSSIBLE,
-                    changes=(
-                        StateChangeProposal(
-                            path="guard.alertness",
-                            operation=ChangeOperation.INCREMENT,
-                            value=1,
-                            authority=AuthorityLevel.MECHANICAL,
-                            reason="异常反光可能提高警觉",
-                            step_index=0,
-                        ),
-                    ),
-                    mitigation="先移动到阴影角落可以降低暴露风险",
-                ),
-            ),
-            assumptions=("酒盘能形成足够明显的反光",),
-            confidence=0.82,
-        )
-
-    def test_action_plan_round_trip_and_json_schema(self) -> None:
-        plan = self.make_plan()
-        payload = plan.to_dict()
-
-        self.assertEqual(ActionPlan.from_dict(payload), plan)
+        payload = batch.to_dict()
+        self.assertEqual(FactBatch.from_dict(payload), batch)
         self.assertEqual(json.loads(json.dumps(payload, ensure_ascii=False)), payload)
         self.assertEqual(payload["protocol_version"], PROTOCOL_VERSION)
-
-        schema = action_plan_json_schema()
+        schema = fact_batch_json_schema()
         self.assertFalse(schema["additionalProperties"])
-        self.assertIn("steps", schema["properties"])
-        self.assertEqual(
-            schema["properties"]["protocol_version"]["const"], PROTOCOL_VERSION
-        )
+        self.assertIn("state_changes", schema["properties"])
 
-    def test_clarification_plan_may_have_no_steps(self) -> None:
-        plan = ActionPlan(
-            plan_id="plan_question",
-            perception_revision=1,
-            player_text="用那个东西把他引开",
-            interpretation="玩家没有明确物品和目标人物",
-            goal="clarify_references",
-            steps=(),
-            needs_clarification=True,
-            clarification_question="你想使用哪个物品、引开哪一位角色？",
-            confidence=0.3,
-        )
-
-        self.assertTrue(plan.needs_clarification)
-        with self.assertRaises(ValidationError):
-            ActionPlan(
-                plan_id="plan_invalid",
-                perception_revision=1,
-                player_text="继续",
-                interpretation="缺少行动",
-                goal="continue",
-                steps=(),
-            )
-
-    def test_invalid_protocol_values_are_rejected(self) -> None:
-        payload = self.make_plan().to_dict()
-        payload["protocol_version"] = "9.9"
-        with self.assertRaises(ValidationError):
-            ActionPlan.from_dict(payload)
-
-        payload = self.make_plan().to_dict()
-        payload["confidence"] = 1.5
-        with self.assertRaises(ValidationError):
-            ActionPlan.from_dict(payload)
-
-        with self.assertRaises(ValidationError):
-            StateChangeProposal(
-                path="guard.alertness",
-                operation=ChangeOperation.INCREMENT,
-                value="high",
-                authority=AuthorityLevel.MECHANICAL,
-                reason="错误的数值增量",
-            )
-        with self.assertRaises(ValidationError):
-            new_protocol_id("Invalid Prefix")
-
-    def test_player_perception_contains_only_explicit_public_information(self) -> None:
-        perception = PlayerPerception(
-            story_id="midnight_archive",
-            session_id="session_demo",
-            turn_no=3,
-            state_revision=3,
-            location_id="archive_door",
-            location_name="档案室门口",
-            current_goal="进入档案室",
-            visible_entities=(
-                PerceivedEntity(
-                    entity_id="guard",
-                    label="布兰特守卫",
-                    kind=EntityKind.CHARACTER,
-                    actionable=True,
-                    public_state={"alertness": 2},
-                ),
-            ),
-            inventory=(
-                PerceivedEntity(
-                    entity_id="servant_key",
-                    label="仆役侧门钥匙",
-                    kind=EntityKind.ITEM,
-                    actionable=True,
-                ),
-            ),
-            known_facts=("钥匙可以打开仆役侧门",),
-            available_intents=("observe", "use", "custom"),
-            capability_tools=(
-                CapabilityTool(
-                    capability="inventory",
-                    action="use_item",
-                    description="使用持有物作用于当前目标",
-                    arguments_schema={
-                        "type": "object",
-                        "required": ["item", "target"],
-                    },
-                    allowed_authority_levels=(AuthorityLevel.MECHANICAL,),
-                ),
-            ),
-            public_state={"world.time_left": 4},
-        )
-
+    def test_perception_is_subject_scoped_and_has_no_capability_menu(self) -> None:
+        perception = player_perception()
         payload = perception.to_dict()
+        self.assertEqual(payload["audience"], "player")
+        self.assertEqual(payload["subject_id"], "player")
+        self.assertNotIn("available_intents", payload)
+        self.assertNotIn("capability_tools", payload)
         self.assertNotIn("secret", json.dumps(payload, ensure_ascii=False))
-        self.assertEqual(PlayerPerception.from_dict(payload), perception)
+        self.assertEqual(PerceptionSnapshot.from_dict(payload), perception)
 
         payload["visible_entities"].append(payload["visible_entities"][0])
         with self.assertRaises(ValidationError):
-            PlayerPerception.from_dict(payload)
+            PerceptionSnapshot.from_dict(payload)
 
-    def test_validation_result_enforces_binding_decision(self) -> None:
-        change = self.make_change()
-        accepted = ValidationResult(
-            validation_id="validation_demo",
-            plan_id="plan_demo",
-            state_revision=6,
-            can_execute=True,
-            can_replan=False,
-            accepted_step_indices=(0,),
-            accepted_changes=(change,),
+    def test_suggestion_is_editable_prose_without_plan_or_validation(self) -> None:
+        action = SuggestedAction(
+            suggestion_id="suggestion_ask",
+            perception_revision=3,
+            title="说明用途",
+            action_text="我先说明防雨布会铺在哪里、什么时候归还。",
+            focus="social",
+            rationale="给对方足够信息，但不预设对方答应。",
+            expected_iron_law_touches=("人物承诺",),
         )
-        self.assertTrue(accepted.can_execute)
-        self.assertEqual(ValidationResult.from_dict(accepted.to_dict()), accepted)
-
-        with self.assertRaises(ValidationError):
-            ValidationResult(
-                validation_id="validation_invalid",
-                plan_id="plan_demo",
-                state_revision=6,
-                can_execute=True,
-                can_replan=True,
-                accepted_step_indices=(0,),
-                issues=(
-                    ValidationIssue(
-                        code="object.missing",
-                        severity=IssueSeverity.ERROR,
-                        message="酒盘不在当前场景",
-                        retryable=True,
-                    ),
-                ),
-            )
-
-    def test_suggested_action_binds_card_text_plan_and_validation(self) -> None:
-        plan = self.make_plan()
-        validation = ValidationResult(
-            validation_id="validation_suggestion",
-            plan_id=plan.plan_id,
-            state_revision=plan.perception_revision,
-            can_execute=True,
-            can_replan=False,
-            accepted_step_indices=(0,),
-        )
-        draft = SuggestedActionDraft(
-            suggestion_id="suggestion_redirect",
-            perception_revision=plan.perception_revision,
-            title="借反光引开视线",
-            action_text=plan.player_text,
-            focus="creative",
-            rationale="从环境入手，避免直接冲突。",
-            plan=plan,
-        )
-        action = SuggestedAction(**draft.to_dict(), validation=validation)
-        suggestion_set = SuggestedActionSet(
+        action_set = SuggestedActionSet(
             suggestion_set_id="suggestions_demo",
-            perception_revision=plan.perception_revision,
+            perception_revision=3,
             actions=(action,),
         )
+        payload = action_set.to_dict()
+        self.assertNotIn("plan", json.dumps(payload, ensure_ascii=False))
+        self.assertNotIn("validation", json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(SuggestedActionSet.from_dict(payload), action_set)
+        self.assertIn("action_text", suggested_action_json_schema()["properties"])
 
+        with self.assertRaises(ValidationError):
+            SuggestedActionSet(
+                suggestion_set_id="suggestions_bad",
+                perception_revision=4,
+                actions=(action,),
+            )
+
+    def test_iron_law_violation_is_structured_for_phase_two(self) -> None:
+        violation = IronLawViolation(
+            code="iron.item_owner_conflict",
+            domain=IronLawDomain.ITEM_CUSTODY,
+            message="防雨布仍由周师傅携带。",
+            path="item_locations.rain_canvas",
+            evidence="叙事声称玩家已经拿到防雨布。",
+        )
         self.assertEqual(
-            SuggestedActionSet.from_dict(suggestion_set.to_dict()),
-            suggestion_set,
+            IronLawViolation.from_dict(violation.to_dict()), violation
         )
-        invalid = draft.to_dict()
-        invalid["action_text"] = "换一条没有重新规划的文字"
-        with self.assertRaises(ValidationError):
-            SuggestedActionDraft.from_dict(invalid)
 
-    def test_director_beat_is_only_a_reference_to_an_actor(self) -> None:
+    def test_director_plan_contains_only_revalidatable_proposals(self) -> None:
         beat = DirectorBeat(
-            beat_id="beat_guard_enters",
-            state_revision=6,
-            kind=DirectorBeatKind.ENTER_SCENE,
-            actor_id="guard",
-            target_location_id="archive_door",
+            beat_id="beat_keeper_reacts",
+            state_revision=4,
+            kind=DirectorBeatKind.REACT,
+            actor_id="keeper",
+            target_location_id="courtyard",
             target_ids=("player",),
-            summary="守卫循声来到档案室门口。",
-            motivation="确认刚才的异常响动。",
+            summary="周师傅看了看天色，没有立刻答应。",
+            motivation="先确认借用条件。",
         )
+        plan = DirectorPlan(state_revision=4, beats=(beat,))
+        self.assertEqual(DirectorPlan.from_dict(plan.to_dict()), plan)
+        self.assertIn("beats", director_plan_json_schema()["properties"])
 
-        self.assertEqual(DirectorBeat.from_dict(beat.to_dict()), beat)
-        invalid = beat.to_dict()
-        invalid["target_ids"] = ["player", "player"]
+        invalid = plan.to_dict()
+        invalid["beats"].append(invalid["beats"][0])
         with self.assertRaises(ValidationError):
-            DirectorBeat.from_dict(invalid)
+            DirectorPlan.from_dict(invalid)
 
-    def test_committed_outcome_round_trip(self) -> None:
-        outcome = CommittedOutcome(
-            outcome_id="outcome_demo",
-            plan_id="plan_demo",
-            validation_id="validation_demo",
-            turn_no=7,
-            state_revision_before=6,
-            state_revision_after=7,
-            scene_before="archive_door",
-            scene_after="archive_door",
-            result_tier="partial_success",
-            primary_goal_status="partial",
-            resolution_sources=("creative_resolution",),
-            accepted_step_indices=(0,),
-            committed_changes=(
-                CommittedChange(
-                    path="guard.attention",
-                    previous="archive_door",
-                    new="east_window",
-                    authority=AuthorityLevel.SOFT_STATE,
-                    source="creative_resolution",
-                    reason="已验证的视觉误导",
-                ),
-            ),
+        wrong_revision = plan.to_dict()
+        wrong_revision["beats"][0]["state_revision"] = 3
+        with self.assertRaises(ValidationError):
+            DirectorPlan.from_dict(wrong_revision)
+
+    def test_npc_turn_reserves_agent_output_without_state_authority(self) -> None:
+        turn = NpcTurn(
+            state_revision=4,
+            actor_id="keeper",
+            utterance="先说好什么时候还。",
+            target_ids=("player",),
+            proposed_facts=("周师傅询问归还时间",),
+        )
+        self.assertEqual(NpcTurn.from_dict(turn.to_dict()), turn)
+        self.assertIn("proposed_facts", npc_turn_json_schema()["properties"])
+        with self.assertRaises(ValidationError):
+            NpcTurn(state_revision=4, actor_id="keeper")
+
+    def test_committed_turn_no_longer_depends_on_plan_or_validation_ids(self) -> None:
+        change = CommittedChange(
+            path="positions.keeper",
+            previous="workshop",
+            new="courtyard",
+            authority=FactAuthority.IRON_LAW,
+            source="director.beat_keeper_enters",
+            reason="通过位置和相邻路线复验",
+        )
+        committed = CommittedTurn(
+            batch_id="batch_demo",
+            turn_no=4,
+            state_revision_before=3,
+            state_revision_after=4,
+            scene_before="courtyard",
+            scene_after="courtyard",
+            narrative="你站在长桌旁等雨势过去。",
+            committed_changes=(change,),
             director_beats=(CommittedDirectorBeat(
-                beat_id="beat_guard_reacts",
-                validation_id="beat_validation_demo",
-                kind=DirectorBeatKind.REACT,
-                actor_id="guard",
-                target_location_id="archive_door",
-                narrative_hint="守卫侧过身，继续盯着东窗的动静。",
+                beat_id="beat_keeper_enters",
+                validation_id="beatval_demo",
+                kind=DirectorBeatKind.ENTER_SCENE,
+                actor_id="keeper",
+                target_location_id="courtyard",
+                narrative_hint="周师傅从修理铺门口走了过来。",
+                committed_changes=(change,),
             ),),
-            world_events=("guard_attention_redirected",),
-            new_facts=("守卫会对东窗方向的异常反光作出反应",),
         )
+        payload = committed.to_dict()
+        self.assertNotIn("plan_id", payload)
+        self.assertNotIn("validation_id", payload)
+        self.assertEqual(CommittedTurn.from_dict(payload), committed)
 
-        self.assertEqual(CommittedOutcome.from_dict(outcome.to_dict()), outcome)
-        invalid = outcome.to_dict()
-        invalid["state_revision_after"] = 5
+        payload["state_revision_after"] = 3
         with self.assertRaises(ValidationError):
-            CommittedOutcome.from_dict(invalid)
+            CommittedTurn.from_dict(payload)
+
+    def test_protocol_ids_reject_invalid_prefixes(self) -> None:
+        with self.assertRaises(ValidationError):
+            new_protocol_id("Invalid Prefix")
 
 
 if __name__ == "__main__":

@@ -41,11 +41,8 @@ def check_path_condition(state: dict[str, Any], path_key: str, expected: Any, pr
 def check_condition_block(
     state: dict[str, Any],
     block: dict[str, Any],
-    intent: str | None = None,
-    objects: list[str] | None = None,
 ) -> bool:
-    """AND-evaluate one condition block (storylet trigger or exit block)."""
-    objects = objects or []
+    """AND-evaluate committed-state conditions for anchors and exits."""
     for group, value in block.items():
         if group == "scene":
             player_id = (state.get("_meta") or {}).get("player_id", "player")
@@ -56,18 +53,6 @@ def check_condition_block(
             player_id = (state.get("_meta") or {}).get("player_id", "player")
             current = (state.get("positions") or {}).get(player_id, state["world"].get("scene"))
             if current not in value:
-                return False
-        elif group == "intent":
-            if intent != value:
-                return False
-        elif group == "intent_any":
-            if intent not in value:
-                return False
-        elif group == "object_any":
-            if not set(value) & set(objects):
-                return False
-        elif group == "object_all":
-            if not set(value).issubset(objects):
                 return False
         elif group == "positions":
             positions = state.get("positions") or {}

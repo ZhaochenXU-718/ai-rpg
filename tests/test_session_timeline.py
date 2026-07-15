@@ -5,124 +5,98 @@ import unittest
 from pathlib import Path
 
 from server.engine.content import Story
-from server.engine.llm_protocol import ActionPlan, CapabilityAction
+from server.engine.llm_protocol import FactBatch
 from server.engine.session import GameSession, SessionError
+from server.engine.state import StatePathError
 
 
 ROOT = Path(__file__).resolve().parent.parent
-STORY_PATH = ROOT / "content" / "midnight_archive.yaml"
-
-
-def observe_plan(revision: int) -> ActionPlan:
-    return ActionPlan(
-        plan_id="plan_before_undo",
-        perception_revision=revision,
-        player_text="我再看看画像",
-        interpretation="观察全家画像",
-        goal="inspect_portrait",
-        steps=(CapabilityAction(
-            capability="intent",
-            action="observe",
-            arguments={"objects": ["family_portrait"]},
-            purpose="观察画像",
-        ),),
-    )
+STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
 
 
 class SessionTimelineTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.story = Story.load(STORY_PATH)
-        self.session = GameSession(self.story, log_dir=None)
+        self.session = GameSession(Story.load(STORY_PATH), log_dir=None)
 
-    def observe_portrait(self) -> None:
-        self.session.resolve(intent_id="observe", objects=["family_portrait"])
+    def commit(self, text: str, changes: dict | None = None):
+        return self.session.commit_fact_batch(FactBatch(
+            state_revision=self.session.state_revision,
+            player_text=text,
+            narrative=f"叙事：{text}",
+            state_changes=changes or {},
+        ))
 
-    def test_undo_restores_full_snapshot_and_invalidates_old_authority(self) -> None:
-        root_id = self.session.current_checkpoint_id
-        self.session.temporaries.add(
-            99,
-            [("flags.old_badge_hint_seen", False, True)],
+    def test_undo_restores_state_and_creates_a_retained_branch(self) -> None:
+        self.commit("先听完开场")
+        first_checkpoint = self.session.current_checkpoint_id
+        self.commit(
+            "走向便利店",
+            {"positions.player": "convenience_store"},
         )
-        self.observe_portrait()
-        first_id = self.session.current_checkpoint_id
-        first = self.session.get_checkpoint(first_id)
-        state_after_first = copy.deepcopy(self.session.state)
-
-        self.session.rng.random()
-        self.observe_portrait()
-        second_id = self.session.current_checkpoint_id
-        second_state = copy.deepcopy(self.session.state)
-        self.assertEqual(self.session.state_revision, 2)
-
-        plan = observe_plan(self.session.state_revision)
-        validation = self.session.validate_plan(plan)
-        self.assertTrue(validation.can_execute)
-        quote = self.session.quote("negotiate", ["heir"])
-        self.session.pending_clarification = {"question": "继续吗？"}
+        abandoned_head = self.session.current_checkpoint_id
+        revision_before = self.session.state_revision
 
         restored = self.session.undo()
 
-        self.assertEqual(restored.source_checkpoint_id, second_id)
-        self.assertEqual(restored.restored_checkpoint_id, first_id)
-        self.assertEqual(restored.branch_id, "branch_1")
-        self.assertEqual(self.session.state_revision, 3)
-        self.assertEqual(self.session.state, state_after_first)
-        self.assertEqual(self.session.turn_no, first.turn_no)
-        self.assertEqual(self.session.consumed, set(first.consumed))
-        self.assertEqual(self.session.temporaries.snapshot(), first.temporary_effects)
-        self.assertEqual(self.session.recent_events, first.recent_events)
-        self.assertEqual(self.session.rng.getstate(), first.rng_state)
-        self.assertIsNone(self.session.pending_clarification)
-
-        with self.assertRaisesRegex(SessionError, "validation is stale"):
-            self.session.resolve_plan(plan, validation)
-        with self.assertRaisesRegex(SessionError, "unknown or expired quote"):
-            self.session.resolve(quote_id=quote["quote_id"])
-
-        # Restoring an abandoned head does not erase either line of history.
-        restored_again = self.session.restore_checkpoint(second_id)
-        self.assertEqual(restored_again.branch_id, "branch_2")
-        self.assertEqual(self.session.state_revision, 4)
-        self.assertEqual(self.session.state, second_state)
-        self.assertEqual(
-            {branch.branch_id: branch.head_checkpoint_id for branch in self.session.branches()},
-            {"main": second_id, "branch_1": first_id, "branch_2": second_id},
-        )
-        self.assertEqual(root_id, "cp_0")
-
-    def test_commit_after_undo_gets_the_restored_node_as_parent(self) -> None:
-        self.observe_portrait()
-        fork_id = self.session.current_checkpoint_id
-        self.observe_portrait()
-        abandoned_id = self.session.current_checkpoint_id
-
-        self.session.undo()
-        revision_after_undo = self.session.state_revision
-        self.observe_portrait()
-        branch_head = self.session.current_checkpoint_id
-
-        self.assertGreater(self.session.state_revision, revision_after_undo)
-        self.assertEqual(self.session.current_branch_id, "branch_1")
-        self.assertEqual(self.session.get_checkpoint(branch_head).parent_id, fork_id)
-        self.assertEqual(
-            [checkpoint.checkpoint_id for checkpoint in self.session.checkpoint_history()],
-            ["cp_0", fork_id, branch_head],
-        )
+        self.assertEqual(restored.restored_checkpoint_id, first_checkpoint)
+        self.assertEqual(self.session.state["positions"]["player"], "building_lobby")
+        self.assertEqual(self.session.turn_no, 1)
+        self.assertEqual(self.session.state_revision, revision_before + 1)
         branches = {branch.branch_id: branch for branch in self.session.branches()}
-        self.assertEqual(branches["main"].head_checkpoint_id, abandoned_id)
-        self.assertEqual(branches["branch_1"].head_checkpoint_id, branch_head)
+        self.assertEqual(branches["main"].head_checkpoint_id, abandoned_head)
+        self.assertEqual(
+            branches[restored.branch_id].head_checkpoint_id,
+            first_checkpoint,
+        )
+
+    def test_commit_after_undo_uses_restored_node_as_parent(self) -> None:
+        self.commit("第一步")
+        restored_parent = self.session.current_checkpoint_id
+        self.commit("第二步", {"positions.player": "convenience_store"})
+        self.session.undo()
+
+        self.commit("改走洗衣店", {"positions.player": "laundromat"})
+
+        head = self.session.get_checkpoint(self.session.current_checkpoint_id)
+        self.assertEqual(head.parent_id, restored_parent)
+        self.assertEqual(self.session.state["positions"]["player"], "laundromat")
 
     def test_root_cannot_be_undone_and_checkpoint_reads_are_isolated(self) -> None:
-        checkpoint = self.session.get_checkpoint(self.session.current_checkpoint_id)
-        checkpoint.state["world"]["time_left"] = -100
-
-        self.assertNotEqual(self.session.state["world"]["time_left"], -100)
-        self.assertNotEqual(
-            self.session.get_checkpoint(self.session.current_checkpoint_id).state["world"]["time_left"],
-            -100,
+        root_id = self.session.current_checkpoint_id
+        checkpoint = self.session.get_checkpoint(root_id)
+        checkpoint.state["positions"]["player"] = "tampered"
+        self.assertEqual(
+            self.session.get_checkpoint(root_id).state["positions"]["player"],
+            "building_lobby",
         )
         with self.assertRaisesRegex(SessionError, "故事起点"):
             self.session.undo()
+
+    def test_failed_fact_batch_is_atomic(self) -> None:
+        state_before = copy.deepcopy(self.session.state)
+        checkpoint_before = self.session.current_checkpoint_id
+
+        with self.assertRaisesRegex(StatePathError, "unknown state path root"):
+            self.commit("坏批次", {"unknown.path": True})
+
+        self.assertEqual(self.session.state, state_before)
+        self.assertEqual(self.session.turn_no, 0)
+        self.assertEqual(self.session.state_revision, 0)
+        self.assertEqual(self.session.current_checkpoint_id, checkpoint_before)
+
+    def test_stale_fact_batch_cannot_cross_a_new_revision(self) -> None:
+        stale = FactBatch(
+            state_revision=0,
+            player_text="稍后再执行的旧批次",
+            narrative="这段叙事基于旧状态生成。",
+        )
+        self.session.commit_narrative("先做别的。", "你先处理了另一件事。")
+
+        with self.assertRaisesRegex(SessionError, "fact batch is stale"):
+            self.session.commit_fact_batch(stale)
+
+        self.assertEqual(self.session.turn_no, 1)
+        self.assertEqual(self.session.state_revision, 1)
 
 
 if __name__ == "__main__":

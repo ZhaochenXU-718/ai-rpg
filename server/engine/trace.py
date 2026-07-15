@@ -1,11 +1,4 @@
-"""Action-loop trace recording (llm-action-plan-protocol.md section 11).
-
-One JSONL file per session under data/traces/.  Every LLM action records at
-least: perception, raw model response, parsed plan, validation, replans,
-the confirmed quote and the committed outcome, plus model/prompt version,
-latency and usage.  Traces feed offline replay (ReplayProvider), error
-reproduction and the later capability-module boundary analysis.
-"""
+"""Append-only JSONL trace recording for generation and fact commits."""
 
 from __future__ import annotations
 

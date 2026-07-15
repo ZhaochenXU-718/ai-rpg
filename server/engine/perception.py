@@ -1,13 +1,8 @@
-"""Player perception: the single wall between authoritative state and eyes.
+"""Subject-scoped perception: the wall between authority and model context.
 
-Builds the protocol ``PlayerPerception`` from full state, and provides the
-disclosure filter used by every player-facing surface (quote card, status
-bar, LLM prompt).  The rule is structural: anything that is not derivable
-from this module is not player-visible, no matter which UI renders it.
-
-Which state keys count as public is declared by the story's ``perception``
-block, never hardcoded here — the engine knows namespaces, not story
-vocabulary.
+Player, future NPC and Director prompts share ``PerceptionSnapshot`` but are
+built through explicit audience scopes. The builder exposes only facts that
+belong to that subject; no snapshot carries an execution capability menu.
 """
 
 from __future__ import annotations
@@ -15,13 +10,15 @@ from __future__ import annotations
 from typing import Any
 
 from .content import Story
-from .director import current_goal, suggested_intents
+from .director import current_goal
 from .llm_protocol import (
     EntityKind,
     PerceivedEntity,
-    PlayerPerception,
+    PerceptionAudience,
+    PerceptionSnapshot,
 )
 from .state import get_value
+
 
 GROUP_KINDS = {
     "people": EntityKind.CHARACTER,
@@ -32,21 +29,16 @@ GROUP_KINDS = {
 
 
 def perception_config(story: Story) -> dict[str, Any]:
-    """Story-declared public state keys with display labels."""
     config = story.data.get("perception") or {}
     return {
         "character_state": dict(config.get("character_state") or {}),
         "world_state": dict(config.get("world_state") or {}),
         "scene_state": dict(config.get("scene_state") or {}),
-        # What the player's accumulated knowledge log is called in this
-        # story ("线索" in a mystery, "回忆" in a romance, ...). The engine
-        # concept is just "facts"; the word belongs to the story.
         "facts_label": str(config.get("facts_label") or "发现"),
     }
 
 
 def public_state_paths(story: Story, state: dict[str, Any]) -> set[str]:
-    """Dotted paths whose values the player can currently perceive."""
     config = perception_config(story)
     paths = {f"world.{key}" for key in config["world_state"]}
     paths.update(f"scene.{key}" for key in config["scene_state"])
@@ -62,12 +54,6 @@ def filter_changes_for_player(
     state: dict[str, Any],
     changes: list[tuple[str, Any, Any]],
 ) -> list[tuple[str, Any, Any]]:
-    """Keep only changes on paths the player can already perceive.
-
-    This is deliberately stricter than "visible after the action": a quote
-    must not become an oracle.  Reveals, item acquisitions, movements and
-    endings stay behind the wall until they are committed and narrated.
-    """
     public = public_state_paths(story, state)
     return [
         (path, previous, new)
@@ -76,10 +62,13 @@ def filter_changes_for_player(
     ]
 
 
-def character_public_state(story: Story, state: dict[str, Any], char_id: str) -> dict[str, Any]:
-    config = perception_config(story)["character_state"]
+def character_public_state(
+    story: Story,
+    state: dict[str, Any],
+    char_id: str,
+) -> dict[str, Any]:
     values = {}
-    for key in config:
+    for key in perception_config(story)["character_state"]:
         value = get_value(state, f"{char_id}.{key}")
         if value is not None:
             values[key] = value
@@ -105,38 +94,81 @@ def _entity(
     )
 
 
-def build_player_perception(
+def _characters_at_for_subject(
+    story: Story,
+    state: dict[str, Any],
+    location_id: str,
+    subject_id: str,
+) -> list[str]:
+    positions = state.get("positions") or {}
+    return [
+        char_id
+        for char_id in story.characters
+        if char_id != subject_id and positions.get(char_id) == location_id
+    ]
+
+
+def _default_subject_context(
+    story: Story,
+    audience: PerceptionAudience,
+    subject_id: str,
+) -> dict[str, Any]:
+    if audience != PerceptionAudience.NPC:
+        return {}
+    card = story.characters.get(subject_id) or {}
+    return {
+        key: card[key]
+        for key in (
+            "motivation",
+            "voice",
+            "initial_relationship",
+            "secret",
+        )
+        if card.get(key)
+    }
+
+
+def build_subject_perception(
     story: Story,
     state: dict[str, Any],
     *,
+    audience: PerceptionAudience,
+    subject_id: str,
     session_id: str,
     turn_no: int,
     state_revision: int,
     recent_events: tuple[str, ...] = (),
-) -> PlayerPerception:
-    """Assemble the player-visible snapshot from authoritative state."""
-    # Local import: capabilities imports resolver, which must stay optional
-    # for pure perception consumers.
-    from .capabilities import available_tools
+    known_facts: tuple[str, ...] = (),
+    subject_context: dict[str, Any] | None = None,
+) -> PerceptionSnapshot:
+    """Build a scoped view for one physically placed subject."""
+    location_id = str((state.get("positions") or {}).get(subject_id) or "")
+    if not location_id:
+        raise ValueError(f"perception subject '{subject_id}' has no position")
 
-    location_id = story.current_location(state)
-    actionable = story.actionable_objects(state)
+    characters = _characters_at_for_subject(
+        story, state, location_id, subject_id
+    )
+    scene_objects = story.scene_objects(location_id, state)
+    inventory_ids = story.inventory(state, subject_id)
+    exit_labels = story.exit_labels(state, location_id)
+    actionable = scene_objects | set(characters) | set(inventory_ids) | set(exit_labels)
     entities: list[PerceivedEntity] = []
     seen: set[str] = set()
 
-    for char_id in story.characters_at(state):
+    for char_id in characters:
         char = story.characters.get(char_id) or {}
         entities.append(_entity(
             char_id,
             story.character_name(char_id),
             EntityKind.CHARACTER,
             actionable=char_id in actionable,
-            description=" ".join((char.get("public_profile") or "").split()),
+            description=" ".join(str(char.get("public_profile") or "").split()),
             public_state=character_public_state(story, state, char_id),
         ))
         seen.add(char_id)
 
-    for item_id in story.items_at(state):
+    for item_id in story.items_at(state, location_id):
         item = story.items.get(item_id) or {}
         entities.append(_entity(
             item_id,
@@ -173,13 +205,15 @@ def build_player_perception(
         ))
         seen.add(situation_id)
 
-    for node_id, label in story.exit_labels(state).items():
-        if node_id in seen:
-            continue
-        entities.append(_entity(
-            node_id, label, EntityKind.EXIT, actionable=True,
-        ))
-        seen.add(node_id)
+    for node_id, label in exit_labels.items():
+        if node_id not in seen:
+            entities.append(_entity(
+                node_id,
+                label,
+                EntityKind.EXIT,
+                actionable=True,
+            ))
+            seen.add(node_id)
 
     inventory = tuple(
         _entity(
@@ -189,7 +223,7 @@ def build_player_perception(
             actionable=True,
             description=str((story.items.get(item_id) or {}).get("description") or ""),
         )
-        for item_id in story.inventory(state)
+        for item_id in inventory_ids
     )
 
     config = perception_config(story)
@@ -203,21 +237,51 @@ def build_player_perception(
         if value is not None:
             public_state[f"scene.{key}"] = value
 
-    location_name = story.location_name(state, location_id)
+    if audience == PerceptionAudience.PLAYER:
+        goal = current_goal(story, state)
+    else:
+        goal = str((story.characters.get(subject_id) or {}).get("motivation") or "")
 
-    return PlayerPerception(
+    return PerceptionSnapshot(
+        audience=audience,
+        subject_id=subject_id,
         story_id=story.id,
         session_id=session_id,
         turn_no=turn_no,
         state_revision=state_revision,
         location_id=location_id,
-        location_name=location_name,
-        current_goal=current_goal(story, state),
+        location_name=story.location_name(state, location_id),
+        current_goal=goal,
         visible_entities=tuple(entities),
         inventory=inventory,
-        known_facts=tuple(dict.fromkeys(str(fact) for fact in state.get("facts") or [])),
-        available_intents=tuple(suggested_intents(story, state)),
-        capability_tools=available_tools(story, state),
+        known_facts=tuple(dict.fromkeys(str(fact) for fact in known_facts)),
         recent_events=tuple(event for event in recent_events if event),
         public_state=public_state,
+        subject_context=(
+            dict(subject_context)
+            if subject_context is not None
+            else _default_subject_context(story, audience, subject_id)
+        ),
+    )
+
+
+def build_player_perception(
+    story: Story,
+    state: dict[str, Any],
+    *,
+    session_id: str,
+    turn_no: int,
+    state_revision: int,
+    recent_events: tuple[str, ...] = (),
+) -> PerceptionSnapshot:
+    return build_subject_perception(
+        story,
+        state,
+        audience=PerceptionAudience.PLAYER,
+        subject_id=story.player_id,
+        session_id=session_id,
+        turn_no=turn_no,
+        state_revision=state_revision,
+        recent_events=recent_events,
+        known_facts=tuple(str(fact) for fact in state.get("facts") or []),
     )

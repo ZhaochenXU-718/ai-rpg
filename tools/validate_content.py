@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate AIRPG story YAML files against the v1/v2 content contract."""
+"""Validate AIRPG story YAML files against the active content contract."""
 
 from __future__ import annotations
 
@@ -12,7 +12,15 @@ from typing import Any
 import yaml
 
 
+NARRATIVE_FIRST_PROFILE = "narrative_first"
+PRE_PIVOT_ARCHIVE_PROFILE = "pre_pivot_archive"
+KNOWN_CONTENT_PROFILES = {
+    NARRATIVE_FIRST_PROFILE,
+    PRE_PIVOT_ARCHIVE_PROFILE,
+}
+
 REQUIRED_TOP_LEVEL = {
+    "content_profile",
     "id",
     "title",
     "version",
@@ -25,13 +33,20 @@ REQUIRED_TOP_LEVEL = {
     "global_rules",
     "initial_state",
     "characters",
-    "intents",
     "scenes",
     "storylets",
     "endings",
 }
+PRE_PIVOT_REQUIRED_TOP_LEVEL = REQUIRED_TOP_LEVEL | {"intents"}
+RETIRED_NARRATIVE_TOP_LEVEL = {
+    "intents",
+    "quote_warnings",
+    "resolution_limits",
+    "world_rules",
+}
 
 REQUIRED_CHARACTER_FIELDS = {"name", "role", "public_profile"}
+REQUIRED_NARRATIVE_NPC_FIELDS = {"motivation", "voice", "initial_relationship"}
 REQUIRED_INTENT_FIELDS = {"label", "description"}
 REQUIRED_SCENE_FIELDS = {
     "name",
@@ -39,8 +54,8 @@ REQUIRED_SCENE_FIELDS = {
     "goal",
     "entry_text",
     "available_objects",
-    "suggested_intents",
 }
+PRE_PIVOT_REQUIRED_SCENE_FIELDS = REQUIRED_SCENE_FIELDS | {"suggested_intents"}
 REQUIRED_STORYLET_FIELDS = {
     "id",
     "title",
@@ -65,6 +80,12 @@ KNOWN_STORYLET_TYPES = {
     "ending_route",
 }
 KNOWN_STORYLET_ATTRIBUTIONS = {"action_response", "world_beat"}
+RETIRED_NARRATIVE_TRIGGER_FIELDS = {
+    "intent",
+    "intent_any",
+    "object_any",
+    "object_all",
+}
 CONDITION_GROUPS = (
     "world_state",
     "player_state",
@@ -215,9 +236,24 @@ def validate_state_path(
 
 
 def validate_top_level(data: dict[str, Any], report: ValidationReport) -> None:
-    missing = sorted(REQUIRED_TOP_LEVEL - data.keys())
+    profile = data.get("content_profile")
+    required = (
+        PRE_PIVOT_REQUIRED_TOP_LEVEL
+        if profile == PRE_PIVOT_ARCHIVE_PROFILE
+        else REQUIRED_TOP_LEVEL
+    )
+    missing = sorted(required - data.keys())
     for key in missing:
         report.error(f"Missing required top-level field: {key}")
+    if profile not in KNOWN_CONTENT_PROFILES:
+        report.error(
+            "content_profile must be 'narrative_first' or 'pre_pivot_archive'."
+        )
+    if profile == NARRATIVE_FIRST_PROFILE:
+        for field in sorted(RETIRED_NARRATIVE_TOP_LEVEL & data.keys()):
+            report.error(
+                f"{field} is retired from narrative_first content."
+            )
     schema_version = data.get("schema_version")
     if schema_version not in (1, 2):
         report.error("schema_version must be 1 or 2.")
@@ -342,6 +378,8 @@ def validate_items(
     known_paths: set[str],
     node_ids: set[str],
     report: ValidationReport,
+    *,
+    narrative_first: bool = False,
 ) -> set[str]:
     items = data.get("items", {})
     if not isinstance(items, dict):
@@ -363,6 +401,11 @@ def validate_items(
         if policy is None:
             continue
         policy_context = f"{context}.request_policy"
+        if narrative_first:
+            report.error(
+                f"{policy_context} is retired from narrative_first content."
+            )
+            continue
         if not isinstance(policy, dict):
             report.error(f"{policy_context} must be a mapping.")
             continue
@@ -551,15 +594,38 @@ def validate_player_role(data: dict[str, Any], characters: dict[str, Any], repor
         report.error(f"player_role.id '{player_id}' is not defined in characters.")
 
 
-def validate_characters(characters: dict[str, Any], report: ValidationReport) -> None:
+def validate_characters(
+    characters: dict[str, Any],
+    report: ValidationReport,
+    *,
+    player_id: str,
+    narrative_first: bool = False,
+) -> None:
     for char_id, char in characters.items():
         if not isinstance(char, dict):
             report.error(f"characters.{char_id} must be a mapping.")
             continue
         for field in sorted(REQUIRED_CHARACTER_FIELDS - char.keys()):
             report.error(f"characters.{char_id} missing required field: {field}")
+        if narrative_first and char_id != player_id:
+            for field in sorted(REQUIRED_NARRATIVE_NPC_FIELDS - char.keys()):
+                report.error(f"characters.{char_id} missing required field: {field}")
+            for field in REQUIRED_NARRATIVE_NPC_FIELDS & char.keys():
+                if not isinstance(char[field], str) or not char[field].strip():
+                    report.error(
+                        f"characters.{char_id}.{field} must be a non-empty string."
+                    )
         if "initial_state" in char and not isinstance(char["initial_state"], dict):
             report.error(f"characters.{char_id}.initial_state must be a mapping.")
+        if (
+            narrative_first
+            and isinstance(char.get("initial_state"), dict)
+            and "rapport" in char["initial_state"]
+        ):
+            report.error(
+                f"characters.{char_id}.initial_state.rapport is retired; "
+                "use initial_relationship prose instead."
+            )
 
 
 def validate_intents(intents: dict[str, Any], report: ValidationReport) -> None:
@@ -734,6 +800,8 @@ def validate_scenes(
     node_ids: set[str],
     directed_edges: set[tuple[str, str]],
     item_ids: set[str],
+    *,
+    narrative_first: bool = False,
 ) -> None:
     character_ids = set(characters)
     intent_ids = set(intents)
@@ -741,8 +809,18 @@ def validate_scenes(
         if not isinstance(scene, dict):
             report.error(f"scenes.{scene_id} must be a mapping.")
             continue
-        for field in sorted(REQUIRED_SCENE_FIELDS - scene.keys()):
+        required_fields = (
+            REQUIRED_SCENE_FIELDS
+            if narrative_first
+            else PRE_PIVOT_REQUIRED_SCENE_FIELDS
+        )
+        for field in sorted(required_fields - scene.keys()):
             report.error(f"scenes.{scene_id} missing required field: {field}")
+        if narrative_first and "suggested_intents" in scene:
+            report.error(
+                f"scenes.{scene_id}.suggested_intents is retired from "
+                "narrative_first content."
+            )
 
         if schema_version == 1 and "available_characters" not in scene:
             report.error(f"scenes.{scene_id} missing required field: available_characters")
@@ -790,9 +868,10 @@ def validate_scenes(
             if char_id not in character_ids:
                 report.error(f"scenes.{scene_id}.available_characters references unknown character '{char_id}'.")
 
-        for intent_id in scene.get("suggested_intents", []) or []:
-            if intent_id not in intent_ids:
-                report.error(f"scenes.{scene_id}.suggested_intents references unknown intent '{intent_id}'.")
+        if not narrative_first:
+            for intent_id in scene.get("suggested_intents", []) or []:
+                if intent_id not in intent_ids:
+                    report.error(f"scenes.{scene_id}.suggested_intents references unknown intent '{intent_id}'.")
 
         available_objects = scene.get("available_objects")
         if not isinstance(available_objects, dict):
@@ -1050,6 +1129,8 @@ def validate_storylets(
     player_id: str,
     item_ids: set[str],
     report: ValidationReport,
+    *,
+    narrative_first: bool = False,
 ) -> None:
     scene_ids = set(scenes)
     intent_ids = set(intents)
@@ -1078,10 +1159,20 @@ def validate_storylets(
             report.error(
                 f"storylets.{storylet_id}.attribution must be 'action_response' or 'world_beat'."
             )
+        if narrative_first and attribution != "world_beat":
+            report.error(
+                f"storylets.{storylet_id} must declare attribution: world_beat; "
+                "action_response storylets are retired."
+            )
         phase = storylet.get("phase", "action")
         if phase not in {"action", "after_world"}:
             report.error(
                 f"storylets.{storylet_id}.phase must be 'action' or 'after_world'."
+            )
+        if narrative_first and phase != "after_world":
+            report.error(
+                f"storylets.{storylet_id} must declare phase: after_world; "
+                "narrative_first anchors subscribe after fact commit."
             )
         director_hint = storylet.get("director_hint")
         if director_hint is not None and not isinstance(director_hint, (bool, str)):
@@ -1099,6 +1190,12 @@ def validate_storylets(
 
         trigger = storylet.get("trigger")
         if isinstance(trigger, dict):
+            if narrative_first:
+                for field in sorted(RETIRED_NARRATIVE_TRIGGER_FIELDS & trigger.keys()):
+                    report.error(
+                        f"storylets.{storylet_id}.trigger.{field} is retired; "
+                        "anchors may only subscribe to committed state facts."
+                    )
             if phase == "action":
                 if isinstance(trigger.get("intent"), str):
                     authored_action_intents.add(trigger["intent"])
@@ -1106,8 +1203,13 @@ def validate_storylets(
                     authored_action_intents.update(
                         value for value in trigger["intent_any"] if isinstance(value, str)
                     )
+            validated_trigger = {
+                key: value
+                for key, value in trigger.items()
+                if not narrative_first or key not in RETIRED_NARRATIVE_TRIGGER_FIELDS
+            }
             validate_trigger(
-                storylet_id, trigger, scene_ids, intent_ids, object_ids,
+                storylet_id, validated_trigger, scene_ids, intent_ids, object_ids,
                 known_paths, character_ids, node_ids, item_ids, report,
             )
         elif trigger is not None:
@@ -1301,6 +1403,8 @@ def validate_content_graph(
     scenes: dict[str, Any],
     storylets: list[Any],
     report: ValidationReport,
+    *,
+    narrative_first: bool = False,
 ) -> None:
     """Dead-flag and scene-reachability checks over the whole content graph."""
     set_flags: set[str] = set()
@@ -1317,7 +1421,7 @@ def validate_content_graph(
 
     initial_state = data.get("initial_state", {})
     declared_flags = initial_state.get("flags", {}) if isinstance(initial_state, dict) else {}
-    if isinstance(declared_flags, dict):
+    if isinstance(declared_flags, dict) and not narrative_first:
         for flag in declared_flags:
             if flag not in set_flags:
                 report.warn(
@@ -1358,6 +1462,9 @@ def validate_content_graph(
                 f"scenes.{scene_id} is unreachable: no storylet or authored exit path "
                 "can move the player to it, and it is not the initial scene."
             )
+
+    if narrative_first:
+        return
 
     # An action_response with no action or object grounding can ride along with
     # any turn and impersonate its outcome. Automatic events are valid, but
@@ -1521,39 +1628,56 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
     report = ValidationReport()
     validate_top_level(data, report)
 
+    narrative_first = data.get("content_profile") == NARRATIVE_FIRST_PROFILE
     characters = require_mapping(data, "characters", report)
-    intents = require_mapping(data, "intents", report)
+    intents = {} if narrative_first else require_mapping(data, "intents", report)
     scenes = require_mapping(data, "scenes", report)
     storylets = require_list(data, "storylets", report)
     endings = require_mapping(data, "endings", report)
     schema_version = data.get("schema_version") if data.get("schema_version") in (1, 2) else 1
 
     validate_player_role(data, characters, report)
-    validate_characters(characters, report)
-    validate_intents(intents, report)
+    player_id = (data.get("player_role") or {}).get("id", "player")
+    validate_characters(
+        characters,
+        report,
+        player_id=player_id,
+        narrative_first=narrative_first,
+    )
+    if not narrative_first:
+        validate_intents(intents, report)
 
     known_paths = collect_state_paths(data)
     node_ids, directed_edges = validate_world_board(data, scenes, characters, report)
     item_ids = validate_items(
-        data, scenes, characters, known_paths, node_ids, report
+        data,
+        scenes,
+        characters,
+        known_paths,
+        node_ids,
+        report,
+        narrative_first=narrative_first,
     )
     validate_world_rules(
         data, scenes, characters, known_paths, node_ids, directed_edges, item_ids, report
     )
     validate_scenes(
         scenes, characters, intents, known_paths, report, schema_version,
-        node_ids, directed_edges, item_ids,
+        node_ids, directed_edges, item_ids, narrative_first=narrative_first,
     )
     validate_storylets(
         storylets, scenes, intents, characters, known_paths,
         node_ids, schema_version, (data.get("player_role") or {}).get("id", "player"),
-        item_ids, report,
+        item_ids, report, narrative_first=narrative_first,
     )
     validate_endings(endings, known_paths, set(characters), report)
-    validate_resolution_limits(data, known_paths, set(characters), report)
+    if not narrative_first:
+        validate_resolution_limits(data, known_paths, set(characters), report)
     validate_perception_block(data, known_paths, set(characters), report)
     validate_generation(data, scenes, characters, node_ids, item_ids, report)
-    validate_content_graph(data, scenes, storylets, report)
+    validate_content_graph(
+        data, scenes, storylets, report, narrative_first=narrative_first
+    )
 
     return report
 

@@ -1,28 +1,20 @@
-"""Director-layer signals: scene goals and goal-achievement checks.
-
-Stage 2 keeps the director thin: it reads exit_conditions as "the scene goal
-is met, push toward a transition" and surfaces the current goal for the UI.
-Event scheduling itself lives in the storylet passes; the player's current
-scene is derived from their authoritative board position in schema v2.
-"""
+"""Conservative Director beat validation retained across the pivot."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from .conditions import check_condition_block, check_exit_conditions
 from .content import Story
-from .effects import effect_changes_scene
 from .llm import DirectorRequest, LLMProvider
 from .llm_protocol import (
-    AuthorityLevel,
     CommittedChange,
     CommittedDirectorBeat,
     CommittedLocalCanon,
     DirectorBeat,
     DirectorBeatKind,
     DirectorBeatValidation,
+    FactAuthority,
     IssueSeverity,
     ValidationIssue,
     new_protocol_id,
@@ -45,69 +37,6 @@ def current_scene_id(state: dict[str, Any]) -> str:
 def current_goal(story: Story, state: dict[str, Any]) -> str:
     scene = story.scene(current_scene_id(state))
     return scene.get("goal") or state["world"].get("current_goal", "")
-
-
-def goal_achieved(story: Story, state: dict[str, Any]) -> bool:
-    scene = story.scene(current_scene_id(state))
-    return check_exit_conditions(state, scene.get("exit_conditions"), story.endings)
-
-
-def suggested_intents(story: Story, state: dict[str, Any]) -> list[str]:
-    scene = story.scene(current_scene_id(state))
-    return list(scene.get("suggested_intents") or story.intents.keys())
-
-
-def transition_options(
-    story: Story,
-    state: dict[str, Any],
-    consumed: set[str],
-) -> list[dict[str, Any]]:
-    """Player-actionable transitions whose state preconditions already hold.
-
-    Surfaces scene-changing storylets and explicitly opted-in interactions as
-    concrete director hints ("可尝试：后楼梯上二楼——潜入"), so an earned
-    opportunity is never invisible.
-    Only intent/object requirements are left for the player to supply;
-    auto-firing transitions (no intent requirement) are excluded.
-    """
-    options: list[dict[str, Any]] = []
-    actionable = story.actionable_objects(state)
-    for storylet in story.storylets:
-        if storylet.get("phase", "action") != "action":
-            continue
-        if storylet.get("once") and storylet.get("id") in consumed:
-            continue
-        effect = storylet.get("effect") or {}
-        director_hint = storylet.get("director_hint", False)
-        if not effect_changes_scene(effect, story.player_id) and not director_hint:
-            continue
-        trigger = storylet.get("trigger") or {}
-        intents = [trigger["intent"]] if "intent" in trigger else list(trigger.get("intent_any") or [])
-        if not intents:
-            continue  # fires on state alone; nothing for the player to do
-        state_conditions = {
-            key: value for key, value in trigger.items()
-            if key not in ("intent", "intent_any", "object_any", "object_all")
-        }
-        if not check_condition_block(state, state_conditions):
-            continue
-        required_objects = list(trigger.get("object_all") or [])
-        alternative_objects = list(trigger.get("object_any") or [])
-        if not set(required_objects).issubset(actionable):
-            continue
-        available_alternatives = [obj for obj in alternative_objects if obj in actionable]
-        if alternative_objects and not available_alternatives:
-            continue
-        options.append({
-            "title": director_hint if isinstance(director_hint, str) else storylet.get(
-                "title", storylet.get("id")
-            ),
-            "intents": intents,
-            "objects": list(dict.fromkeys(
-                required_objects + available_alternatives
-            )),
-        })
-    return options
 
 
 def _beat_issue(code: str, message: str) -> ValidationIssue:
@@ -306,7 +235,7 @@ def run_director_cycle(
     *,
     state_revision: int,
     player_action: str = "",
-    world_rules: tuple[str, ...] = (),
+    boundaries: tuple[str, ...] = (),
     max_beats: int = 2,
 ) -> DirectorCycleResult:
     """Propose, revalidate and atomically attach optional beats to a turn."""
@@ -330,21 +259,21 @@ def run_director_cycle(
         location_name=str(scene.get("name") or location_id),
         current_goal=current_goal(story, state),
         player_id=story.player_id,
-        player_action=player_action or f"{result.intent}: {', '.join(result.objects)}",
-        action_targets=tuple(result.objects),
-        committed_result={
-            "result_tier": result.result_tier,
-            "action_response_hints": list(result.action_response_hints),
-            "world_beat_hints": list(result.world_beat_hints),
-            "world_reaction_hints": list(result.world_reaction_hints),
+        player_action=player_action or result.player_text,
+        action_targets=tuple(result.references),
+        committed_turn={
+            "narrative": result.narrative,
+            "committed_paths": [path for path, _, _ in result.changes],
+            "new_facts": list(result.new_facts),
+            "anchor_hints": list(result.narrative_hints),
         },
         candidates=candidates,
-        world_rules=world_rules,
+        boundaries=boundaries,
         max_beats=max(0, min(2, max_beats)),
         generation=generation,
     )
     try:
-        response = provider.propose_director_beats(request)
+        response = provider.propose_director(request)
     except Exception as exc:
         # Director is an optional post-action layer. Provider/network failures
         # must never strand an already adjudicated player action before its
@@ -359,9 +288,22 @@ def run_director_cycle(
     cycle.raw = response.raw
     cycle.latency_ms = response.latency_ms
     cycle.usage = dict(response.usage)
+    if response.plan.state_revision != state_revision:
+        cycle.rejected.append({
+            "plan_id": response.plan.plan_id,
+            "issues": [{
+                "code": "director.stale_plan",
+                "message": (
+                    f"Director plan uses revision {response.plan.state_revision}; "
+                    f"current revision is {state_revision}."
+                ),
+            }],
+        })
+        result.director_trace = cycle.trace_dict()
+        return cycle
     moved = _moved_actor_ids(result, story.player_id)
     used_actors: set[str] = set()
-    for beat in response.beats[: request.max_beats]:
+    for beat in response.plan.beats[: request.max_beats]:
         if beat.actor_id in used_actors:
             cycle.rejected.append({
                 "beat_id": beat.beat_id,
@@ -395,7 +337,7 @@ def run_director_cycle(
                 path=path,
                 previous=previous,
                 new=beat.target_location_id,
-                authority=AuthorityLevel.MECHANICAL,
+                authority=FactAuthority.IRON_LAW,
                 source=source,
                 reason="通过验证的既有人物进场节拍",
             ),)
@@ -412,12 +354,11 @@ def run_director_cycle(
         cycle.accepted.append(committed)
         result.director_beats.append(committed)
         result.narrative_hints.append(beat.summary)
-        result.world_beat_hints.append(beat.summary)
         used_actors.add(beat.actor_id)
 
     # Local Canon proposals ride the same cycle but face their own admission
     # checks; the per-turn cap is a hard engine throttle, not a suggestion.
-    for proposal in getattr(response, "local_canon", ())[:MAX_LOCAL_CANON_PER_TURN]:
+    for proposal in response.plan.local_canon[:MAX_LOCAL_CANON_PER_TURN]:
         validation = validate_local_canon(
             story, state, proposal, state_revision=state_revision,
         )
@@ -440,7 +381,6 @@ def run_director_cycle(
         cycle.accepted_local_canon.append(committed_fact)
         result.local_canon.append(committed_fact)
         result.narrative_hints.append(committed_fact.narrative_hint)
-        result.world_beat_hints.append(committed_fact.narrative_hint)
 
     result.director_trace = cycle.trace_dict()
     return cycle

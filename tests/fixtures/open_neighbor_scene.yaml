@@ -1,7 +1,8 @@
 id: open_neighbor_scene
 title: "开放场景夹具：院子里的遮雨布"
-version: 0.1.0
+version: 0.3.0
 schema_version: 2
+content_profile: narrative_first
 language: zh-CN
 genre: open_slice_of_life_fixture
 
@@ -56,19 +57,12 @@ world_board:
   edges:
     - { from: workshop, to: courtyard, bidirectional: true }
 
-world_rules: []
-
 items:
   rain_canvas:
     name: "旧防雨布"
     description: "洗净后叠在修理铺架子上，可以临时遮住长桌。"
     portable: true
     consumable: false
-    request_policy:
-      purposes:
-        table_cover: "能临时盖住长桌的东西"
-      always_grant: true
-      grant_narrative: "周师傅听清用途，把洗净的旧防雨布交给你暂用。"
 
 initial_state:
   world:
@@ -94,53 +88,20 @@ characters:
     role: practical_keeper
     public_profile: "修理铺店主，愿意把闲置东西借给明确说明用途的邻居。"
     motivation: "不耽误营业地解决邻里的实际小问题。"
-    initial_state:
-      rapport: 1
+    voice: "说话直接，先问用途和归还时间；确认是公共事务后会给出明确答复。"
+    initial_relationship: "认识玩家这个邻居；对说明用途、尊重物品归属的人一向爽快。"
   neighbor_lin:
     name: "林姐"
     role: observant_neighbor
     public_profile: "住在院子另一侧，做事前习惯先看清大家需要什么。"
     motivation: "在确实需要时搭把手，不抢着替别人做决定。"
-    initial_state:
-      rapport: 1
+    voice: "先描述自己看到的情况，再提出建议；不会替别人许诺。"
+    initial_relationship: "和玩家是普通邻居，愿意提供信息，但会把决定留给当事人。"
 
 perception:
   facts_label: "留意到"
   world_state:
     current_goal: "当前目标"
-  character_state:
-    rapport: "熟络"
-
-intents:
-  observe:
-    label: "看看"
-    description: "观察当前可见的人物和环境。"
-    quote_required: false
-    fallback_narrative: "你把眼前的情况又看清了一些，没有凭空发现新的东西。"
-  talk:
-    label: "聊聊"
-    description: "和在场人物说明情况或询问意见。"
-    quote_required: false
-    fallback_narrative: "你们简单聊了几句，没有产生未经裁决的新承诺。"
-  move:
-    label: "走过去"
-    description: "沿已声明的出口移动。"
-    quote_required: false
-    engine_action: move
-  custom:
-    label: "自定义做法"
-    description: "用自然语言提出当前场景中的其他普通行动。"
-    quote_required: false
-    fallback_narrative: "你做了一次尝试，但当前没有可验证的机械结果。"
-
-resolution_limits:
-  max_paths_per_action: 1
-  patchable:
-    keeper_zhou.rapport: { min: 0, max: 5, max_step: 1 }
-    neighbor_lin.rapport: { min: 0, max: 5, max_step: 1 }
-  protected:
-    - positions.*
-    - item_locations.*
 
 scenes:
   workshop:
@@ -156,7 +117,6 @@ scenes:
       environment:
         tool_wall: "挂满常用工具的墙"
         half_open_door: "半开的卷帘门"
-    suggested_intents: [observe, talk, move, custom]
     exit_conditions:
       any:
         - inventory_all: [rain_canvas]
@@ -174,7 +134,6 @@ scenes:
       environment:
         long_table: "靠墙的公共长桌"
         old_tree: "院角的老树"
-    suggested_intents: [observe, talk, move, custom]
     exit_conditions:
       any:
         - ending_reached: true

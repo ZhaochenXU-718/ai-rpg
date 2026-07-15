@@ -1,11 +1,7 @@
-"""AIRPG engine package.
+"""AIRPG narrative-first engine package.
 
-The active runtime is still the deterministic stage-2 engine.  Stage-3 LLM
-calls are not connected yet, but the structured boundary is in place:
-
-- ``llm_protocol``: perception / action plan / validation / outcome models
-- ``perception``: builds PlayerPerception, the single disclosure wall for
-  the LLM prompt, the quote card and the status UI
-- ``capabilities``: the static router that turns a validated ActionPlan
-  into a resolver payload; LLM proposals never bypass the adjudication core
+Phase 1 Batch C keeps the authoritative ledger, subject-scoped perception,
+state timeline, trace, Local Canon and conservative Director validation. The
+provider surface is prose/card/Director/NPC-native; Phase 2 will populate the
+FactBatch seam through extraction and iron-law validation.
 """

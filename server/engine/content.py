@@ -40,10 +40,6 @@ class Story:
         return self.data.get("storylets") or []
 
     @property
-    def intents(self) -> dict[str, Any]:
-        return self.data.get("intents") or {}
-
-    @property
     def endings(self) -> dict[str, Any]:
         return self.data.get("endings") or {}
 
@@ -70,14 +66,6 @@ class Story:
     @property
     def world_edges(self) -> list[dict[str, Any]]:
         return self.world_board.get("edges") or []
-
-    @property
-    def world_rules(self) -> list[dict[str, Any]]:
-        return self.data.get("world_rules") or []
-
-    @property
-    def resolution_limits(self) -> dict[str, Any] | None:
-        return self.data.get("resolution_limits")
 
     @property
     def generation(self) -> dict[str, Any]:
@@ -174,8 +162,12 @@ class Story:
                 found.append(item_id)
         return found
 
-    def available_exits(self, state: dict[str, Any]) -> list[dict[str, Any]]:
-        """Player exits whose state conditions currently hold.
+    def available_exits(
+        self,
+        state: dict[str, Any],
+        node_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Subject-local exits whose state conditions currently hold.
 
         Authored exits come from the scene declaration. Committed generated
         locations (Local Canon) contribute derived exits: parent → generated
@@ -184,7 +176,7 @@ class Story:
         """
         from .conditions import check_condition_block
 
-        current = self.current_location(state)
+        current = node_id or self.current_location(state)
         exits = []
         for exit_spec in self.scene(current).get("exits") or []:
             if isinstance(exit_spec, dict) and check_condition_block(
@@ -212,10 +204,14 @@ class Story:
                 })
         return exits
 
-    def exit_labels(self, state: dict[str, Any]) -> dict[str, str]:
+    def exit_labels(
+        self,
+        state: dict[str, Any],
+        node_id: str | None = None,
+    ) -> dict[str, str]:
         return {
             str(exit_spec["to"]): str(exit_spec.get("label") or exit_spec["to"])
-            for exit_spec in self.available_exits(state)
+            for exit_spec in self.available_exits(state, node_id)
             if isinstance(exit_spec.get("to"), str)
         }
 
@@ -352,16 +348,6 @@ class Story:
                 if isinstance(record, dict) and record.get("name"):
                     return str(record["name"])
         return self.object_labels(scene_id, state).get(object_id, object_id)
-
-    def intent(self, intent_id: str) -> dict[str, Any]:
-        return self.intents.get(intent_id) or {}
-
-    def quote_required(self, intent_id: str) -> bool:
-        """Explicit quote_required, else derived from base_risk (schema section 6)."""
-        intent = self.intent(intent_id)
-        if "quote_required" in intent:
-            return bool(intent["quote_required"])
-        return intent.get("base_risk", "medium") != "low"
 
     def character_name(self, char_id: str) -> str:
         return (self.characters.get(char_id) or {}).get("name", char_id)

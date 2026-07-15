@@ -1,7 +1,8 @@
 id: rooftop_supper
 title: "晚风中的一桌饭"
-version: 0.2.0
+version: 0.4.0
 schema_version: 2
+content_profile: narrative_first
 language: zh-CN
 genre: urban_slice_of_life
 target_duration_minutes: 15-25
@@ -69,50 +70,6 @@ world_board:
     - { from: convenience_store, to: rooftop, bidirectional: true }
     - { from: laundromat, to: rooftop, bidirectional: true }
 
-world_rules:
-  - id: aunt_comes_upstairs
-    actor: aunt_chen
-    priority: 30
-    when:
-      scene: rooftop
-      positions:
-        aunt_chen: building_lobby
-      world_state:
-        dinner_status: ready
-    move:
-      to: rooftop
-    narrative_hint: "陈阿姨看见桌面已经铺好，提着保温壶从门厅上了天台。"
-
-  - id: xiaoyu_comes_upstairs
-    actor: xiaoyu
-    priority: 20
-    when:
-      scene: rooftop
-      positions:
-        xiaoyu: laundromat
-      world_state:
-        dinner_status: ready
-      flags:
-        xiaoyu_invited: true
-    move:
-      to: rooftop
-    narrative_hint: "小雨等洗衣机停稳，抱着自己的帆布包从后楼梯上来。"
-
-  - id: ahe_comes_upstairs
-    actor: ahe
-    priority: 20
-    when:
-      scene: rooftop
-      positions:
-        ahe: convenience_store
-      world_state:
-        dinner_status: ready
-      flags:
-        ahe_invited: true
-    move:
-      to: rooftop
-    narrative_hint: "阿禾把电动车停进雨棚，确认暂时没有新订单，快步上了天台。"
-
 items:
   food_basket:
     name: "保温饭篮"
@@ -124,14 +81,6 @@ items:
     description: "罗叔借出的旧野餐垫，洗得很干净，正好能铺在天台折叠桌上。"
     portable: true
     consumable: false
-    request_policy:
-      when:
-        flags: { dinner_agreed: true }
-      purposes:
-        table_cover: "能铺桌的干净东西"
-      min_rapport: 1
-      grant_narrative: "罗叔听明白你只是想找件干净东西铺桌，从储物间翻出洗净的旧野餐垫借给你。"
-      refusal_narrative: "罗叔没有直接答应，只说储物间的东西不能随便外借；也许先让他更了解这顿饭的安排会好一些。"
   checked_cloth:
     name: "蓝白格布"
     description: "小雨刚洗好的市集桌布，她愿意先借来铺晚饭，吃完再收走。"
@@ -156,13 +105,6 @@ initial_state:
     food_basket: { type: carried_by, id: aunt_chen }
     picnic_mat: { type: carried_by, id: clerk_luo }
     checked_cloth: { type: carried_by, id: xiaoyu }
-  player:
-    energy: 3
-    soaked: false
-  scene:
-    ambient_noise: 2
-    wind_level: 1
-    social_pressure: low
   flags:
     opening_delivered: false
     dinner_agreed: false
@@ -187,9 +129,8 @@ characters:
       她不喜欢浪费，也不愿把自己的失落说成需要别人照顾。
     secret: "女儿临时加班让她有些失落，但她更在意饭菜有没有被认真吃掉。"
     motivation: "找个不麻烦人的办法处理多做的晚饭。"
-    initial_state:
-      rapport: 2
-      fatigue: 1
+    voice: "说话利落，常用具体安排代替情绪表达；关心别人时也不刻意煽情。"
+    initial_relationship: "把玩家当作脸熟、可以商量一件小事的邻居，但不会要求对方为自己负责。"
   clerk_luo:
     name: "罗叔"
     role: practical_helper
@@ -198,9 +139,8 @@ characters:
       门口的纸箱总比他能拆完的速度多一摞。
     secret: "储物间里有一张很久没用的野餐垫。"
     motivation: "守好晚班生意，也愿意在不耽误营业的范围内搭把手。"
-    initial_state:
-      rapport: 1
-      fatigue: 2
+    voice: "句子短而务实，先问用途和归还安排，很少说客套话。"
+    initial_relationship: "认识玩家这个熟客；只要用途明确、店里不受影响，就愿意爽快帮忙。"
   xiaoyu:
     name: "小雨"
     role: reserved_neighbor
@@ -209,9 +149,8 @@ characters:
       她不是不想和人说话，只是习惯先确认一场社交会不会占满整个晚上。
     secret: "她今晚的稿子已经交完，真正担心的是答应吃饭后不好意思提前离开。"
     motivation: "把市集桌布洗好，回家安静休息；如果邀请足够轻松，她也愿意坐一会儿。"
-    initial_state:
-      rapport: 1
-      fatigue: 2
+    voice: "回答克制，会先确认时间和退出方式；放松后偶尔补一句轻微的玩笑。"
+    initial_relationship: "和玩家只是点头之交；不排斥同桌，但需要确信邀请没有人情压力。"
   ahe:
     name: "阿禾"
     role: passing_neighbor
@@ -220,92 +159,11 @@ characters:
       他正靠在便利店门边调整松动的手机支架，晚高峰很快就要开始。
     secret: "他今天只吃过一个饭团，但不愿因为吃饭耽误别人的订单。"
     motivation: "在晚高峰前修好手机支架；如果时间明确，他愿意吃几口热饭再走。"
-    initial_state:
-      rapport: 0
-      fatigue: 3
+    voice: "语速快，常夹着订单和时间信息；接受善意时会先说明自己随时可能离开。"
+    initial_relationship: "给玩家送过几次餐、彼此认脸；愿意聊两句，但不会因一顿饭耽误工作。"
 
 perception:
   facts_label: "留意到"
-  scene_state:
-    ambient_noise: "周围动静"
-    wind_level: "风"
-    social_pressure: "拘谨"
-  character_state:
-    rapport: "熟络"
-    fatigue: "疲惫"
-
-quote_warnings:
-  - when:
-      state_gte: { xiaoyu.fatigue: 3 }
-      same_location: [player, xiaoyu]
-    text: "小雨明显很累，过分热情的邀请可能会变成负担。"
-  - when:
-      state_gte: { ahe.fatigue: 4 }
-      same_location: [player, ahe]
-    text: "阿禾一边看订单提示，一边活动发酸的肩膀。"
-
-intents:
-  observe:
-    label: "留意"
-    description: "观察人物、物品、环境或眼下的日常细节。"
-    base_risk: low
-    quote_required: false
-    fallback_narrative: "你停下来多看了一会儿，眼下没有新的事情需要插手。"
-  talk:
-    label: "聊聊"
-    description: "与人交谈、询问、邀请、说明计划、听对方顾虑或礼貌地说服。"
-    base_risk: medium
-    quote_required: false
-    fallback_proposal:
-      npc_state: { key: rapport, step: 1 }
-    fallback_narrative: "你们聊了几句。对方没有立刻改变安排，但谈话比刚才自然了一点。"
-  help:
-    label: "搭把手"
-    description: "处理对方眼下明确的小麻烦，例如整理纸箱、固定支架或收好布料。"
-    base_risk: low
-    quote_required: false
-    requires_storylet_match: true
-  prepare:
-    label: "布置"
-    description: "使用手边物品铺桌、摆饭或完成天台晚饭的准备。"
-    base_risk: low
-    quote_required: false
-    requires_storylet_match: true
-    min_objects: 3
-  custom:
-    label: "自定义做法"
-    description: "提出不在预设动作里的日常做法，由系统映射为最接近的结构化行动。"
-    base_risk: variable
-    quote_required: false
-    fallback_narrative: "你的做法带来了一点变化，但还没有让晚饭计划真正往前走。"
-  move:
-    label: "走过去"
-    description: "沿当前出口前往门厅、临街小店或天台。"
-    base_risk: low
-    quote_required: false
-    engine_action: move
-
-resolution_limits:
-  max_paths_per_action: 3
-  patchable:
-    aunt_chen.rapport: { min: 0, max: 5, max_step: 1 }
-    aunt_chen.fatigue: { min: 0, max: 5, max_step: 1 }
-    clerk_luo.rapport: { min: 0, max: 5, max_step: 1 }
-    clerk_luo.fatigue: { min: 0, max: 5, max_step: 1 }
-    xiaoyu.rapport: { min: 0, max: 5, max_step: 1 }
-    xiaoyu.fatigue: { min: 0, max: 5, max_step: 1 }
-    ahe.rapport: { min: 0, max: 5, max_step: 1 }
-    ahe.fatigue: { min: 0, max: 5, max_step: 1 }
-    scene.ambient_noise: { min: 0, max: 5, max_step: 1 }
-    scene.wind_level: { min: 0, max: 4, max_step: 1 }
-    scene.social_pressure: { values: [low, medium, high] }
-    player.energy: { min: 0, max: 5, max_step: 1 }
-  protected:
-    - positions.*
-    - item_locations.*
-    - world.dinner_status
-    - world.guest_count
-    - flags.*
 
 scenes:
   building_lobby:
@@ -335,11 +193,6 @@ scenes:
       states:
         warm_food: "饭菜还热"
         humid_evening: "闷热的傍晚"
-    suggested_intents:
-      - observe
-      - talk
-      - move
-      - custom
     exit_conditions:
       any:
         - flags:
@@ -373,12 +226,6 @@ scenes:
       states:
         store_open: "便利店正在营业"
         delivery_rush_soon: "送餐晚高峰将近"
-    suggested_intents:
-      - observe
-      - talk
-      - help
-      - move
-      - custom
     exit_conditions:
       any:
         - inventory_all:
@@ -414,12 +261,6 @@ scenes:
       states:
         closing_time_near: "打烊时间将近"
         quiet_company: "各忙各的安静"
-    suggested_intents:
-      - observe
-      - talk
-      - help
-      - move
-      - custom
     exit_conditions:
       any:
         - inventory_all:
@@ -454,63 +295,17 @@ scenes:
       states:
         rain_smell: "风里的雨味"
         table_space: "刚好够几个人的小桌"
-    suggested_intents:
-      - observe
-      - talk
-      - prepare
-      - move
-      - custom
     exit_conditions:
       any:
         - ending_reached: true
 
 storylets:
-  # 通用 move 已负责沿合法出口更新位置；这些到达卡只负责给都市故事的移动
-  # 一个明确的行动回应和“成功”归因，不重复改写 positions。
-  - id: arrive_building_lobby
-    title: "回到九号楼门厅"
-    type: progress
-    once: false
-    trigger:
-      scene: building_lobby
-      intent: move
-    effect: {}
-    narrative_hint: "门厅里的热风和饭菜香重新靠近，楼梯、街边小店都在几步之外。"
-
-  - id: arrive_convenience_store
-    title: "走进梧桐便利店"
-    type: progress
-    once: false
-    trigger:
-      scene: convenience_store
-      intent: move
-    effect: {}
-    narrative_hint: "便利店的冷气迎面压住暑气，收银台、纸箱和等订单的人都在眼前。"
-
-  - id: arrive_laundromat
-    title: "走进转角洗衣店"
-    type: progress
-    once: false
-    trigger:
-      scene: laundromat
-      intent: move
-    effect: {}
-    narrative_hint: "滚筒的低响包住街边车声，烘干机的暖风从门缝里散出来。"
-
-  - id: arrive_rooftop
-    title: "推开天台铁门"
-    type: progress
-    once: false
-    trigger:
-      scene: rooftop
-      intent: move
-    effect: {}
-    narrative_hint: "天台铁门在身后合上，晚风、折叠桌和楼群间的夕阳一起展开。"
-
+  # 锚点只订阅已经提交的铁律事实；普通移动、对话、帮忙和铺桌均由叙事循环处理。
   - id: opening_offer
     title: "多出来的一篮饭"
     type: opportunity
     attribution: world_beat
+    phase: after_world
     once: true
     trigger:
       scene: building_lobby
@@ -520,211 +315,6 @@ storylets:
       set_flags:
         opening_delivered: true
     narrative_hint: "陈阿姨收到女儿加班的消息，一篮刚做好的饭菜临时没了去处。"
-
-  - id: accept_supper_plan
-    title: "先把饭摆起来"
-    type: progress
-    once: true
-    trigger:
-      scene: building_lobby
-      intent_any:
-        - talk
-        - custom
-      object_any:
-        - aunt_chen
-        - food_basket
-      flags:
-        dinner_agreed: false
-    effect:
-      set_flags:
-        dinner_agreed: true
-      set_world:
-        dinner_status: planning
-      move_items:
-        food_basket: { type: carried_by, id: player }
-      add_facts:
-        - "陈阿姨只希望饭菜被好好吃掉；人多人少都可以，不必为了热闹勉强谁。"
-        - "天台有一张折叠桌，但需要找块干净的东西铺桌。"
-    narrative_hint: "陈阿姨把饭篮交给你，约好等桌面铺好再上楼；她特意说，人少也没关系。"
-
-  - id: notice_rooftop_table
-    title: "公告栏上的天台照片"
-    type: reveal
-    once: true
-    trigger:
-      scene: building_lobby
-      intent: observe
-      object_any:
-        - notice_board
-        - roof_access
-    effect:
-      set_flags:
-        rooftop_noticed: true
-      add_facts:
-        - "天台水箱旁有一张公共折叠桌，铺块干净的布就能用。"
-    narrative_hint: "一张褪色的旧活动照片提醒你，天台水箱旁一直收着一张折叠桌。"
-
-  - id: clerk_lends_picnic_mat
-    title: "储物间里的野餐垫"
-    type: reward
-    once: true
-    trigger:
-      scene: convenience_store
-      intent: help
-      object_all:
-        - clerk_luo
-        - carton_stack
-      flags:
-        dinner_agreed: true
-    effect:
-      state_patch:
-        clerk_luo.rapport: +1
-        clerk_luo.fatigue: -1
-      move_items:
-        picnic_mat: { type: carried_by, id: player }
-      add_facts:
-        - "罗叔不能离开收银台，但愿意把储物间里的折叠野餐垫借给你。"
-    narrative_hint: "你把纸箱拆平码好后，罗叔从腾出的储物间里翻出一张洗净的旧野餐垫。"
-
-  - id: help_rider_before_rush
-    title: "拧紧手机支架"
-    type: reward
-    once: true
-    trigger:
-      scene: convenience_store
-      intent: help
-      object_all:
-        - ahe
-        - phone_mount
-      flags:
-        dinner_agreed: true
-    effect:
-      set_flags:
-        ahe_invited: true
-      state_patch:
-        ahe.rapport: +2
-        ahe.fatigue: -1
-      add_facts:
-        - "阿禾答应在晚高峰前上天台吃几口；如果新订单来了，他会随时离开。"
-    narrative_hint: "支架终于不再往下坠。你把饭局说得很随意，阿禾看了眼订单地图，答应空档时上来吃几口。"
-
-  - id: invite_rider_with_clear_timing
-    title: "只坐到订单来"
-    type: opportunity
-    once: true
-    trigger:
-      scene: convenience_store
-      intent: talk
-      object_any:
-        - ahe
-      flags:
-        dinner_agreed: true
-        ahe_invited: false
-      npc_state:
-        ahe.rapport_gte: 1
-    effect:
-      set_flags:
-        ahe_invited: true
-      add_facts:
-        - "阿禾愿意在新订单到来前上楼坐一会儿；这不是必须吃完整顿饭的邀请。"
-    narrative_hint: "听见你说随时可以走，阿禾才点头：下一单来之前，他会上去扒几口热饭。"
-
-  - id: help_xiaoyu_with_cloth
-    title: "把大件布料理开"
-    type: reward
-    once: true
-    trigger:
-      scene: laundromat
-      intent: help
-      object_all:
-        - xiaoyu
-        - tangled_sheet
-      flags:
-        dinner_agreed: true
-    effect:
-      set_flags:
-        xiaoyu_invited: true
-      state_patch:
-        xiaoyu.rapport: +1
-        xiaoyu.fatigue: -1
-      move_items:
-        checked_cloth: { type: carried_by, id: player }
-      add_facts:
-        - "小雨愿意把洗净的蓝白格布借来铺桌，也会在烘干结束后上楼坐一会儿。"
-    narrative_hint: "你们把缠住的床单和格布一层层理开。小雨把格布递给你，说吃完前叫她一声就好。"
-
-  - id: invite_xiaoyu_without_pressure
-    title: "不用待到散席"
-    type: opportunity
-    once: true
-    trigger:
-      scene: laundromat
-      intent: talk
-      object_any:
-        - xiaoyu
-      flags:
-        dinner_agreed: true
-        xiaoyu_invited: false
-      npc_state:
-        xiaoyu.rapport_gte: 2
-    effect:
-      set_flags:
-        xiaoyu_invited: true
-      add_facts:
-        - "小雨在意的不是饭局本身，而是能否随时离开；说清楚之后，她愿意来坐一会儿。"
-    narrative_hint: "你说明不用待到散席，小雨把电脑合上一半，答应等烘干机停下就上楼。"
-
-  - id: set_table_with_picnic_mat
-    title: "铺开野餐垫"
-    type: progress
-    once: true
-    trigger:
-      scene: rooftop
-      intent: prepare
-      object_all:
-        - food_basket
-        - picnic_mat
-        - folding_table
-      inventory_all:
-        - food_basket
-        - picnic_mat
-      world_state:
-        dinner_status: planning
-    effect:
-      set_flags:
-        table_set: true
-      set_world:
-        dinner_status: ready
-      move_items:
-        food_basket: { type: board, id: rooftop }
-        picnic_mat: { type: board, id: rooftop }
-    narrative_hint: "你把野餐垫铺上折叠桌，饭盒一只只打开，家常菜的热气被晚风吹向水箱边。"
-
-  - id: set_table_with_checked_cloth
-    title: "铺开蓝白格布"
-    type: progress
-    once: true
-    trigger:
-      scene: rooftop
-      intent: prepare
-      object_all:
-        - food_basket
-        - checked_cloth
-        - folding_table
-      inventory_all:
-        - food_basket
-        - checked_cloth
-      world_state:
-        dinner_status: planning
-    effect:
-      set_flags:
-        table_set: true
-      set_world:
-        dinner_status: ready
-      move_items:
-        food_basket: { type: board, id: rooftop }
-        checked_cloth: { type: board, id: rooftop }
-    narrative_hint: "蓝白格布压住折叠桌的旧划痕。你摆开饭盒，汤面还浮着一层很薄的热气。"
 
   - id: host_arrives
     title: "陈阿姨上楼"
@@ -807,8 +397,6 @@ storylets:
     effect:
       set_world:
         dinner_status: shared
-      state_patch:
-        scene.social_pressure: low
     narrative_hint: "没有人宣布饭局开始。有人递碗，有人挪凳子，原本各自赶时间的人就这样坐成了一桌。"
 
   - id: small_table_settles
@@ -826,8 +414,6 @@ storylets:
     effect:
       set_world:
         dinner_status: small
-      state_patch:
-        scene.social_pressure: low
     narrative_hint: "桌边没有坐满，但空位并不尴尬。陈阿姨把汤往你这边推了推，晚饭安静地开始了。"
 
 endings:
@@ -872,7 +458,7 @@ authoring_notes:
     scenes: 4
     characters: 5
     items: 3
-    storylets: 19
+    storylets: 6
     endings: 2
   route_notes:
     - "铺桌物有两条等价路线：帮罗叔整理纸箱借野餐垫，或帮小雨理开布料借格布。"
@@ -882,5 +468,5 @@ authoring_notes:
   production_log:
     created_at: "2026-07-13"
     updated_at: "2026-07-14"
-    revision: "v0.2 移除统一回合倒计时与时间耗尽结局，全部行动按可逆行为直接执行。"
+    revision: "v0.3 转为 narrative_first 内容：移除意图、报价、数值关系和普通行动 storylet，只保留事实锚点。"
     source: "原创都市日常短篇；未使用既有影视、小说或游戏 IP。"

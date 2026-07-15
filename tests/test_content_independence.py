@@ -43,16 +43,29 @@ class GenericRuntimeContentIndependenceTests(unittest.TestCase):
         with patch("builtins.print") as mocked_print:
             print_help()
         output = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
-        self.assertIn("<意图编号或 ID>", output)
-        self.assertIn("<物品> <目标>", output)
+        self.assertIn("直接输入自然语言行动", output)
+        self.assertIn("idea <编号>", output)
+        self.assertNotIn("意图编号", output)
+        self.assertNotIn("报价", output)
 
     def test_story_discovery_and_selection_do_not_prefer_a_known_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             content_dir = Path(temp_dir)
             first = content_dir / "a_story.yaml"
             second = content_dir / "b_story.yaml"
-            first.write_text('id: a_story\ntitle: "故事甲"\n', encoding="utf-8")
-            second.write_text('id: b_story\ntitle: "故事乙"\n', encoding="utf-8")
+            archived = content_dir / "c_story.yaml"
+            first.write_text(
+                'id: a_story\ntitle: "故事甲"\ncontent_profile: narrative_first\n',
+                encoding="utf-8",
+            )
+            second.write_text(
+                'id: b_story\ntitle: "故事乙"\ncontent_profile: narrative_first\n',
+                encoding="utf-8",
+            )
+            archived.write_text(
+                'id: c_story\ntitle: "历史故事"\ncontent_profile: pre_pivot_archive\n',
+                encoding="utf-8",
+            )
 
             self.assertEqual(discover_story_paths(content_dir), [first, second])
             with patch("server.cli.read_line", return_value="2"):

@@ -21,7 +21,7 @@ from .llm_protocol import (
     CommittedChange,
     CommittedLocalCanon,
     GENERATED_ENTITY_PREFIX,
-    AuthorityLevel,
+    FactAuthority,
     IssueSeverity,
     LocalCanonKind,
     LocalCanonProposal,
@@ -296,7 +296,7 @@ def commit_local_canon(
         path=path,
         previous=None,
         new=record,
-        authority=AuthorityLevel.LOCAL_CANON,
+        authority=FactAuthority.LOCAL_CANON,
         source=f"local_canon.{proposal.entity_id}",
         reason=proposal.reason,
     )
