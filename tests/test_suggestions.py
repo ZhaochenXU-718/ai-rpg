@@ -35,15 +35,15 @@ class SuggestedActionsTest(unittest.TestCase):
         self.assertTrue(all(not hasattr(action, "plan") for action in suggestions.actions))
         self.assertTrue(all(not hasattr(action, "validation") for action in suggestions.actions))
 
-    def test_exit_card_discloses_possible_position_touch(self) -> None:
+    def test_exit_card_remains_a_proposal_without_execution_metadata(self) -> None:
         suggestions = generate_action_suggestions(
             self.session, self.provider, self.recorder
         )
         movement = next(
             action for action in suggestions.actions
-            if "人物位置" in action.expected_iron_law_touches
+            if "动身" in action.action_text
         )
-        self.assertIn("动身", movement.action_text)
+        self.assertNotIn("expected_changes", movement.to_dict())
 
     def test_selection_returns_editable_action_text_and_cards_expire(self) -> None:
         suggestions = generate_action_suggestions(
@@ -72,6 +72,56 @@ class SuggestedActionsTest(unittest.TestCase):
         self.assertNotIn(stale_text, {
             action.action_text for action in suggestions.actions
         })
+
+    def test_hidden_authored_entities_are_removed_from_prompt_and_cards(self) -> None:
+        class CapturingProvider(ScriptedProvider):
+            request = None
+
+            def propose_suggestions(self, request):
+                self.request = request
+                return super().propose_suggestions(request)
+
+        visible_dialogue = SuggestedAction(
+            suggestion_id="suggestion_visible",
+            perception_revision=self.session.state_revision,
+            title="直接询问",
+            action_text="陈阿姨，您想怎么安排这顿饭？",
+            focus="social",
+            rationale="只回应当前可见人物。",
+        )
+        hidden_character = SuggestedAction(
+            suggestion_id="suggestion_hidden",
+            perception_revision=self.session.state_revision,
+            title="询问罗叔",
+            action_text="我问问罗叔是否愿意上楼吃饭。",
+            focus="investigate",
+            rationale="引用当前不可见的作者人物。",
+        )
+        provider = CapturingProvider(
+            suggestion_batches=[(visible_dialogue, hidden_character)]
+        )
+
+        suggestions = generate_action_suggestions(
+            self.session, provider, self.recorder
+        )
+
+        prompt_boundaries = "\n".join(provider.request.boundaries)
+        self.assertNotIn("罗叔", prompt_boundaries)
+        self.assertNotIn("阿禾", prompt_boundaries)
+        rendered = "\n".join(
+            action.title + action.action_text + action.rationale
+            for action in suggestions.actions
+        )
+        self.assertNotIn("罗叔", rendered)
+        self.assertNotIn("阿禾", rendered)
+        self.assertTrue(all(
+            action.action_text.startswith("我")
+            for action in suggestions.actions
+        ))
+        self.assertIn(
+            "我对陈阿姨说：“您想怎么安排这顿饭？”",
+            {action.action_text for action in suggestions.actions},
+        )
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 """Subject-scoped perception: the wall between authority and model context.
 
-Player, future NPC and Director prompts share ``PerceptionSnapshot`` but are
-built through explicit audience scopes. The builder exposes only facts that
-belong to that subject; no snapshot carries an execution capability menu.
+Player and future NPC prompts share ``PerceptionSnapshot`` but are built
+through explicit audience scopes. The builder exposes only facts that belong
+to that subject; no snapshot carries an execution capability menu.
 """
 
 from __future__ import annotations
@@ -10,14 +10,12 @@ from __future__ import annotations
 from typing import Any
 
 from .content import Story
-from .director import current_goal
 from .llm_protocol import (
     EntityKind,
     PerceivedEntity,
     PerceptionAudience,
     PerceptionSnapshot,
 )
-from .state import get_value
 
 
 GROUP_KINDS = {
@@ -28,51 +26,12 @@ GROUP_KINDS = {
 }
 
 
-def perception_config(story: Story) -> dict[str, Any]:
-    config = story.data.get("perception") or {}
-    return {
-        "character_state": dict(config.get("character_state") or {}),
-        "world_state": dict(config.get("world_state") or {}),
-        "scene_state": dict(config.get("scene_state") or {}),
-        "facts_label": str(config.get("facts_label") or "发现"),
-    }
-
-
-def public_state_paths(story: Story, state: dict[str, Any]) -> set[str]:
-    config = perception_config(story)
-    paths = {f"world.{key}" for key in config["world_state"]}
-    paths.update(f"scene.{key}" for key in config["scene_state"])
-    for char_id in story.characters_at(state):
-        for key in config["character_state"]:
-            paths.add(f"{char_id}.{key}")
-            paths.add(f"characters.{char_id}.{key}")
-    return paths
-
-
-def filter_changes_for_player(
-    story: Story,
-    state: dict[str, Any],
-    changes: list[tuple[str, Any, Any]],
-) -> list[tuple[str, Any, Any]]:
-    public = public_state_paths(story, state)
-    return [
-        (path, previous, new)
-        for path, previous, new in changes
-        if path in public and previous != new
-    ]
-
-
 def character_public_state(
     story: Story,
     state: dict[str, Any],
     char_id: str,
 ) -> dict[str, Any]:
-    values = {}
-    for key in perception_config(story)["character_state"]:
-        value = get_value(state, f"{char_id}.{key}")
-        if value is not None:
-            values[key] = value
-    return values
+    return {}
 
 
 def _entity(
@@ -197,18 +156,6 @@ def build_subject_perception(
             ))
             seen.add(obj_id)
 
-    for situation_id, record in story.generated_situations_at(state, location_id).items():
-        if situation_id in seen:
-            continue
-        entities.append(_entity(
-            situation_id,
-            str(record.get("name") or situation_id),
-            EntityKind.STATE,
-            actionable=situation_id in actionable,
-            description=str(record.get("description") or ""),
-        ))
-        seen.add(situation_id)
-
     for node_id, label in exit_labels.items():
         if node_id not in seen:
             entities.append(_entity(
@@ -233,19 +180,8 @@ def build_subject_perception(
         for item_id in inventory_ids
     )
 
-    config = perception_config(story)
-    public_state: dict[str, Any] = {}
-    for key in config["world_state"]:
-        value = get_value(state, f"world.{key}")
-        if value is not None:
-            public_state[f"world.{key}"] = value
-    for key in config["scene_state"]:
-        value = get_value(state, f"scene.{key}")
-        if value is not None:
-            public_state[f"scene.{key}"] = value
-
     if audience == PerceptionAudience.PLAYER:
-        goal = current_goal(story, state)
+        goal = story.current_goal(state)
     else:
         goal = str((story.characters.get(subject_id) or {}).get("motivation") or "")
 
@@ -263,7 +199,7 @@ def build_subject_perception(
         inventory=inventory,
         known_facts=tuple(dict.fromkeys(str(fact) for fact in known_facts)),
         recent_events=tuple(event for event in recent_events if event),
-        public_state=public_state,
+        public_state={},
         subject_context=(
             dict(subject_context)
             if subject_context is not None
@@ -290,5 +226,5 @@ def build_player_perception(
         turn_no=turn_no,
         state_revision=state_revision,
         recent_events=recent_events,
-        known_facts=tuple(str(fact) for fact in state.get("facts") or []),
+        known_facts=(),
     )

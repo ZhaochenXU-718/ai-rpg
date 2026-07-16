@@ -9,7 +9,6 @@ import yaml
 from server.engine.content import Story
 from server.engine.llm_protocol import FactBatch
 from server.engine.session import GameSession, SessionError
-from server.engine.world import board_neighbors, next_hop_toward
 from tools.validate_content import validate_content
 
 
@@ -18,31 +17,12 @@ ROOFTOP = ROOT / "content" / "rooftop_supper.yaml"
 ARCHIVE = ROOT / "content" / "midnight_archive.yaml"
 
 
-class SpatialGraphTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.story = Story.load(ROOFTOP)
-
-    def test_board_neighbors_are_authored_and_bidirectional(self) -> None:
-        self.assertEqual(
-            board_neighbors(self.story, "building_lobby"),
-            ["convenience_store", "laundromat", "rooftop"],
-        )
-        self.assertIn("building_lobby", board_neighbors(self.story, "rooftop"))
-
-    def test_shortest_path_returns_one_adjacent_hop(self) -> None:
-        self.assertEqual(
-            next_hop_toward(self.story, "building_lobby", "rooftop"),
-            "rooftop",
-        )
-        self.assertIsNone(next_hop_toward(self.story, "building_lobby", "missing"))
-
-
 class FactCommitSkeletonTest(unittest.TestCase):
     def setUp(self) -> None:
         self.story = Story.load(ROOFTOP)
         self.session = GameSession(self.story, log_dir=None)
 
-    def test_first_fact_commit_runs_the_opening_anchor_once(self) -> None:
+    def test_prose_commits_advance_revision_without_hidden_effects(self) -> None:
         first = self.session.commit_fact_batch(FactBatch(
             state_revision=self.session.state_revision,
             player_text="我先听陈阿姨说完。",
@@ -54,9 +34,12 @@ class FactCommitSkeletonTest(unittest.TestCase):
             narrative="你抬头看了看旧公告。",
         ))
 
-        self.assertEqual(first.fired, ["opening_offer"])
-        self.assertTrue(self.session.state["flags"]["opening_delivered"])
-        self.assertEqual(second.fired, [])
+        self.assertEqual(first.changes, [])
+        self.assertEqual(second.changes, [])
+        self.assertEqual(
+            set(self.session.state),
+            {"positions", "item_locations"},
+        )
         self.assertEqual(self.session.turn_no, 2)
         self.assertEqual(self.session.state_revision, 2)
 
@@ -127,12 +110,6 @@ class NarrativeContentValidationTest(unittest.TestCase):
                 f"missing required field: {field}" in error
                 for error in report.errors
             ))
-
-    def test_anchor_cannot_route_an_action(self) -> None:
-        broken = self.load()
-        broken["storylets"][0]["trigger"]["intent"] = "talk"
-        report = validate_content(broken)
-        self.assertTrue(any("trigger.intent is retired" in e for e in report.errors))
 
     def test_schema_v2_still_requires_positions_and_item_locations(self) -> None:
         missing_character = self.load()

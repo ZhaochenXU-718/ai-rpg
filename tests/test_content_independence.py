@@ -45,6 +45,7 @@ class GenericRuntimeContentIndependenceTests(unittest.TestCase):
         output = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list)
         self.assertIn("直接输入自然语言行动", output)
         self.assertIn("idea <编号>", output)
+        self.assertIn("memory raw", output)
         self.assertNotIn("意图编号", output)
         self.assertNotIn("报价", output)
 

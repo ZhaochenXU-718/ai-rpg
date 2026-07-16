@@ -74,12 +74,14 @@ class SessionTimelineTest(unittest.TestCase):
 
     def test_failed_fact_batch_is_atomic(self) -> None:
         state_before = copy.deepcopy(self.session.state)
+        memory_before = copy.deepcopy(self.session.memory)
         checkpoint_before = self.session.current_checkpoint_id
 
         with self.assertRaisesRegex(StatePathError, "unknown state path root"):
             self.commit("坏批次", {"unknown.path": True})
 
         self.assertEqual(self.session.state, state_before)
+        self.assertEqual(self.session.memory, memory_before)
         self.assertEqual(self.session.turn_no, 0)
         self.assertEqual(self.session.state_revision, 0)
         self.assertEqual(self.session.current_checkpoint_id, checkpoint_before)

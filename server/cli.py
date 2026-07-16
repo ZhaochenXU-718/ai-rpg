@@ -12,14 +12,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server.engine.content import Story
-from server.engine.director import current_scene_id
 from server.engine.fact_pipeline import resolve_player_turn
 from server.engine.llm import LLMProviderError, create_provider
-from server.engine.perception import perception_config
 from server.engine.renderer import (
     render_characters,
-    render_ending,
     render_intro,
+    render_memory,
     render_status,
     render_turn,
 )
@@ -86,10 +84,11 @@ def choose_story_path(
 def print_help() -> None:
     print(
         "直接输入自然语言行动；也可输入 ideas，再用 idea <编号> 采用一张提案卡。\n"
-        "命令：who 在场人物；state 权威状态；facts 已知事实；"
+        "命令：who 在场人物；state 物理状态；memory 叙事记忆；memory raw 原始事件；"
         "undo 撤回并创建分支；timeline 查看分支；help 帮助；quit 退出。\n"
-        "当前运行 Phase 2 最小后验闭环：散文中的移动、物品、披露和承诺只有"
-        "经过事实抽取与代码级铁律检查后才会写入账本；冲突候选不会消耗回合。"
+        "当前只对人物换场和关键物品转手做后验事实检查；普通对话、约定、"
+        "关系和情绪保留在叙事记忆中，按需整理后供旁白和行动提案参考。"
+        "冲突候选不会消耗回合。"
     )
 
 
@@ -114,11 +113,6 @@ def print_suggestions(suggestion_set) -> None:
         print(f"[{index}] {suggestion.title}（{suggestion.focus}）")
         print(f"    {suggestion.action_text}")
         print(f"    侧重点：{suggestion.rationale}")
-        if suggestion.expected_iron_law_touches:
-            print(
-                "    可能触及铁律："
-                + "、".join(suggestion.expected_iron_law_touches)
-            )
 
 
 def execute_narrative_turn(
@@ -188,13 +182,13 @@ def main() -> int:
     print_help()
 
     last_scene = None
-    while not session.is_over:
+    while True:
         if (
             suggestion_set is not None
             and suggestion_set.perception_revision != session.state_revision
         ):
             suggestion_set = None
-        scene_now = current_scene_id(session.state)
+        scene_now = story.current_location(session.state)
         print()
         if scene_now != last_scene:
             print("【在场人物】")
@@ -235,6 +229,12 @@ def main() -> int:
             continue
         if lowered in {"timeline", "branches", "时间线", "分支"}:
             print_timeline(session)
+            continue
+        if lowered in {"memory", "记忆"}:
+            print(render_memory(story, session.memory))
+            continue
+        if lowered in {"memory raw", "记忆 原文", "记忆 原始"}:
+            print(render_memory(story, session.memory, raw=True))
             continue
         if lowered in {"ideas", "suggestions", "提案", "建议"}:
             try:
@@ -281,21 +281,11 @@ def main() -> int:
         if lowered == "state":
             print(json.dumps(session.state, ensure_ascii=False, indent=2, default=str))
             continue
-        if lowered in {"facts", "clues"}:
-            label = perception_config(story)["facts_label"]
-            for fact in session.state["facts"] or [f"（还没有{label}）"]:
-                print(f"◇ {fact}")
-            continue
-
         try:
             execute_narrative_turn(session, provider, recorder, line)
         except (LLMProviderError, SessionError) as exc:
             print(f"（本回合未提交：{exc}。）")
 
-    if session.ending:
-        print()
-        print(render_ending(story, session.ending))
-        print(f"（本局回合数：{session.turn_no}）")
     return 0
 
 

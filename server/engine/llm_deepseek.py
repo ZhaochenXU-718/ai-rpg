@@ -6,32 +6,27 @@ import json
 import os
 import re
 import time
-from typing import Any, Callable
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Literal, Union
 
 from .llm import (
-    DirectorRequest,
-    DirectorResponse,
     FactExtractionRequest,
     FactExtractionResponse,
     LLMProvider,
     LLMProviderError,
+    MemoryCompactionRequest,
+    MemoryCompactionResponse,
     NarrativeRequest,
     NarrativeResponse,
     SuggestionRequest,
     SuggestionResponse,
 )
+from .memory import MemoryDigest, MemoryNoteGroup
 from .llm_protocol import (
-    GENERATED_ENTITY_PREFIX,
     CharacterMoveFact,
-    CommitmentFact,
-    CommitmentUpdateFact,
-    DirectorBeat,
-    DirectorPlan,
     FactExtraction,
     ItemPlacement,
     ItemTransferFact,
-    LocalCanonProposal,
-    SecretDisclosureFact,
     SuggestedAction,
     new_protocol_id,
 )
@@ -39,43 +34,103 @@ from .llm_protocol import (
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
-NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v3"
-SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v2"
-DIRECTOR_PROMPT_VERSION = "deepseek-director-v3"
-FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v1"
+NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v6"
+SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v3"
+FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v2"
+MEMORY_COMPACTION_PROMPT_VERSION = "deepseek-memory-compaction-v1"
 MAX_REPAIR_ROUNDS = 1
 
-Transport = Callable[
-    [list[dict[str, str]], dict[str, Any]],
-    tuple[str, dict[str, Any]],
-]
+
+@dataclass(frozen=True)
+class DeepSeekCallPolicy:
+    """Explicit generation settings for one provider capability."""
+
+    capability: str
+    thinking: Literal["enabled", "disabled"]
+    max_tokens: int
+    json_mode: bool
+    temperature: float | None = None
+    reasoning_effort: Literal["high", "max"] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "capability": self.capability,
+            "thinking": self.thinking,
+            "reasoning_effort": self.reasoning_effort,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "json_mode": self.json_mode,
+        }
+
+
+@dataclass(frozen=True)
+class DeepSeekCallResult:
+    """Transport-neutral completion envelope used by production and tests."""
+
+    content: str = ""
+    reasoning_content: str = ""
+    finish_reason: str | None = None
+    usage: dict[str, Any] | None = None
+
+
+NARRATIVE_CALL_POLICY = DeepSeekCallPolicy(
+    capability="narration",
+    thinking="disabled",
+    temperature=0.7,
+    max_tokens=400,
+    json_mode=False,
+)
+SUGGESTION_CALL_POLICY = DeepSeekCallPolicy(
+    capability="suggestions",
+    thinking="disabled",
+    temperature=0.3,
+    max_tokens=2048,
+    json_mode=True,
+)
+FACT_EXTRACTION_CALL_POLICY = DeepSeekCallPolicy(
+    capability="fact_extraction",
+    thinking="enabled",
+    reasoning_effort="high",
+    max_tokens=1200,
+    json_mode=True,
+)
+MEMORY_COMPACTION_CALL_POLICY = DeepSeekCallPolicy(
+    capability="memory_compaction",
+    thinking="disabled",
+    temperature=0.1,
+    max_tokens=800,
+    json_mode=True,
+)
+TransportResult = Union[DeepSeekCallResult, tuple[str, dict[str, Any]]]
+Transport = Callable[[list[dict[str, str]], dict[str, Any]], TransportResult]
 
 
 RENDER_SYSTEM_PROMPT = """\
 你是互动叙事游戏的旁白。根据【事实清单】写出刚发生的一回合。
 
-硬性规则：
-1. 只能陈述事实清单中的人物、物品、地点与事件，不得补写未提供的秘密或结果。
-2. 可以让行动成功、失败或得到人物回应；任何位置、物品、秘密或承诺变化都必须在散文中明确写出，不能含糊带过。
-3. 不得跳过空间距离、物品当前归属或人物在场条件；若事实清单含冲突反馈，必须重写冲突部分。
-4. 近期叙事只能作为背景，不得写成当前仍在发生。
+写作要求：
+1. 自然承接玩家行动、当前感知和软叙事记忆；可以补充不改变连续性的动作、对白和感官细节。
+2. 不使用远处人物、未披露私密信息，也不替玩家决定下一步行动。
+3. 人物换场或关键物品转手时写清楚实际发生的变化，不跳过当前在场和物品归属。
+4. 若事实清单含冲突反馈，修正冲突部分，不在正文解释校验过程。
 5. 服从给定视角与文风；玩家视角使用第二人称“你”。
-6. 输出 2-4 句连贯散文，不提协议、规则、阶段、数值或系统。
-7. 只输出叙事文本本身。
+6. 输出 2-5 句连贯散文，不提协议、阶段、数值或系统；只输出叙事文本。
+7. 【软叙事记忆】可能有遗漏或概括误差；当前事实清单与当前感知优先。开放事项、提议和人物小结不能被擅自写成已经完成的事实，记忆中的远处人物也不算当前在场。
 """
 
 
 SUGGESTION_SYSTEM_PROMPT = """\
 你是互动叙事游戏的行动提案器。根据当前感知快照生成不同侧重点的可编辑行动卡，并输出 json。
 
-硬性规则：
+提案要求：
 1. 只能引用感知快照中可见的人物、物品、环境和出口；不得利用隐藏事实。
 2. 卡片只写玩家准备说什么或做什么，不保证尚未提交的结果。
-3. 不得创建人物、替 NPC 作承诺、宣告获得物品、抵达地点或披露秘密。
+3. 不得创建人物或替玩家宣告尚未发生的结果。
 4. action_text 使用第一人称自然语言，可由玩家直接采用或任意改写。
 5. 卡片之间应在目标、方式或侧重点上有实质差异；没有合适卡片时宁可少给。
 6. 不得输出 plan、steps、capability、intent、状态 patch 或验证结果。
 7. 只输出 {"suggestions": [...]}。
+8. 可用【软叙事记忆】延续开放事项、避免重复已经解决的内容，但当前感知优先；记忆不能让远处人物、旧物品或旧出口变成当前可行动对象。
 
 单张卡格式：
 {
@@ -87,61 +142,42 @@ SUGGESTION_SYSTEM_PROMPT = """\
 """
 
 
-DIRECTOR_SYSTEM_PROMPT = """\
-你是互动叙事游戏的 Director。读取已提交回合、人物候选与生成边界，提出一个非权威 DirectorPlan，并输出 json。
-
-硬性规则：
-1. beats 只能使用候选列表中的 actor_id；不得创建、改名或暗示新人物。
-2. status=present 的人物只能 react 或 advance_plan；status=adjacent 且 can_enter=true 的人物才可 enter_scene。
-3. target_location_id 必须是当前地点；target_ids 只能引用输入已有 ID。
-4. summary 是审计用候选摘要，只描述可见动作、神态、短对白或进场，不得擅自改变物品、秘密、承诺、关系、任务或玩家行动结果；当前保守 Director 不直接展示这段自由文本。
-5. 每个人物最多一个节拍；没有必要就返回空 beats。
-6. local_canon 仅在输入明确给出生成边界且预算有余量时可提议，最多一条；只能使用声明的原型，禁止创建人物。
-7. 只输出 {"beats": [...], "local_canon": [...]}。
-
-单个节拍：
-{
-  "kind": "enter_scene|react|advance_plan",
-  "actor_id": "候选人物 ID",
-  "target_location_id": "当前地点 ID",
-  "target_ids": ["已有目标 ID"],
-  "summary": "审计用的克制节拍摘要",
-  "motivation": "如何服从人物既有动机"
-}
-
-单条 local_canon：
-{
-  "kind": "location|situation",
-  "archetype_id": "生成边界中的原型 ID",
-  "entity_id": "gen_ 开头的新 ID",
-  "name": "简短名称",
-  "description": "玩家可见的局部事实",
-  "parent_location_id": "作者定义的地点 ID",
-  "expires_after_turns": 3,
-  "reason": "此刻需要该局部事实的原因"
-}
-"""
-
-
 FACT_EXTRACTION_SYSTEM_PROMPT = """\
-你是互动叙事引擎的事实抽取器。你不续写故事，只从【本回合散文】抽取已经明确发生的铁律事实并输出 json。
+你是互动叙事引擎的物理事实抽取器。你不续写故事，只从【本回合散文】抽取已经明确发生的人物换场和关键物品转手，并输出 json。
 
 硬性规则：
 1. 只抽取散文明确宣告已经完成的变化；“想、问、尝试、准备、可能、拒绝”不算完成。
 2. 每条 evidence 必须逐字复制本回合散文中的一个非空连续片段。
-3. 只能使用账本给出的 ID、位置、物品放置、秘密与已有承诺；不得创造人物、地点、物品或秘密。
-4. 玩家提出请求不等于 NPC 承诺；只有人物明确答应未来要做某事才抽取 commitment。
-5. item_transfer 必须同时抄写账本中的 from_placement，并写出散文明确完成的 to_placement。
-6. commitment_update 只能引用账本中的已有 commitment_id；物品承诺的 fulfilled 必须同时有完成交付的 item_transfer。
-7. 没有铁律变化时返回空 facts。不得输出普通情绪、动作、环境描写或状态 patch。
-8. 只输出 {"facts": [...]}。
+3. 只能使用账本给出的人物、地点、物品和当前放置；不得创造实体。
+4. item_transfer 必须同时抄写账本中的 from_placement，并写出散文明确完成的 to_placement。
+5. 对话、承诺、秘密、态度、关系、情绪和普通动作不属于物理事实，不要抽取。
+6. 没有人物换场或关键物品转手时返回空 facts；不得输出状态 patch。
+7. 只输出 {"facts": [...]}。
 
 支持的事实格式：
 - {"kind":"character_move","actor_id":"...","destination_id":"...","evidence":"原文"}
 - {"kind":"item_transfer","item_id":"...","from_placement":{"type":"carried_by|board","id":"..."},"to_placement":{"type":"carried_by|board","id":"..."},"evidence":"原文"}
-- {"kind":"secret_disclosure","secret_id":"...","owner_id":"...","disclosed_by_id":"...","audience_ids":["..."],"summary":"披露内容","evidence":"原文"}
-- {"kind":"commitment","commitment_id":"稳定小写 ID","promisor_id":"...","promisee_id":"...","description":"承诺内容","related_item_id":"可选","due":"可选时间","evidence":"原文"}
-- {"kind":"commitment_update","commitment_id":"...","status":"fulfilled|broken|cancelled","evidence":"原文"}
+"""
+
+
+MEMORY_COMPACTION_SYSTEM_PROMPT = """\
+你是互动叙事的软记忆编辑器。把【旧小结】和【待压缩的已提交回合】整理成新的叙事小结，并输出 json。
+
+要求：
+1. 只整理输入中已经出现的内容，不补写秘密、动机、因果或结果。
+2. 保留“打算、猜测、拒绝、尚未确定”等不确定性，不把提议写成已完成事实。
+3. 新回合明确纠正旧小结时，以新回合为准。
+4. open_loops 只保存仍需后续承接的事项；已解决内容可放入 recently_resolved。
+5. character_notes 和 scene_notes 只能使用给定 catalog 中的机器 ID。
+6. 所有字段都是软叙事记忆，不输出状态 patch、承诺 ID、生命周期或数值。
+7. 只输出以下完整 json：
+{
+  "rolling_summary": "简洁连贯的故事回顾",
+  "open_loops": ["仍待承接的事项"],
+  "character_notes": {"character_id": ["人物目前表现出的立场或约定"]},
+  "scene_notes": {"scene_id": ["场景中值得延续的叙事变化"]},
+  "recently_resolved": ["最近已经解决、不要反复重提的事项"]
+}
 """
 
 
@@ -154,6 +190,11 @@ def build_narrative_messages(request: NarrativeRequest) -> list[dict[str, str]]:
             "state_revision": request.perception.state_revision,
         },
         "事实清单": request.facts,
+        "软叙事记忆": (
+            request.memory_context.to_dict()
+            if request.memory_context is not None
+            else None
+        ),
         "文风约束": request.style,
     }
     return [
@@ -163,9 +204,17 @@ def build_narrative_messages(request: NarrativeRequest) -> list[dict[str, str]]:
 
 
 def build_suggestion_messages(request: SuggestionRequest) -> list[dict[str, str]]:
+    perception = request.perception.to_dict()
+    if request.memory_context is not None:
+        perception.pop("recent_events", None)
     payload = {
         "数量上限": request.count,
-        "感知快照": request.perception.to_dict(),
+        "感知快照": perception,
+        "软叙事记忆": (
+            request.memory_context.to_dict()
+            if request.memory_context is not None
+            else None
+        ),
         "世界边界": list(request.boundaries),
     }
     return [
@@ -181,7 +230,7 @@ def build_fact_extraction_messages(
         "状态版本": request.perception.state_revision,
         "玩家原话": request.player_text,
         "本回合散文": request.narrative,
-        "铁律账本": request.ledger,
+        "物理账本": request.ledger,
     }
     return [
         {"role": "system", "content": FACT_EXTRACTION_SYSTEM_PROMPT},
@@ -189,24 +238,19 @@ def build_fact_extraction_messages(
     ]
 
 
-def build_director_messages(request: DirectorRequest) -> list[dict[str, str]]:
+def build_memory_compaction_messages(
+    request: MemoryCompactionRequest,
+) -> list[dict[str, str]]:
     payload = {
         "故事": request.story_id,
         "状态版本": request.state_revision,
-        "当前地点": {"id": request.location_id, "name": request.location_name},
-        "当前目标": request.current_goal,
-        "player_id": request.player_id,
-        "玩家行动": request.player_action,
-        "玩家行动目标": list(request.action_targets),
-        "已提交回合": request.committed_turn,
-        "候选人物": list(request.candidates),
-        "世界边界": list(request.boundaries),
-        "节拍上限": request.max_beats,
+        "旧小结": request.previous_digest.to_dict(),
+        "待压缩的已提交回合": [event.to_dict() for event in request.events],
+        "character_catalog": dict(request.character_catalog),
+        "scene_catalog": dict(request.scene_catalog),
     }
-    if request.generation:
-        payload["生成边界"] = request.generation
     return [
-        {"role": "system", "content": DIRECTOR_SYSTEM_PROMPT},
+        {"role": "system", "content": MEMORY_COMPACTION_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
@@ -233,14 +277,6 @@ def _sanitize_machine_id(value: Any, fallback: str) -> str:
     if not machine_id or not machine_id[0].isalpha():
         machine_id = fallback
     return machine_id
-
-
-def _sanitize_state_key(value: Any, fallback: str) -> str:
-    state_key = re.sub(r"[^a-z0-9_-]+", "_", str(value or "").strip().lower())
-    state_key = state_key.strip("_-")
-    if not state_key or not state_key[0].isalpha():
-        state_key = fallback
-    return state_key
 
 
 def coerce_suggestions(
@@ -308,40 +344,6 @@ def coerce_fact_extraction(
                     to_placement=_coerce_item_placement(raw.get("to_placement")),
                     evidence=evidence,
                 )
-            elif kind == "secret_disclosure":
-                fact = SecretDisclosureFact(
-                    secret_id=str(raw.get("secret_id") or ""),
-                    owner_id=str(raw.get("owner_id") or ""),
-                    disclosed_by_id=str(raw.get("disclosed_by_id") or ""),
-                    audience_ids=tuple(
-                        str(item) for item in raw.get("audience_ids") or []
-                    ),
-                    summary=str(raw.get("summary") or "").strip(),
-                    evidence=evidence,
-                )
-            elif kind == "commitment":
-                related_item = raw.get("related_item_id")
-                fact = CommitmentFact(
-                    commitment_id=_sanitize_state_key(
-                        raw.get("commitment_id"), f"promise_{index + 1}"
-                    ),
-                    promisor_id=str(raw.get("promisor_id") or ""),
-                    promisee_id=str(raw.get("promisee_id") or ""),
-                    description=str(raw.get("description") or "").strip(),
-                    related_item_id=(
-                        str(related_item) if related_item not in (None, "") else None
-                    ),
-                    due=str(raw.get("due") or "").strip(),
-                    evidence=evidence,
-                )
-            elif kind == "commitment_update":
-                fact = CommitmentUpdateFact(
-                    commitment_id=_sanitize_state_key(
-                        raw.get("commitment_id"), f"promise_{index + 1}"
-                    ),
-                    status=raw.get("status"),
-                    evidence=evidence,
-                )
             else:
                 invalid_indexes.append(index)
                 continue
@@ -358,78 +360,61 @@ def coerce_fact_extraction(
     )
 
 
-def _sanitize_generated_id(value: Any) -> str:
-    entity_id = re.sub(r"[^a-z0-9_]", "_", str(value or "").strip().lower())
-    if not entity_id:
-        entity_id = new_protocol_id("gen")
-    if not entity_id.startswith(GENERATED_ENTITY_PREFIX):
-        entity_id = f"{GENERATED_ENTITY_PREFIX}{entity_id.lstrip('_')}"
-    return entity_id
-
-
-def _coerce_local_canon(
-    data: dict[str, Any],
-    request: DirectorRequest,
-) -> tuple[LocalCanonProposal, ...]:
-    if not request.generation:
+def _coerce_text_list(raw: Any, *, limit: int) -> tuple[str, ...]:
+    if not isinstance(raw, list):
         return ()
-    proposals: list[LocalCanonProposal] = []
-    for raw in (data.get("local_canon") or [])[:1]:
-        if not isinstance(raw, dict):
-            continue
-        expires = raw.get("expires_after_turns")
-        try:
-            proposal = LocalCanonProposal(
-                proposal_id=new_protocol_id("lcp"),
-                state_revision=request.state_revision,
-                kind=str(raw.get("kind") or ""),
-                archetype_id=str(raw.get("archetype_id") or ""),
-                entity_id=_sanitize_generated_id(raw.get("entity_id")),
-                name=str(raw.get("name") or "").strip(),
-                description=str(raw.get("description") or "").strip(),
-                parent_location_id=str(
-                    raw.get("parent_location_id") or request.location_id
-                ),
-                expires_after_turns=(
-                    int(expires) if isinstance(expires, (int, float)) else None
-                ),
-                reason=str(raw.get("reason") or "").strip() or "Director 提议",
-            )
-        except Exception:
-            continue
-        proposals.append(proposal)
-    return tuple(proposals)
+    values: list[str] = []
+    for item in raw:
+        text = " ".join(str(item or "").split())
+        if text and text not in values:
+            values.append(text[:300])
+        if len(values) >= limit:
+            break
+    return tuple(values)
 
 
-def coerce_director_plan(content: str, request: DirectorRequest) -> DirectorPlan:
+def _coerce_note_groups(
+    raw: Any,
+    *,
+    allowed_ids: set[str],
+) -> tuple[MemoryNoteGroup, ...]:
+    if not isinstance(raw, dict):
+        return ()
+    groups: list[MemoryNoteGroup] = []
+    for subject_id, notes in raw.items():
+        subject_id = str(subject_id)
+        if subject_id not in allowed_ids:
+            continue
+        selected = _coerce_text_list(notes, limit=3)
+        if selected:
+            groups.append(MemoryNoteGroup(subject_id=subject_id, notes=selected))
+    return tuple(groups)
+
+
+def coerce_memory_digest(
+    content: str,
+    request: MemoryCompactionRequest,
+) -> MemoryDigest:
     data = _load_json_object(content)
-    if not isinstance(data.get("beats"), list):
-        raise ValueError("Director response must contain a beats array")
-
-    beats: list[DirectorBeat] = []
-    for raw in data["beats"][: request.max_beats]:
-        if not isinstance(raw, dict):
-            continue
-        try:
-            beat = DirectorBeat(
-                beat_id=new_protocol_id("beat"),
-                state_revision=request.state_revision,
-                kind=raw.get("kind"),
-                actor_id=str(raw.get("actor_id") or ""),
-                target_location_id=str(raw.get("target_location_id") or ""),
-                target_ids=tuple(str(item) for item in raw.get("target_ids") or []),
-                summary=str(raw.get("summary") or "").strip(),
-                motivation=str(raw.get("motivation") or "").strip(),
-            )
-        except Exception:
-            continue
-        beats.append(beat)
-    if data["beats"] and not beats:
-        raise ValueError("no valid Director beats")
-    return DirectorPlan(
-        state_revision=request.state_revision,
-        beats=tuple(beats),
-        local_canon=_coerce_local_canon(data, request),
+    summary = " ".join(str(data.get("rolling_summary") or "").split())
+    if not summary:
+        raise ValueError("memory response needs a non-empty rolling_summary")
+    return MemoryDigest(
+        compacted_through_turn=request.events[-1].turn_no,
+        rolling_summary=summary[:1200],
+        open_loops=_coerce_text_list(data.get("open_loops"), limit=8),
+        character_notes=_coerce_note_groups(
+            data.get("character_notes"),
+            allowed_ids={item[0] for item in request.character_catalog},
+        ),
+        scene_notes=_coerce_note_groups(
+            data.get("scene_notes"),
+            allowed_ids={item[0] for item in request.scene_catalog},
+        ),
+        recently_resolved=_coerce_text_list(
+            data.get("recently_resolved"),
+            limit=5,
+        ),
     )
 
 
@@ -447,8 +432,16 @@ class DeepSeekProvider(LLMProvider):
     ) -> None:
         self.model = model or os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL)
         self.base_url = base_url or os.environ.get("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL)
-        self.temperature = temperature
-        self.max_tokens = max_tokens
+        self.call_policies = {
+            "narration": NARRATIVE_CALL_POLICY,
+            "suggestions": replace(
+                SUGGESTION_CALL_POLICY,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            ),
+            "fact_extraction": FACT_EXTRACTION_CALL_POLICY,
+            "memory_compaction": MEMORY_COMPACTION_CALL_POLICY,
+        }
         self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
         self._transport = transport
         self._client = None
@@ -457,22 +450,36 @@ class DeepSeekProvider(LLMProvider):
                 "缺少 DeepSeek API key：请设置环境变量 DEEPSEEK_API_KEY"
             )
 
+    @staticmethod
+    def _normalize_transport_result(result: TransportResult) -> DeepSeekCallResult:
+        if isinstance(result, DeepSeekCallResult):
+            return DeepSeekCallResult(
+                content=str(result.content or ""),
+                reasoning_content=str(result.reasoning_content or ""),
+                finish_reason=result.finish_reason,
+                usage=dict(result.usage or {}),
+            )
+        content, usage = result
+        return DeepSeekCallResult(
+            content=str(content or ""),
+            usage=dict(usage or {}),
+        )
+
     def _call(
         self,
         messages: list[dict[str, str]],
         *,
-        json_mode: bool = True,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-    ) -> tuple[str, dict[str, Any]]:
-        options = {
+        policy: DeepSeekCallPolicy,
+        json_mode: bool | None = None,
+    ) -> DeepSeekCallResult:
+        effective_json_mode = policy.json_mode if json_mode is None else json_mode
+        options: dict[str, Any] = {
             "model": self.model,
-            "temperature": temperature if temperature is not None else self.temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
-            "json_mode": json_mode,
+            **policy.to_dict(),
+            "json_mode": effective_json_mode,
         }
         if self._transport is not None:
-            return self._transport(messages, options)
+            return self._normalize_transport_result(self._transport(messages, options))
         if self._client is None:
             try:
                 from openai import OpenAI
@@ -484,81 +491,326 @@ class DeepSeekProvider(LLMProvider):
         kwargs: dict[str, Any] = {
             "model": options["model"],
             "messages": messages,
-            "temperature": options["temperature"],
             "max_tokens": options["max_tokens"],
+            "extra_body": {"thinking": {"type": policy.thinking}},
         }
-        if json_mode:
+        if policy.thinking == "disabled" and policy.temperature is not None:
+            kwargs["temperature"] = policy.temperature
+        if policy.thinking == "enabled" and policy.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = policy.reasoning_effort
+        if effective_json_mode:
             kwargs["response_format"] = {"type": "json_object"}
         response = self._client.chat.completions.create(**kwargs)
-        content = response.choices[0].message.content or ""
-        usage = response.usage.model_dump() if response.usage is not None else {}
-        return content, usage
+        usage = (
+            response.usage.model_dump(mode="json")
+            if response.usage is not None
+            else {}
+        )
+        if not response.choices:
+            return DeepSeekCallResult(
+                finish_reason="missing_choice",
+                usage=usage,
+            )
+        choice = response.choices[0]
+        return DeepSeekCallResult(
+            content=str(choice.message.content or ""),
+            reasoning_content=str(
+                getattr(choice.message, "reasoning_content", "") or ""
+            ),
+            finish_reason=str(choice.finish_reason or "") or None,
+            usage=usage,
+        )
 
-    @staticmethod
-    def _merge_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
+    @classmethod
+    def _merge_usage(cls, total: dict[str, Any], usage: dict[str, Any]) -> None:
         for key, value in (usage or {}).items():
             if isinstance(value, (int, float)):
                 total[key] = total.get(key, 0) + value
+            elif isinstance(value, dict):
+                nested = total.setdefault(key, {})
+                if isinstance(nested, dict):
+                    cls._merge_usage(nested, value)
+
+    @staticmethod
+    def _reasoning_tokens(usage: dict[str, Any]) -> int | float:
+        details = usage.get("completion_tokens_details") or {}
+        if isinstance(details, dict):
+            value = details.get("reasoning_tokens")
+            if isinstance(value, (int, float)):
+                return value
+        value = usage.get("reasoning_tokens")
+        return value if isinstance(value, (int, float)) else 0
+
+    def _new_diagnostics(self, policy: DeepSeekCallPolicy) -> dict[str, Any]:
+        return {
+            "capability": policy.capability,
+            "model": self.model,
+            "policy": policy.to_dict(),
+            "attempts": [],
+            "retry_reasons": [],
+            "failed_usage": {},
+            "total_usage": {},
+            "final_content_state": "not_started",
+        }
+
+    def _record_attempt(
+        self,
+        diagnostics: dict[str, Any],
+        result: DeepSeekCallResult,
+        *,
+        attempt: int,
+        json_mode: bool,
+    ) -> dict[str, Any]:
+        usage = dict(result.usage or {})
+        entry = {
+            "attempt": attempt,
+            "json_mode": json_mode,
+            "finish_reason": result.finish_reason,
+            "content_state": "present" if result.content.strip() else "empty",
+            "content_chars": len(result.content),
+            "reasoning_state": (
+                "present" if result.reasoning_content.strip() else "empty"
+            ),
+            "reasoning_chars": len(result.reasoning_content),
+            "reasoning_tokens": self._reasoning_tokens(usage),
+            "usage": usage,
+            "retry_reason": None,
+        }
+        diagnostics["attempts"].append(entry)
+        return entry
+
+    def _record_transport_error(
+        self,
+        diagnostics: dict[str, Any],
+        *,
+        attempt: int,
+        json_mode: bool,
+        error: Exception,
+    ) -> None:
+        entry = {
+            "attempt": attempt,
+            "json_mode": json_mode,
+            "finish_reason": None,
+            "content_state": "unavailable",
+            "content_chars": 0,
+            "reasoning_state": "unavailable",
+            "reasoning_chars": 0,
+            "reasoning_tokens": 0,
+            "usage": {},
+            "retry_reason": "transport_error",
+            "error": str(error),
+        }
+        diagnostics["attempts"].append(entry)
+        diagnostics["retry_reasons"].append("transport_error")
+        diagnostics["final_content_state"] = "transport_error"
+
+    def _mark_failed_attempt(
+        self,
+        diagnostics: dict[str, Any],
+        entry: dict[str, Any],
+        reason: str,
+        *,
+        detail: str | None = None,
+    ) -> None:
+        entry["retry_reason"] = reason
+        if detail:
+            entry["error"] = detail
+        diagnostics["retry_reasons"].append(reason)
+        self._merge_usage(diagnostics["failed_usage"], entry["usage"])
+
+    @staticmethod
+    def _empty_reason(result: DeepSeekCallResult, json_mode: bool) -> str:
+        if result.finish_reason == "length":
+            return "length_exhausted"
+        if result.finish_reason and result.finish_reason != "stop":
+            return f"empty_content_{result.finish_reason}"
+        if json_mode:
+            return "json_mode_empty"
+        return "empty_content"
+
+    @staticmethod
+    def _finalize_diagnostics(
+        diagnostics: dict[str, Any],
+        usage_total: dict[str, Any],
+        final_content_state: str,
+    ) -> dict[str, Any]:
+        diagnostics["total_usage"] = dict(usage_total)
+        diagnostics["final_content_state"] = final_content_state
+        return diagnostics
+
+    def _run_structured(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        policy: DeepSeekCallPolicy,
+        coerce: Callable[[str], Any],
+        repair_label: str,
+        error_label: str,
+        max_repair_rounds: int = MAX_REPAIR_ROUNDS,
+    ) -> tuple[Any, str, dict[str, Any], dict[str, Any]]:
+        usage_total: dict[str, Any] = {}
+        diagnostics = self._new_diagnostics(policy)
+        last_error = "empty_response"
+        json_mode = policy.json_mode
+
+        for attempt in range(1, max_repair_rounds + 2):
+            try:
+                result = self._call(
+                    messages,
+                    policy=policy,
+                    json_mode=json_mode,
+                )
+            except Exception as exc:
+                self._record_transport_error(
+                    diagnostics,
+                    attempt=attempt,
+                    json_mode=json_mode,
+                    error=exc,
+                )
+                self._finalize_diagnostics(
+                    diagnostics, usage_total, "transport_error"
+                )
+                raise LLMProviderError(
+                    f"DeepSeek {error_label}调用失败：{exc}",
+                    diagnostics=diagnostics,
+                ) from exc
+
+            usage = dict(result.usage or {})
+            self._merge_usage(usage_total, usage)
+            entry = self._record_attempt(
+                diagnostics,
+                result,
+                attempt=attempt,
+                json_mode=json_mode,
+            )
+
+            if result.finish_reason == "length":
+                last_error = "length_exhausted"
+                self._mark_failed_attempt(diagnostics, entry, last_error)
+            elif not result.content.strip():
+                last_error = self._empty_reason(result, json_mode)
+                self._mark_failed_attempt(diagnostics, entry, last_error)
+            else:
+                try:
+                    parsed = coerce(result.content)
+                except ValueError as exc:
+                    last_error = "parse_error"
+                    self._mark_failed_attempt(
+                        diagnostics,
+                        entry,
+                        last_error,
+                        detail=str(exc),
+                    )
+                else:
+                    return (
+                        parsed,
+                        result.content,
+                        usage_total,
+                        self._finalize_diagnostics(
+                            diagnostics, usage_total, "valid"
+                        ),
+                    )
+
+            if attempt <= max_repair_rounds:
+                if last_error == "json_mode_empty":
+                    json_mode = False
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"上一条{repair_label}无法使用（{last_error}）。"
+                        "请只输出完整 json。"
+                    ),
+                })
+
+        self._finalize_diagnostics(diagnostics, usage_total, last_error)
+        raise LLMProviderError(
+            f"DeepSeek {error_label}连续无法解析：{last_error}",
+            diagnostics=diagnostics,
+        )
 
     def render_narrative(self, request: NarrativeRequest) -> NarrativeResponse | None:
         started = time.monotonic()
         messages = build_narrative_messages(request)
+        policy = self.call_policies["narration"]
         usage_total: dict[str, Any] = {}
-        content = ""
-        for attempt in range(2):
-            content, usage = self._call(
-                messages,
-                json_mode=False,
-                temperature=0.7,
-                max_tokens=400,
-            )
+        diagnostics = self._new_diagnostics(policy)
+        last_error = "empty_content"
+        for attempt in range(1, MAX_REPAIR_ROUNDS + 2):
+            try:
+                result = self._call(messages, policy=policy)
+            except Exception as exc:
+                self._record_transport_error(
+                    diagnostics,
+                    attempt=attempt,
+                    json_mode=False,
+                    error=exc,
+                )
+                self._finalize_diagnostics(
+                    diagnostics, usage_total, "transport_error"
+                )
+                raise LLMProviderError(
+                    f"DeepSeek 旁白调用失败：{exc}",
+                    diagnostics=diagnostics,
+                ) from exc
+            usage = dict(result.usage or {})
             self._merge_usage(usage_total, usage)
-            if content.strip():
-                break
-            if attempt == 0:
+            entry = self._record_attempt(
+                diagnostics,
+                result,
+                attempt=attempt,
+                json_mode=False,
+            )
+            if result.finish_reason == "length":
+                last_error = "length_exhausted"
+                self._mark_failed_attempt(diagnostics, entry, last_error)
+            elif result.content.strip():
+                return NarrativeResponse(
+                    text=result.content.strip(),
+                    model=self.model,
+                    prompt_version=NARRATIVE_PROMPT_VERSION,
+                    latency_ms=round((time.monotonic() - started) * 1000, 2),
+                    usage=usage_total,
+                    diagnostics=self._finalize_diagnostics(
+                        diagnostics, usage_total, "valid"
+                    ),
+                )
+            else:
+                last_error = self._empty_reason(result, False)
+                self._mark_failed_attempt(diagnostics, entry, last_error)
+            if attempt <= MAX_REPAIR_ROUNDS:
                 messages.append({
                     "role": "user",
-                    "content": "你返回了空内容。请根据同一事实清单输出 2-4 句叙事。",
+                    "content": (
+                        f"上一条叙事无法使用（{last_error}）。"
+                        "请根据同一事实清单输出完整的 2-5 句叙事。"
+                    ),
                 })
-        if not content.strip():
-            return None
-        return NarrativeResponse(
-            text=content.strip(),
-            model=self.model,
-            prompt_version=NARRATIVE_PROMPT_VERSION,
-            latency_ms=round((time.monotonic() - started) * 1000, 2),
-            usage=usage_total,
+
+        self._finalize_diagnostics(diagnostics, usage_total, last_error)
+        raise LLMProviderError(
+            f"DeepSeek 旁白连续无法生成：{last_error}",
+            diagnostics=diagnostics,
         )
 
     def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:
         messages = build_suggestion_messages(request)
         started = time.monotonic()
-        usage_total: dict[str, Any] = {}
-        last_error = "empty response"
-        for _ in range(MAX_REPAIR_ROUNDS + 1):
-            content, usage = self._call(messages)
-            self._merge_usage(usage_total, usage)
-            if not content.strip():
-                last_error = "empty content"
-            else:
-                try:
-                    suggestions = coerce_suggestions(content, request)
-                except ValueError as exc:
-                    last_error = str(exc)
-                else:
-                    return SuggestionResponse(
-                        suggestions=suggestions,
-                        raw=content,
-                        model=self.model,
-                        prompt_version=SUGGESTION_PROMPT_VERSION,
-                        latency_ms=round((time.monotonic() - started) * 1000, 2),
-                        usage=usage_total,
-                    )
-            messages.append({
-                "role": "user",
-                "content": f"上一条提案无法解析（{last_error}）。请只输出 suggestions json。",
-            })
-        raise LLMProviderError(f"DeepSeek 行动提案连续无法解析：{last_error}")
+        suggestions, content, usage, diagnostics = self._run_structured(
+            messages,
+            policy=self.call_policies["suggestions"],
+            coerce=lambda raw: coerce_suggestions(raw, request),
+            repair_label="提案",
+            error_label="行动提案",
+        )
+        return SuggestionResponse(
+            suggestions=suggestions,
+            raw=content,
+            model=self.model,
+            prompt_version=SUGGESTION_PROMPT_VERSION,
+            latency_ms=round((time.monotonic() - started) * 1000, 2),
+            usage=usage,
+            diagnostics=diagnostics,
+        )
 
     def extract_facts(
         self,
@@ -566,67 +818,43 @@ class DeepSeekProvider(LLMProvider):
     ) -> FactExtractionResponse:
         messages = build_fact_extraction_messages(request)
         started = time.monotonic()
-        usage_total: dict[str, Any] = {}
-        last_error = "empty response"
-        for _ in range(MAX_REPAIR_ROUNDS + 1):
-            content, usage = self._call(
-                messages,
-                temperature=0.0,
-                max_tokens=900,
-            )
-            self._merge_usage(usage_total, usage)
-            if not content.strip():
-                last_error = "empty content"
-            else:
-                try:
-                    extraction = coerce_fact_extraction(content, request)
-                except ValueError as exc:
-                    last_error = str(exc)
-                else:
-                    return FactExtractionResponse(
-                        extraction=extraction,
-                        raw=content,
-                        model=self.model,
-                        prompt_version=FACT_EXTRACTION_PROMPT_VERSION,
-                        latency_ms=round((time.monotonic() - started) * 1000, 2),
-                        usage=usage_total,
-                    )
-            messages.append({
-                "role": "user",
-                "content": f"上一条事实抽取无法解析（{last_error}）。请只输出 facts json。",
-            })
-        raise LLMProviderError(f"DeepSeek 事实抽取连续无法解析：{last_error}")
+        extraction, content, usage, diagnostics = self._run_structured(
+            messages,
+            policy=self.call_policies["fact_extraction"],
+            coerce=lambda raw: coerce_fact_extraction(raw, request),
+            repair_label="事实抽取",
+            error_label="事实抽取",
+        )
+        return FactExtractionResponse(
+            extraction=extraction,
+            raw=content,
+            model=self.model,
+            prompt_version=FACT_EXTRACTION_PROMPT_VERSION,
+            latency_ms=round((time.monotonic() - started) * 1000, 2),
+            usage=usage,
+            diagnostics=diagnostics,
+        )
 
-    def propose_director(self, request: DirectorRequest) -> DirectorResponse:
-        messages = build_director_messages(request)
+    def compact_memory(
+        self,
+        request: MemoryCompactionRequest,
+    ) -> MemoryCompactionResponse:
+        messages = build_memory_compaction_messages(request)
         started = time.monotonic()
-        usage_total: dict[str, Any] = {}
-        last_error = "empty response"
-        for _ in range(MAX_REPAIR_ROUNDS + 1):
-            content, usage = self._call(
-                messages,
-                temperature=0.5,
-                max_tokens=700,
-            )
-            self._merge_usage(usage_total, usage)
-            if not content.strip():
-                last_error = "empty content"
-            else:
-                try:
-                    plan = coerce_director_plan(content, request)
-                except ValueError as exc:
-                    last_error = str(exc)
-                else:
-                    return DirectorResponse(
-                        plan=plan,
-                        raw=content,
-                        model=self.model,
-                        prompt_version=DIRECTOR_PROMPT_VERSION,
-                        latency_ms=round((time.monotonic() - started) * 1000, 2),
-                        usage=usage_total,
-                    )
-            messages.append({
-                "role": "user",
-                "content": f"上一条 DirectorPlan 无法解析（{last_error}）。请只输出 json。",
-            })
-        raise LLMProviderError(f"DeepSeek Director 连续无法解析：{last_error}")
+        digest, content, usage, diagnostics = self._run_structured(
+            messages,
+            policy=self.call_policies["memory_compaction"],
+            coerce=lambda raw: coerce_memory_digest(raw, request),
+            repair_label="记忆小结",
+            error_label="记忆小结",
+            max_repair_rounds=0,
+        )
+        return MemoryCompactionResponse(
+            digest=digest,
+            raw=content,
+            model=self.model,
+            prompt_version=MEMORY_COMPACTION_PROMPT_VERSION,
+            latency_ms=round((time.monotonic() - started) * 1000, 2),
+            usage=usage,
+            diagnostics=diagnostics,
+        )

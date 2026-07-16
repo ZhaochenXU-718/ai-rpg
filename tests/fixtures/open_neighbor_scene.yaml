@@ -1,6 +1,6 @@
 id: open_neighbor_scene
 title: "开放场景夹具：院子里的遮雨布"
-version: 0.3.0
+version: 0.4.0
 schema_version: 2
 content_profile: narrative_first
 language: zh-CN
@@ -8,7 +8,7 @@ genre: open_slice_of_life_fixture
 
 premise: |
   院子里准备摆一张公共长桌。玩家可以自由观察、交谈或向修理铺店主询问
-  是否有能遮住桌面的东西；普通行动没有预写 storylet。
+  是否有能遮住桌面的东西；普通行动完全交给叙事循环。
 
 player_role:
   id: player
@@ -26,36 +26,8 @@ style_bible:
     - "不要制造新人物或突发灾难。"
 
 global_rules:
-  time:
-    countdown_enabled: false
   boundaries:
-    - "核心人物已在内容中定义；生成式局部事实只能出现在声明的原型与预算内。"
-
-# 作者声明的生成边界：Director 可以在此范围内提议局部地点和局势，
-# 由引擎的原型 / 预算 / 冲突检查裁决后原子提交（Local Canon）。
-generation:
-  budgets:
-    locations: 1
-    situations: 1
-  location_archetypes:
-    storage_nook:
-      label: "临时收纳角"
-      description_hint: "院子边上一处可以临时存放东西的小空间"
-      allowed_parents: [courtyard]
-  situation_archetypes:
-    neighbor_gathering:
-      label: "邻里小聚"
-      description_hint: "几位邻居在附近围拢起来的临时局面"
-      allowed_locations: [courtyard, workshop]
-      max_duration_turns: 3
-      expiry_narrative: "围拢的邻居各自散开，院子恢复了平常的样子。"
-
-world_board:
-  nodes:
-    workshop: { name: "修理铺", kind: shop }
-    courtyard: { name: "公共院子", kind: common_area }
-  edges:
-    - { from: workshop, to: courtyard, bidirectional: true }
+    - "核心人物和可进入场景都已经在内容中定义。"
 
 items:
   rain_canvas:
@@ -66,18 +38,12 @@ items:
     visible_when_carried: true
 
 initial_state:
-  world:
-    step: 0
-    current_goal: "找到一件能临时盖住长桌的东西"
   positions:
     player: workshop
     keeper_zhou: workshop
     neighbor_lin: courtyard
   item_locations:
     rain_canvas: { type: carried_by, id: keeper_zhou }
-  player: {}
-  scene: {}
-  flags: {}
 
 characters:
   player:
@@ -99,53 +65,28 @@ characters:
     voice: "先描述自己看到的情况，再提出建议；不会替别人许诺。"
     initial_relationship: "和玩家是普通邻居，愿意提供信息，但会把决定留给当事人。"
 
-perception:
-  facts_label: "留意到"
-  world_state:
-    current_goal: "当前目标"
-
 scenes:
   workshop:
     name: "修理铺"
-    purpose: "验证没有普通行动 storylet 时，通用能力仍能裁决物品请求。"
+    purpose: "验证普通对话不会隐式改变关键物品归属。"
     goal: "说明用途并取得能盖住长桌的东西"
     entry_text: "卷帘门开着一半，工具墙下叠着几件洗净的旧物。"
     exits:
       - to: courtyard
         label: "去公共院子"
-        narrative_hint: "你从修理铺门口走进相邻的公共院子。"
     available_objects:
       environment:
         tool_wall: "挂满常用工具的墙"
         half_open_door: "半开的卷帘门"
-    exit_conditions:
-      any:
-        - inventory_all: [rain_canvas]
-
   courtyard:
     name: "公共院子"
-    purpose: "验证 Director 只能从相邻地点调度既有邻居。"
+    purpose: "验证移动后感知只展示新场景中的人物与物品。"
     goal: "决定如何使用已经取得的遮盖物"
     entry_text: "长桌靠在墙边，树影在桌面上缓慢移动。"
     exits:
       - to: workshop
         label: "回修理铺"
-        narrative_hint: "你几步回到相邻的修理铺。"
     available_objects:
       environment:
         long_table: "靠墙的公共长桌"
         old_tree: "院角的老树"
-    exit_conditions:
-      any:
-        - ending_reached: true
-
-# 故意不写普通行动 storylet；本夹具只保留结局条件作为 Canon 锚点。
-storylets: []
-
-endings:
-  canvas_borrowed:
-    title: "先把桌面护住"
-    priority: 1
-    conditions:
-      item_locations.rain_canvas.id: player
-    outcome: "周师傅把防雨布借给了你；后续如何布置仍由玩家决定。"

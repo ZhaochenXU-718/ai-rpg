@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .llm import LLMProvider, SuggestionRequest
 from .llm_protocol import (
     EntityKind,
@@ -17,24 +19,68 @@ def _boundaries(session: GameSession) -> tuple[str, ...]:
     data = session.story.data
     rules = list((data.get("player_role") or {}).get("constraints") or [])
     rules.extend((data.get("global_rules") or {}).get("boundaries") or [])
-    return tuple(str(rule) for rule in rules)
+    hidden_tokens = _hidden_authored_tokens(session)
+    return tuple(
+        text
+        for rule in rules
+        if (text := str(rule).strip())
+        and not _contains_token(text, hidden_tokens)
+    )
 
 
-def _expected_touches(session: GameSession, text: str) -> tuple[str, ...]:
+def _hidden_authored_tokens(session: GameSession) -> tuple[str, ...]:
     perception = session.perception()
-    touches: list[str] = []
-    for entity in perception.visible_entities:
-        if entity.label not in text and entity.entity_id not in text:
+    visible_ids = {
+        perception.subject_id,
+        perception.location_id,
+        *(
+            entity.entity_id
+            for entity in (*perception.visible_entities, *perception.inventory)
+        ),
+    }
+    catalogs = (
+        session.story.characters,
+        session.story.items,
+        session.story.scenes,
+    )
+    tokens: list[str] = []
+    for catalog in catalogs:
+        for entity_id, record in catalog.items():
+            if entity_id in visible_ids:
+                continue
+            tokens.append(str(entity_id))
+            if isinstance(record, dict) and record.get("name"):
+                tokens.append(str(record["name"]))
+    return tuple(dict.fromkeys(token for token in tokens if token.strip()))
+
+
+def _contains_token(text: str, tokens: tuple[str, ...]) -> bool:
+    for token in tokens:
+        if token.isascii() and re.fullmatch(r"[A-Za-z0-9_-]+", token):
+            if re.search(
+                rf"(?<![A-Za-z0-9_-]){re.escape(token)}(?![A-Za-z0-9_-])",
+                text,
+            ):
+                return True
+        elif token in text:
+            return True
+    return False
+
+
+def _normalize_action_text(session: GameSession, text: str) -> str:
+    action_text = text.strip()
+    if not action_text or action_text.startswith("我"):
+        return action_text
+    for entity in session.perception().visible_entities:
+        if entity.kind != EntityKind.CHARACTER or not action_text.startswith(
+            entity.label
+        ):
             continue
-        if entity.kind == EntityKind.EXIT:
-            touches.append("人物位置")
-        elif entity.kind == EntityKind.ITEM:
-            touches.append("关键物品归属")
-    if any(token in text for token in ("告诉", "说出秘密", "坦白")):
-        touches.append("秘密披露")
-    if any(token in text for token in ("答应", "承诺", "约好")):
-        touches.append("人物承诺")
-    return tuple(dict.fromkeys(touches))
+        spoken = action_text[len(entity.label):].lstrip("，,：: ").strip()
+        spoken = spoken.strip("“”\"")
+        if spoken:
+            return f"我对{entity.label}说：“{spoken}”"
+    return f"我打算这样做：{action_text}"
 
 
 def _fallback_drafts(session: GameSession) -> list[tuple[str, str, str, str]]:
@@ -66,7 +112,7 @@ def _fallback_drafts(session: GameSession) -> list[tuple[str, str, str, str]]:
             f"仔细看看{target.label}",
             f"我停下来仔细观察{target.label}，确认眼前有哪些已经存在的线索和条件。",
             "investigate",
-            "先补足可见信息，再决定是否推动铁律事实。",
+            "先补足可见信息，再决定是否改变人物或物品的位置。",
         ))
     if exits:
         target = exits[0]
@@ -74,7 +120,7 @@ def _fallback_drafts(session: GameSession) -> list[tuple[str, str, str, str]]:
             target.label,
             f"我按「{target.label}」指明的方向动身，同时留意沿途人物和物品的位置。",
             "practical",
-            "尝试改变场景，但移动事实仍需后续校验。",
+            "尝试改变场景；真正发生的移动会在散文生成后核对。",
         ))
     drafts.append((
         "换一种自己的做法",
@@ -94,18 +140,25 @@ def generate_action_suggestions(
 ) -> SuggestedActionSet:
     count = max(1, min(5, count))
     perception = session.perception()
+    memory_context = session.memory_context()
+    memory_payload = (
+        memory_context.to_dict() if memory_context is not None else None
+    )
     raw_drafts: list[tuple[str, str, str, str]] = []
     try:
         response = provider.propose_suggestions(SuggestionRequest(
             perception=perception,
             count=count,
             boundaries=_boundaries(session),
+            memory_context=memory_context,
         ))
     except Exception as exc:
         recorder.record("suggestions_fallback", {
             "turn": session.turn_no + 1,
             "state_revision": session.state_revision,
             "error": str(exc),
+            "diagnostics": dict(getattr(exc, "diagnostics", {}) or {}),
+            "memory_context": memory_payload,
         })
     else:
         recorder.record("suggestions_response", {
@@ -115,7 +168,9 @@ def generate_action_suggestions(
             "prompt_version": response.prompt_version,
             "latency_ms": response.latency_ms,
             "usage": response.usage,
+            "diagnostics": response.diagnostics,
             "raw": response.raw,
+            "memory_context": memory_payload,
         })
         raw_drafts.extend(
             (draft.title, draft.action_text, draft.focus, draft.rationale)
@@ -129,7 +184,14 @@ def generate_action_suggestions(
     raw_drafts.extend(_fallback_drafts(session))
     actions: list[SuggestedAction] = []
     seen: set[str] = set()
+    hidden_tokens = _hidden_authored_tokens(session)
     for title, action_text, focus, rationale in raw_drafts:
+        if _contains_token(
+            "\n".join((title, action_text, rationale)),
+            hidden_tokens,
+        ):
+            continue
+        action_text = _normalize_action_text(session, action_text)
         signature = " ".join(action_text.split())
         if not signature or signature in seen:
             continue
@@ -141,7 +203,6 @@ def generate_action_suggestions(
             action_text=action_text,
             focus=focus,
             rationale=rationale,
-            expected_iron_law_touches=_expected_touches(session, action_text),
         ))
         if len(actions) >= count:
             break
@@ -157,6 +218,7 @@ def generate_action_suggestions(
         "state_revision": session.state_revision,
         "suggestion_set_id": result.suggestion_set_id,
         "actions": [action.action_text for action in result.actions],
+        "memory_context": memory_payload,
     })
     return result
 

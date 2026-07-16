@@ -7,9 +7,6 @@ from pathlib import Path
 import yaml
 
 from server.engine.content import Story
-from server.engine.llm import ScriptedProvider
-from server.engine.llm_protocol import DirectorBeat, DirectorBeatKind
-from server.engine.llm_protocol import FactBatch
 from server.engine.session import GameSession
 from tools.validate_content import validate_content
 
@@ -23,10 +20,11 @@ class OpenSceneFixtureTest(unittest.TestCase):
         self.story = Story.load(FIXTURE)
         self.session = GameSession(self.story, log_dir=None)
 
-    def test_fixture_has_no_ordinary_storylets_and_validates_cleanly(self) -> None:
+    def test_minimal_fixture_validates_cleanly(self) -> None:
         data = yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
         report = validate_content(data)
-        self.assertEqual(data["storylets"], [])
+        self.assertNotIn("storylets", data)
+        self.assertNotIn("endings", data)
         self.assertEqual(report.errors, [])
         self.assertEqual(report.warnings, [])
 
@@ -37,33 +35,7 @@ class OpenSceneFixtureTest(unittest.TestCase):
             "你向周师傅说明了长桌需要遮盖，也问清了借用的可能。",
         )
         self.assertEqual(self.session.state["item_locations"]["rain_canvas"], before)
-        self.assertIsNone(result.ending)
         self.assertEqual(result.references, ())
-
-    def test_director_can_move_only_the_authored_adjacent_neighbor(self) -> None:
-        beat = DirectorBeat(
-            beat_id="beat_neighbor_enters",
-            state_revision=1,
-            kind=DirectorBeatKind.ENTER_SCENE,
-            actor_id="neighbor_lin",
-            target_location_id="workshop",
-            target_ids=("player",),
-            summary="林姐从院子走到门口，先看了看长桌需要遮住的范围。",
-            motivation="确认是否确实需要搭手，不替别人做决定。",
-        )
-        result = self.session.commit_fact_batch(
-            FactBatch(
-                state_revision=self.session.state_revision,
-                player_text="我看看工具墙和半开的门。",
-                narrative="你沿着工具墙慢慢看了一遍。",
-                references=("tool_wall",),
-            ),
-            director_provider=ScriptedProvider([], director_batches=[(beat,)]),
-        )
-        self.assertEqual(self.session.state["positions"]["neighbor_lin"], "workshop")
-        self.assertEqual(result.director_beats[0].actor_id, "neighbor_lin")
-        self.assertNotIn("invented_neighbor", self.session.state["positions"])
-
 
 if __name__ == "__main__":
     unittest.main()

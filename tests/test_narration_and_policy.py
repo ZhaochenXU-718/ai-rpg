@@ -76,13 +76,13 @@ class NarrationFactsTest(unittest.TestCase):
         self.assertIn("开始尝试", fallback)
         self.assertIn("没有出现足以写入账本的变化", fallback)
 
-    def test_rendered_turn_is_prose_plus_fact_receipt_not_mechanics_ui(self) -> None:
+    def test_prose_only_turn_has_no_empty_mechanics_receipt(self) -> None:
         result = self.session.commit_narrative(
             "我先听陈阿姨说完。", "你在门厅里停下脚步，认真听她把话说完。"
         )
         rendered = render_turn(self.story, result, self.session.state)
         self.assertIn("认真听她把话说完", rendered)
-        self.assertIn("铁律事实提交", rendered)
+        self.assertNotIn("物理事实提交", rendered)
         self.assertNotIn("判定", rendered)
         self.assertNotIn("意图", rendered)
         self.assertNotIn("报价", rendered)

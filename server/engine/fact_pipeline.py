@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from .iron_laws import build_fact_ledger, validate_fact_extraction
 from .llm import FactExtractionRequest, LLMProvider
-from .llm_protocol import IronLawViolation
+from .llm_protocol import PhysicalFactViolation
+from .memory_pipeline import maybe_compact_memory
 from .narration import narrate_player_turn
 from .resolver import TurnResult
 from .session import GameSession, SessionError
@@ -15,7 +16,7 @@ MAX_REGENERATIONS = 1
 
 
 class TurnResolutionError(SessionError):
-    def __init__(self, violations: tuple[IronLawViolation, ...]) -> None:
+    def __init__(self, violations: tuple[PhysicalFactViolation, ...]) -> None:
         self.violations = violations
         detail = "；".join(violation.message for violation in violations)
         super().__init__(
@@ -33,7 +34,7 @@ def resolve_player_turn(
 ) -> TurnResult:
     """Resolve one player input without charging failed prose candidates."""
     perception = session.perception()
-    feedback: tuple[IronLawViolation, ...] = ()
+    feedback: tuple[PhysicalFactViolation, ...] = ()
     attempts = max(0, min(2, max_regenerations)) + 1
 
     for attempt in range(attempts):
@@ -50,7 +51,17 @@ def resolve_player_turn(
             narrative=narrative,
             ledger=build_fact_ledger(session.story, session.state, perception),
         )
-        response = provider.extract_facts(request)
+        try:
+            response = provider.extract_facts(request)
+        except Exception as exc:
+            recorder.record("fact_extraction_error", {
+                "turn": session.turn_no + 1,
+                "attempt": attempt + 1,
+                "state_revision": session.state_revision,
+                "error": str(exc),
+                "diagnostics": dict(getattr(exc, "diagnostics", {}) or {}),
+            })
+            raise
         recorder.record("fact_extraction", {
             "turn": session.turn_no + 1,
             "attempt": attempt + 1,
@@ -59,6 +70,7 @@ def resolve_player_turn(
             "prompt_version": response.prompt_version,
             "latency_ms": response.latency_ms,
             "usage": response.usage,
+            "diagnostics": response.diagnostics,
             "raw": response.raw,
             "extraction": response.extraction.to_dict(),
         })
@@ -70,9 +82,8 @@ def resolve_player_turn(
             narrative=narrative,
             references=references,
             perception=perception,
-            turn_no=session.turn_no + 1,
         )
-        recorder.record("iron_law_validation", {
+        recorder.record("physical_fact_validation", {
             "turn": session.turn_no + 1,
             "attempt": attempt + 1,
             "state_revision": session.state_revision,
@@ -85,10 +96,8 @@ def resolve_player_turn(
             ),
         })
         if validation.accepted and validation.batch is not None:
-            result = session.commit_fact_batch(
-                validation.batch,
-                director_provider=provider,
-            )
+            result = session.commit_fact_batch(validation.batch)
+            compaction = maybe_compact_memory(session, provider, recorder)
             recorder.record("turn_committed", {
                 "turn": result.turn_no,
                 "state_revision": session.state_revision,
@@ -98,6 +107,8 @@ def resolve_player_turn(
                     if result.committed_turn is not None
                     else None
                 ),
+                "memory_event": session.memory.events[-1].to_dict(),
+                "memory_compaction": compaction.to_dict(),
             })
             return result
 

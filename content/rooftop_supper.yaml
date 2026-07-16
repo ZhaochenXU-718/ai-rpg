@@ -1,6 +1,6 @@
 id: rooftop_supper
 title: "晚风中的一桌饭"
-version: 0.4.0
+version: 0.5.0
 schema_version: 2
 content_profile: narrative_first
 language: zh-CN
@@ -40,35 +40,11 @@ style_bible:
     - "不要把邻里关系写成说教式的社区宣传。"
 
 global_rules:
-  time:
-    description: >
-      本故事使用自由叙事默认配置，不设置全局倒计时。world.step 只记录已提交行动的顺序；
-      饭菜温度、营业时间和邻居安排通过人物动机与场景叙事表达，不因玩家多观察或多交谈而自动失败。
-    countdown_enabled: false
-  fairness:
-    - "当前故事没有不可逆高风险行动，所有可验证行动都可以直接执行并在事后显示回执。"
-    - "善意不是万能钥匙；帮助必须与对方眼下的需要有关。"
-    - "玩家没有邀请到所有人也不算失败，一张安静的小桌同样是完整选择。"
-    - "失败要回到日常尺度：饭菜被各自打包带走，而不是发生灾难。"
   boundaries:
     - "故事发生在梧桐里九号楼及相连的临街小店。"
     - "阵雨将近，但不会发展成危险天气。"
     - "罗叔必须照看便利店，不能上天台参加饭局。"
     - "阿禾只有在送餐晚高峰开始前才可能短暂坐下。"
-
-world_board:
-  nodes:
-    building_lobby: { name: "九号楼门厅", kind: common_area }
-    convenience_store: { name: "梧桐便利店", kind: shop }
-    laundromat: { name: "转角洗衣店", kind: shop }
-    rooftop: { name: "九号楼天台", kind: common_area }
-  edges:
-    - { from: building_lobby, to: convenience_store, bidirectional: true }
-    - { from: building_lobby, to: laundromat, bidirectional: true }
-    - { from: building_lobby, to: rooftop, bidirectional: true }
-    - { from: convenience_store, to: laundromat, bidirectional: true }
-    - { from: convenience_store, to: rooftop, bidirectional: true }
-    - { from: laundromat, to: rooftop, bidirectional: true }
 
 items:
   food_basket:
@@ -79,7 +55,7 @@ items:
     visible_when_carried: true
   picnic_mat:
     name: "折叠野餐垫"
-    description: "罗叔借出的旧野餐垫，洗得很干净，正好能铺在天台折叠桌上。"
+    description: "便利店储物架上的旧野餐垫，洗得很干净，正好能铺在天台折叠桌上。"
     portable: true
     consumable: false
   checked_cloth:
@@ -90,13 +66,6 @@ items:
     visible_when_carried: true
 
 initial_state:
-  world:
-    chapter: 1
-    step: 0
-    current_goal: "把陈阿姨多做的饭菜妥善摆上桌"
-    dinner_status: waiting
-    guest_count: 0
-    weather: humid
   positions:
     player: building_lobby
     aunt_chen: building_lobby
@@ -105,18 +74,8 @@ initial_state:
     ahe: convenience_store
   item_locations:
     food_basket: { type: carried_by, id: aunt_chen }
-    picnic_mat: { type: carried_by, id: clerk_luo }
+    picnic_mat: { type: board, id: convenience_store }
     checked_cloth: { type: carried_by, id: xiaoyu }
-  flags:
-    opening_delivered: false
-    dinner_agreed: false
-    rooftop_noticed: false
-    xiaoyu_invited: false
-    ahe_invited: false
-    aunt_arrived: false
-    xiaoyu_arrived: false
-    ahe_arrived: false
-    table_set: false
 
 characters:
   player:
@@ -164,9 +123,6 @@ characters:
     voice: "语速快，常夹着订单和时间信息；接受善意时会先说明自己随时可能离开。"
     initial_relationship: "给玩家送过几次餐、彼此认脸；愿意聊两句，但不会因一顿饭耽误工作。"
 
-perception:
-  facts_label: "留意到"
-
 scenes:
   building_lobby:
     name: "九号楼门厅"
@@ -179,13 +135,10 @@ scenes:
     exits:
       - to: convenience_store
         label: "去隔壁梧桐便利店"
-        narrative_hint: "你穿过塑料门帘，走进隔壁亮着白灯的便利店。"
       - to: laundromat
         label: "去转角洗衣店"
-        narrative_hint: "你沿着临街骑楼走到洗衣店，滚筒转动声从门内传出来。"
       - to: rooftop
         label: "走楼梯上天台"
-        narrative_hint: "你沿着刚拖过的楼梯往上，推开通向天台的铁门。"
     available_objects:
       environment:
         notice_board: "贴满旧通知的公告栏"
@@ -195,11 +148,6 @@ scenes:
       states:
         warm_food: "饭菜还热"
         humid_evening: "闷热的傍晚"
-    exit_conditions:
-      any:
-        - flags:
-            dinner_agreed: true
-
   convenience_store:
     name: "梧桐便利店"
     purpose: "提供务实的铺桌物资，以及一位时间有限的潜在饭友。"
@@ -211,13 +159,10 @@ scenes:
     exits:
       - to: building_lobby
         label: "回九号楼门厅"
-        narrative_hint: "你掀开门帘，几步回到九号楼门厅。"
       - to: laundromat
         label: "沿骑楼去洗衣店"
-        narrative_hint: "你沿着骑楼走到转角，洗衣店的暖风扑到人行道上。"
       - to: rooftop
         label: "从便利店后侧楼梯上天台"
-        narrative_hint: "你从便利店旁的后楼梯上楼，天台铁门在风里轻响。"
     available_objects:
       environment:
         carton_stack: "挡住储物间的纸箱"
@@ -228,13 +173,6 @@ scenes:
       states:
         store_open: "便利店正在营业"
         delivery_rush_soon: "送餐晚高峰将近"
-    exit_conditions:
-      any:
-        - inventory_all:
-            - picnic_mat
-        - flags:
-            ahe_invited: true
-
   laundromat:
     name: "转角洗衣店"
     purpose: "提供另一条铺桌路线，并呈现对社交邀请有合理顾虑的人。"
@@ -246,13 +184,10 @@ scenes:
     exits:
       - to: building_lobby
         label: "回九号楼门厅"
-        narrative_hint: "你沿骑楼回到九号楼，门厅里还留着饭菜的香味。"
       - to: convenience_store
         label: "沿骑楼去便利店"
-        narrative_hint: "你离开滚筒的低响，走进便利店明亮的白灯里。"
       - to: rooftop
         label: "从洗衣店后侧楼梯上天台"
-        narrative_hint: "你从洗衣店后门绕上楼梯，推开被晚风顶住的天台门。"
     available_objects:
       environment:
         tangled_sheet: "缠在一起的大件布料"
@@ -263,13 +198,6 @@ scenes:
       states:
         closing_time_near: "打烊时间将近"
         quiet_company: "各忙各的安静"
-    exit_conditions:
-      any:
-        - inventory_all:
-            - checked_cloth
-        - flags:
-            xiaoyu_invited: true
-
   rooftop:
     name: "九号楼天台"
     purpose: "把玩家前面的选择收束为一张具体的饭桌。"
@@ -280,13 +208,10 @@ scenes:
     exits:
       - to: building_lobby
         label: "下楼回门厅"
-        narrative_hint: "你关好天台铁门，沿楼梯回到门厅。"
       - to: convenience_store
         label: "从后楼梯去便利店"
-        narrative_hint: "你沿后楼梯下到街边便利店。"
       - to: laundromat
         label: "从后楼梯去洗衣店"
-        narrative_hint: "你沿另一侧楼梯下到洗衣店后门。"
     available_objects:
       environment:
         folding_table: "水箱旁的折叠桌"
@@ -297,178 +222,17 @@ scenes:
       states:
         rain_smell: "风里的雨味"
         table_space: "刚好够几个人的小桌"
-    exit_conditions:
-      any:
-        - ending_reached: true
-
-storylets:
-  # 锚点只订阅已经提交的铁律事实；普通移动、对话、帮忙和铺桌均由叙事循环处理。
-  - id: opening_offer
-    title: "多出来的一篮饭"
-    type: opportunity
-    attribution: world_beat
-    phase: after_world
-    once: true
-    trigger:
-      scene: building_lobby
-      flags:
-        opening_delivered: false
-    effect:
-      set_flags:
-        opening_delivered: true
-    narrative_hint: "陈阿姨收到女儿加班的消息，一篮刚做好的饭菜临时没了去处。"
-
-  - id: host_arrives
-    title: "陈阿姨上楼"
-    type: progress
-    attribution: world_beat
-    phase: after_world
-    once: true
-    trigger:
-      scene: rooftop
-      same_location:
-        - player
-        - aunt_chen
-      world_state:
-        dinner_status: ready
-      flags:
-        aunt_arrived: false
-    effect:
-      set_flags:
-        aunt_arrived: true
-    narrative_hint: "陈阿姨提着保温壶上来，看见桌面已经铺好，只问了一句碗筷够不够。"
-
-  - id: xiaoyu_arrives
-    title: "小雨带着空闲上楼"
-    type: reward
-    attribution: world_beat
-    phase: after_world
-    once: true
-    trigger:
-      scene: rooftop
-      same_location:
-        - player
-        - xiaoyu
-      world_state:
-        dinner_status: ready
-      flags:
-        xiaoyu_invited: true
-        xiaoyu_arrived: false
-    effect:
-      set_flags:
-        xiaoyu_arrived: true
-      state_patch:
-        world.guest_count: +1
-    narrative_hint: "小雨把手机调成静音，在桌边留了个方便起身的位置，然后坐下来。"
-
-  - id: ahe_arrives
-    title: "阿禾赶在订单前上楼"
-    type: reward
-    attribution: world_beat
-    phase: after_world
-    once: true
-    trigger:
-      scene: rooftop
-      same_location:
-        - player
-        - ahe
-      world_state:
-        dinner_status: ready
-      flags:
-        ahe_invited: true
-        ahe_arrived: false
-    effect:
-      set_flags:
-        ahe_arrived: true
-      state_patch:
-        world.guest_count: +1
-    narrative_hint: "阿禾把头盔放在脚边，手机屏幕朝上，只给自己盛了小半碗饭。"
-
-  - id: shared_table_settles
-    title: "各忙各的人成了一桌"
-    type: ending_route
-    attribution: world_beat
-    phase: after_world
-    once: true
-    trigger:
-      scene: rooftop
-      world_state:
-        dinner_status: ready
-      state_gte:
-        world.guest_count: 2
-    effect:
-      set_world:
-        dinner_status: shared
-    narrative_hint: "没有人宣布饭局开始。有人递碗，有人挪凳子，原本各自赶时间的人就这样坐成了一桌。"
-
-  - id: small_table_settles
-    title: "小桌也正合适"
-    type: ending_route
-    attribution: world_beat
-    phase: after_world
-    once: true
-    trigger:
-      scene: rooftop
-      world_state:
-        dinner_status: ready
-      state_lte:
-        world.guest_count: 1
-    effect:
-      set_world:
-        dinner_status: small
-    narrative_hint: "桌边没有坐满，但空位并不尴尬。陈阿姨把汤往你这边推了推，晚饭安静地开始了。"
-
-endings:
-  shared_evening:
-    title: "晚风把人留成一桌"
-    priority: 1
-    conditions:
-      positions.player: rooftop
-      world.dinner_status: shared
-      world.guest_count_gte: 2
-    outcome: |
-      天台上没有正式的座次，也没有谁负责活跃气氛。阿禾吃到一半接了新单，
-      小雨在第一阵小雨落下前收起自己的格布。大家来得短，走得也自然。
-      陈阿姨看着空下去的饭盒，只说下次少放一点盐。今晚并没有改变谁的生活，
-      只是让几段原本互不相干的晚间安排，安稳地重叠了一会儿。
-
-  small_supper:
-    title: "小桌也很好"
-    priority: 2
-    conditions:
-      positions.player: rooftop
-      world.dinner_status: small
-    outcome: |
-      有人有别的安排，有人只来坐了一小会儿，桌边没有凑出想象中的热闹。
-      陈阿姨并不介意。她把汤分进小碗，你们听着楼下电动车经过，慢慢把热饭吃完。
-      一顿饭不需要很多人见证才算被认真对待；空着的凳子，也不等于谁辜负了邀请。
-
-genre_system:
-  social_gathering:
-    host: aunt_chen
-    gathering_place: rooftop
-    invited_flags:
-      - xiaoyu_invited
-      - ahe_invited
-    principle: "邀请是否成功取决于是否听懂对方的时间和边界，而不是把好感刷到满值。"
-  everyday_stakes:
-    success: "饭菜被摆上桌，人们可以自在地来去。"
-    setback: "邀请被拒绝或临时改变计划都不会受罚；安静的小桌同样是完整结果。"
-
 authoring_notes:
   content_scope:
     scenes: 4
     characters: 5
     items: 3
-    storylets: 6
-    endings: 2
   route_notes:
     - "铺桌物有两条等价路线：帮罗叔整理纸箱借野餐垫，或帮小雨理开布料借格布。"
     - "小雨和阿禾都可通过理解顾虑来邀请；帮忙路线是更明确、更省回合的作者交互。"
-    - "最佳结局要求两人都接受邀请；零到一位来客会进入同样完整的小桌结局。"
-    - "自由叙事模式没有全局倒计时；邻居的忙碌属于人物边界，不是对玩家试错的惩罚。"
+    - "饭局是否热闹由叙事与后续记忆层承接，不再使用邀请旗标、锚点或结局条件。"
   production_log:
     created_at: "2026-07-13"
-    updated_at: "2026-07-14"
-    revision: "v0.3 转为 narrative_first 内容：移除意图、报价、数值关系和普通行动 storylet，只保留事实锚点。"
+    updated_at: "2026-07-16"
+    revision: "v0.5 删除任务旗标、故事锚点与条件结局；权威状态只保留人物位置和关键物品归属。"
     source: "原创都市日常短篇；未使用既有影视、小说或游戏 IP。"

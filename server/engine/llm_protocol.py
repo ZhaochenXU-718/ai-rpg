@@ -1,9 +1,9 @@
 """Narrative-first protocols shared by providers and the world engine.
 
-Protocol 0.3 adds untrusted structured prose extraction to the narrative-first
-0.2 provider surface. Providers may write prose and propose facts, cards,
-Director plans or future NPC turns, but only a code-admitted FactBatch may
-cross into authoritative state.
+Protocol 0.5 keeps only the provider-neutral surfaces that are exercised by the
+current narrative loop.  Providers may write prose, propose editable cards and
+extract physical facts, but only a code-admitted FactBatch may cross into
+authoritative state.
 """
 
 from __future__ import annotations
@@ -19,20 +19,15 @@ from pydantic import (
     Field,
     StringConstraints,
     TypeAdapter,
-    field_validator,
     model_validator,
 )
 
 
-PROTOCOL_VERSION = "0.3"
-ProtocolVersion = Literal["0.3"]
+PROTOCOL_VERSION = "0.5"
+ProtocolVersion = Literal["0.5"]
 MachineId = Annotated[
     str,
     StringConstraints(strip_whitespace=True, pattern=r"^[a-z][a-z0-9_.-]*$"),
-]
-StateKeyId = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, pattern=r"^[a-z][a-z0-9_-]*$"),
 ]
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
@@ -67,7 +62,6 @@ class PerceptionAudience(str, Enum):
 
     PLAYER = "player"
     NPC = "npc"
-    DIRECTOR = "director"
 
 
 class EntityKind(str, Enum):
@@ -76,7 +70,6 @@ class EntityKind(str, Enum):
     ENVIRONMENT = "environment"
     STATE = "state"
     EXIT = "exit"
-    LOCATION = "location"
     OTHER = "other"
 
 
@@ -92,8 +85,8 @@ class PerceivedEntity(ProtocolModel):
 class PerceptionSnapshot(ProtocolModel):
     """One subject-scoped view of the world.
 
-    The same schema can carry player, NPC or Director views; the builder that
-    supplies it owns the disclosure policy. A snapshot never contains a
+    The same schema can carry player or NPC views; the builder that supplies it
+    owns the visibility policy. A snapshot never contains a
     capability menu or an implicit permission to mutate state.
     """
 
@@ -128,6 +121,52 @@ class PerceptionSnapshot(ProtocolModel):
         return self
 
 
+class MemoryContextEvent(ProtocolModel):
+    """One cropped raw event carried only as soft generation context."""
+
+    turn_no: NonNegativeInt
+    player_text: NonEmptyStr
+    narrative: NonEmptyStr
+    scene_before: NonEmptyStr
+    scene_after: NonEmptyStr
+
+
+class MemoryContext(ProtocolModel):
+    """Revision-bound soft memory for prose and suggestion generation only."""
+
+    subject_id: NonEmptyStr
+    turn_no: NonNegativeInt
+    state_revision: NonNegativeInt
+    compacted_through_turn: NonNegativeInt = 0
+    rolling_summary: str = ""
+    open_loops: tuple[NonEmptyStr, ...] = ()
+    character_notes: dict[str, tuple[NonEmptyStr, ...]] = Field(
+        default_factory=dict
+    )
+    scene_notes: dict[str, tuple[NonEmptyStr, ...]] = Field(
+        default_factory=dict
+    )
+    recently_resolved: tuple[NonEmptyStr, ...] = ()
+    uncompacted_events: tuple[MemoryContextEvent, ...] = ()
+    text_chars: NonNegativeInt = 0
+    truncated: bool = False
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def event_window_is_ordered_and_current(self):
+        turns = [event.turn_no for event in self.uncompacted_events]
+        if turns != sorted(set(turns)):
+            raise ValueError("memory context events must be unique and ordered")
+        if self.compacted_through_turn > self.turn_no:
+            raise ValueError("memory digest cannot extend past the current turn")
+        if any(
+            turn <= self.compacted_through_turn or turn > self.turn_no
+            for turn in turns
+        ):
+            raise ValueError("memory context event is outside its turn window")
+        return self
+
+
 class SuggestedAction(ProtocolModel):
     """Editable prose inspiration, never a frozen execution plan."""
 
@@ -137,14 +176,7 @@ class SuggestedAction(ProtocolModel):
     action_text: NonEmptyStr
     focus: MachineId
     rationale: NonEmptyStr
-    expected_iron_law_touches: tuple[NonEmptyStr, ...] = ()
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @field_validator("expected_iron_law_touches")
-    @classmethod
-    def touches_are_unique(cls, values: tuple[str, ...]):
-        _ensure_unique(list(values), "expected_iron_law_touches")
-        return values
 
 
 class SuggestedActionSet(ProtocolModel):
@@ -170,16 +202,8 @@ class SuggestedActionSet(ProtocolModel):
 class ItemPlacement(ProtocolModel):
     """One authoritative item placement used for optimistic custody checks."""
 
-    type: Literal["board", "carried_by", "container", "removed"]
-    id: NonEmptyStr | None = None
-
-    @model_validator(mode="after")
-    def placement_is_coherent(self):
-        if self.type == "removed" and self.id is not None:
-            raise ValueError("removed item placement must not have an id")
-        if self.type != "removed" and self.id is None:
-            raise ValueError(f"{self.type} item placement requires an id")
-        return self
+    type: Literal["board", "carried_by"]
+    id: NonEmptyStr
 
 
 class CharacterMoveFact(ProtocolModel):
@@ -205,51 +229,10 @@ class ItemTransferFact(ProtocolModel):
         return self
 
 
-class SecretDisclosureFact(ProtocolModel):
-    fact_id: MachineId = Field(default_factory=lambda: new_protocol_id("fact"))
-    kind: Literal["secret_disclosure"] = "secret_disclosure"
-    secret_id: NonEmptyStr
-    owner_id: NonEmptyStr
-    disclosed_by_id: NonEmptyStr
-    audience_ids: tuple[NonEmptyStr, ...]
-    summary: NonEmptyStr
-    evidence: NonEmptyStr
-
-    @model_validator(mode="after")
-    def audiences_are_valid(self):
-        if not self.audience_ids:
-            raise ValueError("secret disclosure needs at least one audience")
-        _ensure_unique(list(self.audience_ids), "audience_ids")
-        return self
-
-
-class CommitmentFact(ProtocolModel):
-    fact_id: MachineId = Field(default_factory=lambda: new_protocol_id("fact"))
-    kind: Literal["commitment"] = "commitment"
-    commitment_id: StateKeyId
-    promisor_id: NonEmptyStr
-    promisee_id: NonEmptyStr
-    description: NonEmptyStr
-    related_item_id: NonEmptyStr | None = None
-    due: str = ""
-    evidence: NonEmptyStr
-
-
-class CommitmentUpdateFact(ProtocolModel):
-    fact_id: MachineId = Field(default_factory=lambda: new_protocol_id("fact"))
-    kind: Literal["commitment_update"] = "commitment_update"
-    commitment_id: StateKeyId
-    status: Literal["fulfilled", "broken", "cancelled"]
-    evidence: NonEmptyStr
-
-
 ExtractedFact = Annotated[
     Union[
         CharacterMoveFact,
         ItemTransferFact,
-        SecretDisclosureFact,
-        CommitmentFact,
-        CommitmentUpdateFact,
     ],
     Field(discriminator="kind"),
 ]
@@ -281,14 +264,12 @@ class FactBatch(ProtocolModel):
     player_text: NonEmptyStr
     narrative: NonEmptyStr
     state_changes: dict[str, Any] = Field(default_factory=dict)
-    facts: tuple[NonEmptyStr, ...] = ()
     references: tuple[NonEmptyStr, ...] = ()
     extracted_facts: tuple[ExtractedFact, ...] = ()
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
     @model_validator(mode="after")
     def entries_are_unique(self):
-        _ensure_unique(list(self.facts), "facts")
         _ensure_unique(list(self.references), "references")
         _ensure_unique(
             [fact.fact_id for fact in self.extracted_facts],
@@ -297,21 +278,17 @@ class FactBatch(ProtocolModel):
         return self
 
 
-class IronLawDomain(str, Enum):
+class PhysicalFactDomain(str, Enum):
     PRESENCE = "presence"
     ITEM_CUSTODY = "item_custody"
-    DISCLOSURE = "disclosure"
-    COMMITMENT = "commitment"
-    ANCHOR = "anchor"
-    IRREVERSIBLE = "irreversible"
-    WORLD_BOUNDARY = "world_boundary"
+    REVISION = "revision"
 
 
-class IronLawViolation(ProtocolModel):
+class PhysicalFactViolation(ProtocolModel):
     """Code-level rejection emitted before a FactBatch may commit."""
 
     code: MachineId
-    domain: IronLawDomain
+    domain: PhysicalFactDomain
     message: NonEmptyStr
     retryable: bool = True
     path: NonEmptyStr | None = None
@@ -319,203 +296,10 @@ class IronLawViolation(ProtocolModel):
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
 
-class IssueSeverity(str, Enum):
-    ERROR = "error"
-    WARNING = "warning"
-    ADJUSTMENT = "adjustment"
-
-
-class ValidationIssue(ProtocolModel):
-    """Generic engine admission issue used by Director and Local Canon."""
-
-    code: MachineId
-    severity: IssueSeverity
-    message: NonEmptyStr
-    retryable: bool
-    path: NonEmptyStr | None = None
-
-
-class DirectorBeatKind(str, Enum):
-    ENTER_SCENE = "enter_scene"
-    REACT = "react"
-    ADVANCE_PLAN = "advance_plan"
-
-
-class DirectorBeat(ProtocolModel):
-    beat_id: MachineId
-    state_revision: NonNegativeInt
-    kind: DirectorBeatKind
-    actor_id: NonEmptyStr
-    target_location_id: NonEmptyStr
-    target_ids: tuple[NonEmptyStr, ...] = ()
-    summary: NonEmptyStr
-    motivation: NonEmptyStr
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @field_validator("target_ids")
-    @classmethod
-    def targets_are_unique(cls, values: tuple[str, ...]):
-        _ensure_unique(list(values), "target_ids")
-        return values
-
-
-class DirectorBeatValidation(ProtocolModel):
-    validation_id: MachineId
-    beat_id: MachineId
-    state_revision: NonNegativeInt
-    can_schedule: bool
-    issues: tuple[ValidationIssue, ...] = ()
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @model_validator(mode="after")
-    def decision_is_coherent(self):
-        has_error = any(issue.severity == IssueSeverity.ERROR for issue in self.issues)
-        if self.can_schedule == has_error:
-            raise ValueError(
-                "can_schedule must be true exactly when validation has no errors"
-            )
-        return self
-
-
-class LocalCanonKind(str, Enum):
-    """Generated fact kinds; important characters remain author-owned."""
-
-    LOCATION = "location"
-    SITUATION = "situation"
-
-
-GENERATED_ENTITY_PREFIX = "gen_"
-
-
-class LocalCanonProposal(ProtocolModel):
-    proposal_id: MachineId
-    state_revision: NonNegativeInt
-    kind: LocalCanonKind
-    archetype_id: MachineId
-    entity_id: MachineId
-    name: NonEmptyStr
-    description: NonEmptyStr
-    parent_location_id: NonEmptyStr
-    expires_after_turns: Annotated[int, Field(ge=1)] | None = None
-    reason: NonEmptyStr
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @model_validator(mode="after")
-    def proposal_is_coherent(self):
-        if not self.entity_id.startswith(GENERATED_ENTITY_PREFIX):
-            raise ValueError(
-                f"generated entity ids must start with '{GENERATED_ENTITY_PREFIX}'"
-            )
-        if self.kind == LocalCanonKind.LOCATION and self.expires_after_turns is not None:
-            raise ValueError("generated locations are persistent-local; no expiry")
-        return self
-
-
-class LocalCanonValidation(ProtocolModel):
-    validation_id: MachineId
-    proposal_id: MachineId
-    state_revision: NonNegativeInt
-    can_commit: bool
-    issues: tuple[ValidationIssue, ...] = ()
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @model_validator(mode="after")
-    def decision_is_coherent(self):
-        has_error = any(issue.severity == IssueSeverity.ERROR for issue in self.issues)
-        if self.can_commit == has_error:
-            raise ValueError(
-                "can_commit must be true exactly when validation has no errors"
-            )
-        return self
-
-
-class DirectorPlan(ProtocolModel):
-    """Non-authoritative Director proposal revalidated by the engine."""
-
-    plan_id: MachineId = Field(default_factory=lambda: new_protocol_id("director"))
-    state_revision: NonNegativeInt
-    beats: tuple[DirectorBeat, ...] = ()
-    local_canon: tuple[LocalCanonProposal, ...] = ()
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @model_validator(mode="after")
-    def entries_are_unique(self):
-        _ensure_unique([beat.beat_id for beat in self.beats], "beats.beat_id")
-        _ensure_unique(
-            [proposal.proposal_id for proposal in self.local_canon],
-            "local_canon.proposal_id",
-        )
-        if any(beat.state_revision != self.state_revision for beat in self.beats):
-            raise ValueError("all beats must use the plan state_revision")
-        if any(
-            proposal.state_revision != self.state_revision
-            for proposal in self.local_canon
-        ):
-            raise ValueError("all local canon proposals must use the plan state_revision")
-        return self
-
-
-class NpcTurn(ProtocolModel):
-    """Future NPC-agent output; facts remain proposals until extraction."""
-
-    npc_turn_id: MachineId = Field(default_factory=lambda: new_protocol_id("npc"))
-    state_revision: NonNegativeInt
-    actor_id: NonEmptyStr
-    utterance: str = ""
-    action: str = ""
-    target_ids: tuple[NonEmptyStr, ...] = ()
-    proposed_facts: tuple[NonEmptyStr, ...] = ()
-    memory_notes: tuple[NonEmptyStr, ...] = ()
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-    @model_validator(mode="after")
-    def turn_is_coherent(self):
-        if not self.utterance.strip() and not self.action.strip():
-            raise ValueError("an NPC turn needs an utterance or action")
-        _ensure_unique(list(self.target_ids), "target_ids")
-        _ensure_unique(list(self.proposed_facts), "proposed_facts")
-        return self
-
-
-class FactAuthority(str, Enum):
-    """Provenance of committed truth, not permission requested by an LLM."""
-
-    IRON_LAW = "iron_law"
-    LOCAL_CANON = "local_canon"
-    CANON_ANCHOR = "canon_anchor"
-
-
 class CommittedChange(ProtocolModel):
     path: NonEmptyStr
     previous: Any
     new: Any
-    authority: FactAuthority
-    source: MachineId
-    reason: str = ""
-
-
-class CommittedDirectorBeat(ProtocolModel):
-    beat_id: MachineId
-    validation_id: MachineId
-    kind: DirectorBeatKind
-    actor_id: NonEmptyStr
-    target_location_id: NonEmptyStr
-    narrative_hint: NonEmptyStr
-    committed_changes: tuple[CommittedChange, ...] = ()
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-
-
-class CommittedLocalCanon(ProtocolModel):
-    proposal_id: MachineId
-    validation_id: MachineId
-    kind: LocalCanonKind
-    entity_id: MachineId
-    archetype_id: MachineId
-    name: NonEmptyStr
-    parent_location_id: NonEmptyStr
-    narrative_hint: NonEmptyStr
-    committed_changes: tuple[CommittedChange, ...] = ()
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
 
 class CommittedTurn(ProtocolModel):
@@ -530,19 +314,12 @@ class CommittedTurn(ProtocolModel):
     scene_after: NonEmptyStr
     narrative: NonEmptyStr
     committed_changes: tuple[CommittedChange, ...] = ()
-    director_beats: tuple[CommittedDirectorBeat, ...] = ()
-    local_canon: tuple[CommittedLocalCanon, ...] = ()
-    anchor_ids: tuple[MachineId, ...] = ()
-    new_facts: tuple[NonEmptyStr, ...] = ()
-    ending: NonEmptyStr | None = None
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
     @model_validator(mode="after")
     def revisions_are_monotonic(self):
         if self.state_revision_after <= self.state_revision_before:
             raise ValueError("a committed turn must advance state_revision")
-        _ensure_unique(list(self.anchor_ids), "anchor_ids")
-        _ensure_unique(list(self.new_facts), "new_facts")
         return self
 
 
@@ -556,11 +333,3 @@ def fact_extraction_json_schema() -> dict[str, Any]:
 
 def suggested_action_json_schema() -> dict[str, Any]:
     return copy.deepcopy(SuggestedAction.model_json_schema())
-
-
-def director_plan_json_schema() -> dict[str, Any]:
-    return copy.deepcopy(DirectorPlan.model_json_schema())
-
-
-def npc_turn_json_schema() -> dict[str, Any]:
-    return copy.deepcopy(NpcTurn.model_json_schema())

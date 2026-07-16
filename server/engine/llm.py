@@ -1,8 +1,8 @@
 """Provider-neutral interfaces for narrative-first generation.
 
-Providers write prose or propose editable action cards, Director plans and
-future NPC turns. None of these methods can mutate authoritative state; fact
-extraction and iron-law validation sit behind this interface.
+Providers write prose, propose editable action cards, extract a narrow set of
+physical facts and compact old narrative events. None of these methods can
+mutate authoritative state; fact validation sits behind this interface.
 """
 
 from __future__ import annotations
@@ -12,15 +12,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from .memory import MemoryDigest, MemoryEvent
 from .llm_protocol import (
-    DirectorBeat,
-    DirectorBeatKind,
-    DirectorPlan,
     EntityKind,
     ExtractedFact,
     FactExtraction,
-    LocalCanonProposal,
-    NpcTurn,
+    MemoryContext,
     PerceptionSnapshot,
     SuggestedAction,
     new_protocol_id,
@@ -35,6 +32,10 @@ class NarrativeRequest:
     perception: PerceptionSnapshot
     facts: dict[str, Any]
     style: dict[str, Any] = field(default_factory=dict)
+    memory_context: MemoryContext | None = None
+
+    def __post_init__(self) -> None:
+        _validate_memory_context(self.perception, self.memory_context)
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class NarrativeResponse:
     prompt_version: str = "n/a"
     latency_ms: float = 0.0
     usage: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,24 @@ class SuggestionRequest:
     perception: PerceptionSnapshot
     count: int = 5
     boundaries: tuple[str, ...] = ()
+    memory_context: MemoryContext | None = None
+
+    def __post_init__(self) -> None:
+        _validate_memory_context(self.perception, self.memory_context)
+
+
+def _validate_memory_context(
+    perception: PerceptionSnapshot,
+    memory_context: MemoryContext | None,
+) -> None:
+    if memory_context is None:
+        return
+    if memory_context.subject_id != perception.subject_id:
+        raise ValueError("memory context subject does not match perception")
+    if memory_context.turn_no != perception.turn_no:
+        raise ValueError("memory context turn does not match perception")
+    if memory_context.state_revision != perception.state_revision:
+        raise ValueError("memory context revision does not match perception")
 
 
 @dataclass(frozen=True)
@@ -61,6 +81,7 @@ class SuggestionResponse:
     prompt_version: str = "n/a"
     latency_ms: float = 0.0
     usage: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -81,59 +102,43 @@ class FactExtractionResponse:
     prompt_version: str = "n/a"
     latency_ms: float = 0.0
     usage: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
-class DirectorRequest:
-    """Post-fact context for a non-authoritative Director proposal."""
+class MemoryCompactionRequest:
+    """Old committed events and the previous soft digest."""
 
     story_id: str
     state_revision: int
-    turn_no: int
-    location_id: str
-    location_name: str
-    current_goal: str
-    player_id: str
-    player_action: str
-    action_targets: tuple[str, ...] = ()
-    committed_turn: dict[str, Any] = field(default_factory=dict)
-    candidates: tuple[dict[str, Any], ...] = ()
-    boundaries: tuple[str, ...] = ()
-    max_beats: int = 2
-    generation: dict[str, Any] = field(default_factory=dict)
+    previous_digest: MemoryDigest
+    events: tuple[MemoryEvent, ...]
+    character_catalog: tuple[tuple[str, str], ...]
+    scene_catalog: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True)
-class DirectorResponse:
-    plan: DirectorPlan
+class MemoryCompactionResponse:
+    digest: MemoryDigest
     raw: str
     model: str
     prompt_version: str = "n/a"
     latency_ms: float = 0.0
     usage: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class NpcRequest:
-    """Reserved Phase 4 request for a single authored NPC agent."""
-
-    perception: PerceptionSnapshot
-    character_card: dict[str, Any]
-    scene_direction: str = ""
-
-
-@dataclass(frozen=True)
-class NpcResponse:
-    turn: NpcTurn
-    raw: str
-    model: str
-    prompt_version: str = "n/a"
-    latency_ms: float = 0.0
-    usage: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 class LLMProviderError(Exception):
-    pass
+    """Provider failure with structured, trace-safe diagnostics."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostics = dict(diagnostics or {})
 
 
 class LLMProvider:
@@ -150,15 +155,15 @@ class LLMProvider:
     def extract_facts(self, request: FactExtractionRequest) -> FactExtractionResponse:
         raise LLMProviderError(f"provider '{self.name}' does not support fact extraction")
 
-    def propose_director(self, request: DirectorRequest) -> DirectorResponse:
-        raise LLMProviderError(f"provider '{self.name}' does not support Director plans")
-
-    def propose_npc_turn(self, request: NpcRequest) -> NpcResponse:
-        raise LLMProviderError(f"provider '{self.name}' does not support NPC turns")
+    def compact_memory(
+        self,
+        request: MemoryCompactionRequest,
+    ) -> MemoryCompactionResponse:
+        raise LLMProviderError(f"provider '{self.name}' does not support memory compaction")
 
 
 class ScriptedProvider(LLMProvider):
-    """Deterministic prose/card/Director queues for tests and demos."""
+    """Deterministic prose, card and fact queues for tests and demos."""
 
     name = "scripted"
 
@@ -166,17 +171,15 @@ class ScriptedProvider(LLMProvider):
         self,
         narratives: list[str | None] | None = None,
         suggestion_batches: list[tuple[SuggestedAction, ...]] | None = None,
-        director_batches: list[tuple[DirectorBeat, ...]] | None = None,
-        local_canon_batches: list[tuple[LocalCanonProposal, ...]] | None = None,
         fact_extractions: list[
             FactExtraction | tuple[ExtractedFact, ...]
         ] | None = None,
+        memory_digests: list[MemoryDigest] | None = None,
     ) -> None:
         self._narratives = list(narratives or [])
         self._suggestion_batches = list(suggestion_batches or [])
-        self._director_batches = list(director_batches or [])
-        self._local_canon_batches = list(local_canon_batches or [])
         self._fact_extractions = list(fact_extractions or [])
+        self._memory_digests = list(memory_digests or [])
 
     def render_narrative(self, request: NarrativeRequest) -> NarrativeResponse | None:
         if not self._narratives:
@@ -213,19 +216,16 @@ class ScriptedProvider(LLMProvider):
             model="scripted",
         )
 
-    def propose_director(self, request: DirectorRequest) -> DirectorResponse:
-        beats = self._director_batches.pop(0) if self._director_batches else ()
-        proposals = (
-            self._local_canon_batches.pop(0) if self._local_canon_batches else ()
-        )
-        plan = DirectorPlan(
-            state_revision=request.state_revision,
-            beats=beats,
-            local_canon=proposals,
-        )
-        return DirectorResponse(
-            plan=plan,
-            raw=json.dumps(plan.to_dict(), ensure_ascii=False),
+    def compact_memory(
+        self,
+        request: MemoryCompactionRequest,
+    ) -> MemoryCompactionResponse:
+        if not self._memory_digests:
+            raise LLMProviderError("scripted provider has no memory digest left")
+        digest = self._memory_digests.pop(0)
+        return MemoryCompactionResponse(
+            digest=digest,
+            raw=json.dumps(digest.to_dict(), ensure_ascii=False),
             model="scripted",
         )
 
@@ -246,6 +246,31 @@ class HeuristicMockProvider(LLMProvider):
             extraction=extraction,
             raw=json.dumps(extraction.to_dict(), ensure_ascii=False),
             model="heuristic-mock-extractor-0.1",
+            latency_ms=round((time.monotonic() - started) * 1000, 2),
+        )
+
+    def compact_memory(
+        self,
+        request: MemoryCompactionRequest,
+    ) -> MemoryCompactionResponse:
+        """Deterministic extractive fallback for offline M2 testing."""
+        started = time.monotonic()
+        parts = [request.previous_digest.rolling_summary.strip()]
+        parts.extend(event.narrative.strip() for event in request.events)
+        summary = " ".join(part for part in parts if part).strip()
+        digest = MemoryDigest(
+            compacted_through_turn=request.events[-1].turn_no,
+            rolling_summary=summary[-1200:],
+            open_loops=request.previous_digest.open_loops,
+            character_notes=request.previous_digest.character_notes,
+            scene_notes=request.previous_digest.scene_notes,
+            recently_resolved=request.previous_digest.recently_resolved,
+        )
+        return MemoryCompactionResponse(
+            digest=digest,
+            raw=json.dumps(digest.to_dict(), ensure_ascii=False),
+            model="heuristic-mock-memory-0.1",
+            prompt_version="extractive-memory-v1",
             latency_ms=round((time.monotonic() - started) * 1000, 2),
         )
 
@@ -318,47 +343,6 @@ class HeuristicMockProvider(LLMProvider):
             model="heuristic-mock-suggestions-0.2",
             latency_ms=round((time.monotonic() - started) * 1000, 2),
         )
-
-    def propose_director(self, request: DirectorRequest) -> DirectorResponse:
-        """Only an explicitly referenced, present authored NPC may react."""
-        started = time.monotonic()
-        target_ids = set(request.action_targets)
-        candidate = next(
-            (
-                item
-                for item in request.candidates
-                if item.get("status") == "present"
-                and item.get("actor_id") in target_ids
-            ),
-            None,
-        )
-        beats: tuple[DirectorBeat, ...] = ()
-        if candidate is not None:
-            actor_id = str(candidate["actor_id"])
-            actor_name = str(candidate.get("name") or actor_id)
-            beats = (DirectorBeat(
-                beat_id=new_protocol_id("beat"),
-                state_revision=request.state_revision,
-                kind=DirectorBeatKind.REACT,
-                actor_id=actor_id,
-                target_location_id=request.location_id,
-                target_ids=tuple(
-                    target for target in request.action_targets if target != actor_id
-                ),
-                summary=(
-                    f"{actor_name}针对眼前这次行动作出简短回应，"
-                    "没有越过自己原有的立场。"
-                ),
-                motivation=str(candidate.get("motivation") or "回应眼前的行动。"),
-            ),)
-        plan = DirectorPlan(state_revision=request.state_revision, beats=beats)
-        return DirectorResponse(
-            plan=plan,
-            raw=json.dumps(plan.to_dict(), ensure_ascii=False),
-            model="heuristic-mock-director-0.2",
-            latency_ms=round((time.monotonic() - started) * 1000, 2),
-        )
-
 
 PROVIDERS: dict[str, type[LLMProvider]] = {
     HeuristicMockProvider.name: HeuristicMockProvider,

@@ -5,10 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from .content import Story
-from .director import current_goal, current_scene_id
-from .llm_protocol import LocalCanonKind
+from .memory import MemoryState
 from .resolver import TurnResult
-from .state import get_value
 
 
 def render_scene_entry(
@@ -20,10 +18,6 @@ def render_scene_entry(
     )
     lines = [f"—— {name} ——"]
     entry = str(scene.get("entry_text") or "").strip()
-    if not entry and state is not None:
-        record = story.generated_locations(state).get(scene_id)
-        if isinstance(record, dict):
-            entry = str(record.get("description") or "").strip()
     if entry:
         lines.append(entry)
     return "\n".join(lines)
@@ -33,22 +27,13 @@ def render_intro(story: Story, state: dict[str, Any]) -> str:
     parts = [f"《{story.title}》", ""]
     if story.premise:
         parts += [story.premise, ""]
-    parts.append(render_scene_entry(story, current_scene_id(state), state))
+    parts.append(render_scene_entry(story, story.current_location(state), state))
     return "\n".join(parts)
 
 
 def render_status(story: Story, state: dict[str, Any]) -> str:
-    from .perception import perception_config
-
-    config = perception_config(story)
-    header = f"场景：{story.location_name(state, current_scene_id(state))}"
-    for key, label in config["world_state"].items():
-        value = get_value(state, f"world.{key}")
-        if value is not None:
-            header += f" ｜ {label}：{value}"
-    lines = [header, f"当前目标：{current_goal(story, state)}"]
-    if state["facts"]:
-        lines.append(f"已记录{config['facts_label']} {len(state['facts'])} 条（输入 facts 查看）")
+    header = f"场景：{story.location_name(state, story.current_location(state))}"
+    lines = [header, f"当前目标：{story.current_goal(state)}"]
     inventory = story.inventory(state)
     if inventory:
         lines.append(
@@ -66,19 +51,72 @@ def render_characters(story: Story, state: dict[str, Any]) -> str:
     return "\n".join(lines) or "（这里没有别人。）"
 
 
+def render_memory(story: Story, memory: MemoryState, *, raw: bool = False) -> str:
+    """Render soft memory without presenting it as authoritative state."""
+    if raw:
+        lines = ["【原始叙事事件｜非权威状态】"]
+        events = memory.events[-10:]
+        if not events:
+            return "\n".join([*lines, "（还没有已提交回合。）"])
+        for event in events:
+            before = story.location_name({}, event.scene_before)
+            after = story.location_name({}, event.scene_after)
+            location = before if before == after else f"{before}→{after}"
+            lines.append(f"回合 {event.turn_no}｜{location}")
+            lines.append(f"  玩家：{event.player_text}")
+            lines.append(f"  叙事：{event.narrative}")
+            for change in event.physical_changes:
+                lines.append(
+                    f"  物理变化：{change.path}: {change.previous}→{change.new}"
+                )
+        return "\n".join(lines)
+
+    lines = ["【叙事记忆｜非权威状态】"]
+    if memory.rolling_summary:
+        lines.append(
+            f"滚动小结（截至回合 {memory.compacted_through_turn}）："
+            + memory.rolling_summary
+        )
+    else:
+        lines.append("滚动小结：（尚未达到压缩条件。）")
+    if memory.last_compaction_error:
+        lines.append(
+            "小结状态：上次小结失败（"
+            + memory.last_compaction_error
+            + "）；原始事件仍完整保留。"
+        )
+    if memory.open_loops:
+        lines.append("开放事项：")
+        lines.extend(f"- {item}" for item in memory.open_loops)
+    if memory.recently_resolved:
+        lines.append("最近解决：")
+        lines.extend(f"- {item}" for item in memory.recently_resolved)
+    if memory.character_notes:
+        lines.append("人物小结：")
+        for group in memory.character_notes:
+            name = story.character_name(group.subject_id)
+            lines.append(f"- {name}：" + "；".join(group.notes))
+    if memory.scene_notes:
+        lines.append("场景小结：")
+        for group in memory.scene_notes:
+            name = story.location_name({}, group.subject_id)
+            lines.append(f"- {name}：" + "；".join(group.notes))
+    lines.append("最近经历：")
+    if not memory.recent_events:
+        lines.append("（还没有已提交回合。）")
+    else:
+        lines.extend(
+            f"- 回合 {event.turn_no}：{event.narrative}"
+            for event in memory.recent_events
+        )
+    return "\n".join(lines)
+
+
 def render_turn(story: Story, result: TurnResult, state: dict[str, Any]) -> str:
     lines = [
         result.narrative.strip()
-        or "你把想法付诸尝试；当前回合没有产生可提交的铁律事实。"
+        or "你把想法付诸尝试；当前回合没有产生需要单独记录的物理变化。"
     ]
-    lines.extend(f"与此同时，{hint}" for hint in result.narrative_hints if hint)
-
-    from .perception import perception_config
-
-    facts_label = perception_config(story)["facts_label"]
-    for fact in result.new_facts:
-        lines.append(f"◇ 新{facts_label}：{fact}")
-
     collapsed: dict[str, tuple[Any, Any]] = {}
     order: list[str] = []
     for path, previous, new in result.changes:
@@ -91,24 +129,9 @@ def render_turn(story: Story, result: TurnResult, state: dict[str, Any]) -> str:
         f"{path}: {collapsed[path][0]}→{collapsed[path][1]}"
         for path in order
         if collapsed[path][0] != collapsed[path][1]
-        and not path.startswith("generated.")
     ]
     if receipts:
-        lines.append("（铁律事实提交：" + "，".join(receipts) + "）")
-    for record in result.local_canon:
-        kind = "地点" if record.kind == LocalCanonKind.LOCATION else "局势"
-        lines.append(f"（新增局部事实：{record.name}〔{kind}〕）")
-    for note in result.notes:
-        lines.append(f"（{note}）")
+        lines.append("（物理事实提交：" + "，".join(receipts) + "）")
     if result.scene_after != result.scene_before:
         lines.extend(["", render_scene_entry(story, result.scene_after, state)])
-    return "\n".join(lines)
-
-
-def render_ending(story: Story, ending_id: str) -> str:
-    ending = story.endings.get(ending_id) or {}
-    lines = [f"══ 结局：{ending.get('title', ending_id)} ══"]
-    outcome = str(ending.get("outcome") or "").strip()
-    if outcome:
-        lines.append(outcome)
     return "\n".join(lines)

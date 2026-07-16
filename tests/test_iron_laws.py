@@ -5,26 +5,21 @@ import unittest
 from pathlib import Path
 
 from server.engine.content import Story
-from server.engine.iron_laws import (
-    secret_id_for_character,
-    validate_fact_extraction,
-)
+from server.engine.iron_laws import validate_fact_extraction
 from server.engine.llm_protocol import (
     CharacterMoveFact,
     FactExtraction,
     ItemPlacement,
     ItemTransferFact,
-    SecretDisclosureFact,
 )
 from server.engine.session import GameSession
 
 
 ROOT = Path(__file__).resolve().parent.parent
 OPEN_FIXTURE = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
-ROOFTOP = ROOT / "content" / "rooftop_supper.yaml"
 
 
-class IronLawValidationTest(unittest.TestCase):
+class PhysicalFactValidationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.session = GameSession(Story.load(OPEN_FIXTURE), log_dir=None)
 
@@ -40,10 +35,9 @@ class IronLawValidationTest(unittest.TestCase):
             narrative=narrative,
             references=(),
             perception=self.session.perception(),
-            turn_no=self.session.turn_no + 1,
         )
 
-    def test_adjacent_player_move_becomes_a_validated_batch(self) -> None:
+    def test_known_player_destination_becomes_a_validated_batch(self) -> None:
         validation = self.validate(
             "你走进公共院子，停在长桌旁。",
             CharacterMoveFact(
@@ -74,7 +68,7 @@ class IronLawValidationTest(unittest.TestCase):
         )
         self.assertFalse(validation.accepted)
         self.assertIn(
-            "iron.route_not_adjacent",
+            "physical.location_unknown",
             {violation.code for violation in validation.violations},
         )
         self.assertEqual(self.session.state, before)
@@ -100,7 +94,7 @@ class IronLawValidationTest(unittest.TestCase):
 
         self.assertFalse(validation.accepted)
         self.assertIn(
-            "iron.item_not_co_present",
+            "physical.item_not_co_present",
             {violation.code for violation in validation.violations},
         )
         self.assertEqual(self.session.state, before)
@@ -122,7 +116,7 @@ class IronLawValidationTest(unittest.TestCase):
         self.assertFalse(validation.accepted)
         self.assertEqual(
             validation.violations[0].code,
-            "iron.item_custody_stale",
+            "physical.item_custody_stale",
         )
 
     def test_valid_item_transfer_uses_co_presence_and_portability(self) -> None:
@@ -143,62 +137,20 @@ class IronLawValidationTest(unittest.TestCase):
             {"type": "carried_by", "id": "player"},
         )
 
-    def test_secret_can_only_be_disclosed_by_its_owner_to_present_audience(self) -> None:
-        session = GameSession(Story.load(ROOFTOP), log_dir=None)
-        narrative = "陈阿姨说，女儿临时加班让她有些失落。"
-        extraction = FactExtraction(
-            state_revision=0,
-            facts=(SecretDisclosureFact(
-                secret_id=secret_id_for_character("aunt_chen"),
-                owner_id="aunt_chen",
-                disclosed_by_id="player",
-                audience_ids=("player",),
-                summary="女儿临时加班让陈阿姨有些失落",
-                evidence=narrative,
-            ),),
+    def test_evidence_is_audit_metadata_not_a_commit_gate(self) -> None:
+        validation = self.validate(
+            "你从修理铺走进公共院子。",
+            CharacterMoveFact(
+                actor_id="player",
+                destination_id="courtyard",
+                evidence="模型没有逐字复制散文",
+            ),
         )
-        validation = validate_fact_extraction(
-            session.story,
-            session.state,
-            extraction,
-            player_text="我问她是不是有心事。",
-            narrative=narrative,
-            references=("aunt_chen",),
-            perception=session.perception(),
-            turn_no=1,
-        )
-        self.assertFalse(validation.accepted)
+        self.assertTrue(validation.accepted)
         self.assertEqual(
-            validation.violations[0].code,
-            "iron.secret_discloser_unauthorized",
+            validation.batch.state_changes,
+            {"positions.player": "courtyard"},
         )
-
-        valid_extraction = FactExtraction(
-            state_revision=0,
-            facts=(SecretDisclosureFact(
-                secret_id=secret_id_for_character("aunt_chen"),
-                owner_id="aunt_chen",
-                disclosed_by_id="aunt_chen",
-                audience_ids=("player",),
-                summary="女儿临时加班让陈阿姨有些失落",
-                evidence=narrative,
-            ),),
-        )
-        valid = validate_fact_extraction(
-            session.story,
-            session.state,
-            valid_extraction,
-            player_text="我问她是不是有心事。",
-            narrative=narrative,
-            references=("aunt_chen",),
-            perception=session.perception(),
-            turn_no=1,
-        )
-        self.assertTrue(valid.accepted)
-        session.commit_fact_batch(valid.batch)
-        disclosure = session.state["disclosures"]["secret_aunt_chen"]
-        self.assertIn("player", disclosure["audience_ids"])
-        self.assertIn("女儿临时加班", "".join(session.perception().known_facts))
 
 
 if __name__ == "__main__":

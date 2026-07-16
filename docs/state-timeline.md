@@ -1,77 +1,27 @@
-# 状态时间线与分支协议
+# AIRPG 状态时间线
 
-状态：内存版本已实现
-最近修订：2026-07-15
+## 保存内容
 
-## 1. 核心语义
+每个 checkpoint 保存物理状态、完整 `MemoryState`、回合号、最后一次提交结果和随机数状态。当前物理状态只有人物位置与关键物品归属。
 
-撤回不是删除聊天文本，而是把权威世界恢复到旧 checkpoint，并从那里建立一条新历史。原分支继续保留，用于审计、回放和未来消息树 UI。
+## revision
 
-## 2. Checkpoint
+每次成功提交都增加 `state_revision`。感知、行动提案、事实抽取和 `FactBatch` 都绑定 revision；旧产物不能跨 revision 使用。
 
-`GameSession` 从 `cp_0` 开始。每次成功原子提交后写入：
+失败候选不会增加回合、revision 或 checkpoint。
 
-- 完整权威 state；
-- 已消费的 once 锚点；
-- 分支内 `turn_no`；
-- ending 与上一回合 TurnResult；
-- 近期叙事窗口；
-- 随机源状态；
-- 父 checkpoint、branch 与创建时 revision。
+## 撤回与分支
 
-快照深拷贝保存，对外读取也返回隔离副本。
+`undo` 恢复父 checkpoint，并从该点创建新分支。旧分支和提交仍保留，`timeline` 可以查看当前路径和各分支头。
 
-## 3. Revision
+恢复 checkpoint 本身也会增加 live revision，防止恢复前生成的抽取或行动卡误提交到新分支。
 
-- `turn_no` 是当前分支内的回合序号，恢复旧节点时回退。
-- `state_revision` 是 session 的权威版本，永不回退；成功提交和恢复旧节点都会递增。
-- PerceptionSnapshot、行动卡、FactExtraction、FactBatch、DirectorPlan 和 NpcTurn 都绑定 revision。
-- revision 不匹配的 FactBatch 必须在复制/修改 live state 之前拒绝。
+## 叙事记忆
 
-因此撤回后不能复用旧生成结果。需要重新基于恢复后的快照生成。
+每次成功提交都会创建一个 `MemoryEvent`，记录玩家原话、已提交散文、场景前后、参与人物、引用实体和实际物理变化。完整事件日志保存在当前分支的 `MemoryState` 中，最近 4 个事件构成短期感知窗口。
 
-## 4. 分支
+M2 在旧事件达到阈值时，尝试把一批旧事件整理成滚动小结。成功的小结或失败冷却元数据都附着到当前已提交 checkpoint，不创建新 checkpoint，也不增加物理 revision。完整事件不会因为压缩而删除。
 
-- `undo()` 恢复当前节点的父节点并创建 `branch_N`；
-- `restore_checkpoint(id)` 从任意保留节点建立新分支；
-- 原 branch 的 head 不变；
-- 新分支首次提交以恢复目标为 parent；
-- 所有分支共享不可变祖先，不覆写旧节点。
+`undo` 会同时恢复祖先 checkpoint 的原始事件、小结和失败冷却状态。被放弃分支的后续事件与小结只保留在该分支 checkpoint 中，不会进入新分支。小结仍是非权威上下文，不自动升级为承诺、关系或任务状态。
 
-## 5. 原子性
-
-候选散文和 FactExtraction 不进入时间线。检查通过后的 FactBatch、事实锚点、Director 和 Local Canon 先应用到工作副本；全部成功后，session 才替换 live state、生成 `CommittedTurn`、增加 turn/revision 并写 checkpoint。抽取失败、铁律冲突或异常时 state、consumed、turn、revision 和当前 checkpoint 均保持不变。
-
-Director provider 自身故障被降级为可记录的可选层错误，不使已完成的事实批次失败。
-
-## 6. 接口
-
-| 接口 | 作用 |
-|---|---|
-| `current_checkpoint_id` | 当前提交节点 |
-| `current_branch_id` | 当前活动分支 |
-| `get_checkpoint(id)` | 读取隔离快照 |
-| `checkpoint_history()` | 当前路径的根到 head |
-| `branches()` | 全部分支的 fork / head |
-| `undo()` | 恢复父节点并新建分支 |
-| `restore_checkpoint(id)` | 从指定节点新建分支 |
-
-CLI 使用 `undo` 和 `timeline`。日志记录 checkpoint、parent、branch、revision 与恢复事件。
-
-## 7. 尚未实现
-
-- 跨进程持久化；
-- 完整消息树 UI 与分支选择；
-- 对同一 CommittedTurn 只重生成散文；
-- 已结束故事的结算页分支切换；
-- 手动选择旧候选、重生成次数策略与随机种子展示；
-- Chapter / Arc 长期记忆随分支的增量索引。
-
-## 8. 验收不变量
-
-- revision 在提交和恢复后单调递增；
-- 失败批次零状态变化、零回合、零 checkpoint；
-- 旧 revision 生成物不能提交；
-- 新提交 parent 是恢复目标，旧 branch head 不变；
-- 根节点不可撤回；
-- 修改外部 checkpoint 副本不影响 live state 或历史。
+M3 的 `MemoryContext` 不单独保存，而是在生成前从恢复后的 `MemoryState` 派生。它绑定当前 live revision；因此撤回前生成的旁白/提案上下文不能跨分支继续使用。上下文只交给旁白与行动提案，事实抽取仍只读取当前回合散文和物理账本。

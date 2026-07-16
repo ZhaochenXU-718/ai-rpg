@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .llm import LLMProvider, NarrativeRequest
-from .llm_protocol import IronLawViolation
+from .llm_protocol import PhysicalFactViolation
 from .session import GameSession
 from .trace import TraceRecorder
 
@@ -33,7 +33,7 @@ def build_narrative_facts(
     session: GameSession,
     player_text: str,
     references: tuple[str, ...],
-    violations: tuple[IronLawViolation, ...] = (),
+    violations: tuple[PhysicalFactViolation, ...] = (),
 ) -> dict[str, Any]:
     perception = session.perception()
     scene = session.story.scene(perception.location_id)
@@ -59,13 +59,12 @@ def build_narrative_facts(
         "当前目标": perception.current_goal,
         "在场可见实体": list(visible.values()),
         "已知事实": list(perception.known_facts),
-        "近期叙事": list(perception.recent_events[-3:]),
         "世界边界": [str(rule) for rule in boundaries],
         "事实表达要求": (
-            "可以写行动成功、失败或人物回应。若位置、物品归属、秘密披露或人物承诺"
-            "发生变化，必须在散文中明确写出；不得跳过在场、相邻路线与当前归属。"
+            "可以写行动成功、失败或人物回应。若人物换场或关键物品归属发生变化，"
+            "必须在散文中明确写出；不得跳过当前在场与物品归属。"
         ),
-        "输出要求": "输出 2-4 句连贯散文，不解释系统阶段，不输出状态表。",
+        "输出要求": "输出 2-5 句连贯散文，不解释系统阶段，不输出状态表。",
     }
     if violations:
         facts["上次候选的冲突反馈"] = [
@@ -85,9 +84,13 @@ def narrate_player_turn(
     provider: LLMProvider,
     player_text: str,
     recorder: TraceRecorder | None = None,
-    violations: tuple[IronLawViolation, ...] = (),
+    violations: tuple[PhysicalFactViolation, ...] = (),
 ) -> tuple[str, tuple[str, ...]]:
     references = match_references(session, player_text)
+    memory_context = session.memory_context()
+    memory_payload = (
+        memory_context.to_dict() if memory_context is not None else None
+    )
     facts = build_narrative_facts(
         session, player_text, references, violations=violations
     )
@@ -96,6 +99,7 @@ def narrate_player_turn(
             kind="turn",
             perception=session.perception(),
             facts=facts,
+            memory_context=memory_context,
             style=_style(session),
         ))
     except Exception as exc:
@@ -103,6 +107,8 @@ def narrate_player_turn(
             recorder.record("narration_error", {
                 "turn": session.turn_no + 1,
                 "error": str(exc),
+                "diagnostics": dict(getattr(exc, "diagnostics", {}) or {}),
+                "memory_context": memory_payload,
             })
         response = None
 
@@ -117,6 +123,7 @@ def narrate_player_turn(
             recorder.record("narration_fallback", {
                 "turn": session.turn_no + 1,
                 "reason": "provider_unavailable_or_empty",
+                "memory_context": memory_payload,
             })
         return narrative, references
 
@@ -128,10 +135,12 @@ def narrate_player_turn(
             "prompt_version": response.prompt_version,
             "latency_ms": response.latency_ms,
             "usage": response.usage,
+            "diagnostics": response.diagnostics,
             "text": narrative,
             "references": list(references),
             "regeneration_feedback": [
                 violation.to_dict() for violation in violations
             ],
+            "memory_context": memory_payload,
         })
     return narrative, references
