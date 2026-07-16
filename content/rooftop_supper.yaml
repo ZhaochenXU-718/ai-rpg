@@ -2,10 +2,17 @@ id: rooftop_supper
 title: "晚风中的一桌饭"
 version: 0.5.0
 schema_version: 2
-content_profile: narrative_first
+content_profile: pre_pivot_archive
 language: zh-CN
 genre: urban_slice_of_life
 target_duration_minutes: 15-25
+
+archive_status:
+  retired_at: "2026-07-16"
+  reason: |
+    本 case 诞生于机械判定时期，任务目标、物品路线和场景收束仍以机械回归为中心，
+    不再符合当前“剧情优先、记忆优先”的产品方向。保留内容仅供历史研究；CLI、
+    活动内容发现和叙事优先运行时不得启动它。
 
 design_goal: |
   验证同一套通用引擎能否承载没有反派、没有暴力、没有重大秘密的都市日常故事。
@@ -236,3 +243,5 @@ authoring_notes:
     updated_at: "2026-07-16"
     revision: "v0.5 删除任务旗标、故事锚点与条件结局；权威状态只保留人物位置和关键物品归属。"
     source: "原创都市日常短篇；未使用既有影视、小说或游戏 IP。"
+    retired_at: "2026-07-16"
+    retirement: "归档停用；不再作为活动 case、展示故事或运行时测试底座。"

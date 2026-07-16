@@ -11,7 +11,7 @@ from server.engine.state import StatePathError
 
 
 ROOT = Path(__file__).resolve().parent.parent
-STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
+STORY_PATH = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
 
 
 class SessionTimelineTest(unittest.TestCase):
@@ -30,8 +30,8 @@ class SessionTimelineTest(unittest.TestCase):
         self.commit("先听完开场")
         first_checkpoint = self.session.current_checkpoint_id
         self.commit(
-            "走向便利店",
-            {"positions.player": "convenience_store"},
+            "走向公共院子",
+            {"positions.player": "courtyard"},
         )
         abandoned_head = self.session.current_checkpoint_id
         revision_before = self.session.state_revision
@@ -39,7 +39,7 @@ class SessionTimelineTest(unittest.TestCase):
         restored = self.session.undo()
 
         self.assertEqual(restored.restored_checkpoint_id, first_checkpoint)
-        self.assertEqual(self.session.state["positions"]["player"], "building_lobby")
+        self.assertEqual(self.session.state["positions"]["player"], "workshop")
         self.assertEqual(self.session.turn_no, 1)
         self.assertEqual(self.session.state_revision, revision_before + 1)
         branches = {branch.branch_id: branch for branch in self.session.branches()}
@@ -52,14 +52,14 @@ class SessionTimelineTest(unittest.TestCase):
     def test_commit_after_undo_uses_restored_node_as_parent(self) -> None:
         self.commit("第一步")
         restored_parent = self.session.current_checkpoint_id
-        self.commit("第二步", {"positions.player": "convenience_store"})
+        self.commit("第二步", {"positions.player": "courtyard"})
         self.session.undo()
 
-        self.commit("改走洗衣店", {"positions.player": "laundromat"})
+        self.commit("改写去院子的方式", {"positions.player": "courtyard"})
 
         head = self.session.get_checkpoint(self.session.current_checkpoint_id)
         self.assertEqual(head.parent_id, restored_parent)
-        self.assertEqual(self.session.state["positions"]["player"], "laundromat")
+        self.assertEqual(self.session.state["positions"]["player"], "courtyard")
 
     def test_root_cannot_be_undone_and_checkpoint_reads_are_isolated(self) -> None:
         root_id = self.session.current_checkpoint_id
@@ -67,7 +67,7 @@ class SessionTimelineTest(unittest.TestCase):
         checkpoint.state["positions"]["player"] = "tampered"
         self.assertEqual(
             self.session.get_checkpoint(root_id).state["positions"]["player"],
-            "building_lobby",
+            "workshop",
         )
         with self.assertRaisesRegex(SessionError, "故事起点"):
             self.session.undo()

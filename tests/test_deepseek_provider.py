@@ -62,13 +62,13 @@ def perception() -> PerceptionSnapshot:
     return PerceptionSnapshot(
         audience=PerceptionAudience.PLAYER,
         subject_id="player",
-        story_id="rooftop_supper",
+        story_id="open_neighbor_scene",
         session_id="session_demo",
         turn_no=0,
         state_revision=0,
-        location_id="building_lobby",
-        location_name="九号楼门厅",
-        current_goal="把饭菜妥善摆上桌",
+        location_id="workshop",
+        location_name="修理铺",
+        current_goal="说明防雨布的用途",
     )
 
 
@@ -76,7 +76,7 @@ def suggestions_json() -> str:
     return json.dumps({
         "suggestions": [{
             "title": "先说明用途",
-            "action_text": "我先向陈阿姨说明自己打算怎样安排这篮饭。",
+            "action_text": "我先向周师傅说明防雨布要盖住院子里的长桌。",
             "focus": "social",
             "rationale": "让对方听清计划，但不替她作决定。",
         }]
@@ -88,14 +88,14 @@ class NarrativeProviderTest(unittest.TestCase):
         return NarrativeRequest(
             kind="turn",
             perception=perception(),
-            facts={"玩家输入": "我先问问陈阿姨。", "在场可见实体": ["陈阿姨"]},
+            facts={"玩家输入": "我先问问周师傅。", "在场可见实体": ["周师傅"]},
             style={"tone": "克制"},
         )
 
     def test_narration_uses_plain_text_mode_and_scoped_prompt(self) -> None:
-        transport = FakeTransport(["陈阿姨把饭篮扶稳，等你把问题说完。"])
+        transport = FakeTransport(["周师傅放下扳手，等你把用途说完。"])
         response = DeepSeekProvider(transport=transport).render_narrative(self.request())
-        self.assertIn("饭篮扶稳", response.text)
+        self.assertIn("放下扳手", response.text)
         self.assertFalse(transport.calls[0][1]["json_mode"])
         self.assertEqual(transport.calls[0][1]["thinking"], "disabled")
         self.assertEqual(transport.calls[0][1]["max_tokens"], 400)
@@ -149,7 +149,10 @@ class SuggestionProviderTest(unittest.TestCase):
     def test_cards_have_no_plan_capability_or_validation_payload(self) -> None:
         cards = coerce_suggestions(suggestions_json(), self.request())
         payload = cards[0].to_dict()
-        self.assertEqual(payload["action_text"], "我先向陈阿姨说明自己打算怎样安排这篮饭。")
+        self.assertEqual(
+            payload["action_text"],
+            "我先向周师傅说明防雨布要盖住院子里的长桌。",
+        )
         self.assertNotIn("plan", payload)
         prompt = build_suggestion_messages(self.request())
         flat = json.dumps(prompt, ensure_ascii=False)
@@ -214,14 +217,14 @@ class FactExtractionProviderTest(unittest.TestCase):
     def request(self) -> FactExtractionRequest:
         return FactExtractionRequest(
             perception=perception(),
-            player_text="我走进便利店。",
-            narrative="你掀开门帘走进便利店。",
+            player_text="我走进公共院子。",
+            narrative="你跨过门槛走进公共院子。",
             ledger={
                 "available_destinations": [
-                    {"id": "convenience_store", "label": "去便利店"}
+                    {"id": "courtyard", "label": "去公共院子"}
                 ],
                 "characters": [
-                    {"id": "player", "location_id": "building_lobby"}
+                    {"id": "player", "location_id": "workshop"}
                 ],
             },
         )
@@ -231,8 +234,8 @@ class FactExtractionProviderTest(unittest.TestCase):
             "facts": [{
                 "kind": "character_move",
                 "actor_id": "player",
-                "destination_id": "convenience_store",
-                "evidence": "你掀开门帘走进便利店",
+                "destination_id": "courtyard",
+                "evidence": "你跨过门槛走进公共院子",
             }]
         }, ensure_ascii=False)
 
@@ -240,11 +243,11 @@ class FactExtractionProviderTest(unittest.TestCase):
         extraction = coerce_fact_extraction(
             self.extraction_json(), self.request()
         )
-        self.assertEqual(extraction.facts[0].destination_id, "convenience_store")
+        self.assertEqual(extraction.facts[0].destination_id, "courtyard")
         prompt = build_fact_extraction_messages(self.request())
         flat = json.dumps(prompt, ensure_ascii=False)
         self.assertIn("evidence", flat)
-        self.assertIn("convenience_store", flat)
+        self.assertIn("courtyard", flat)
         self.assertNotIn("state_changes", flat)
 
     def test_provider_repairs_invalid_fact_json(self) -> None:
@@ -277,50 +280,50 @@ class FactExtractionProviderTest(unittest.TestCase):
 class MemoryCompactionProviderTest(unittest.TestCase):
     def request(self) -> MemoryCompactionRequest:
         return MemoryCompactionRequest(
-            story_id="rooftop_supper",
+            story_id="open_neighbor_scene",
             state_revision=7,
             previous_digest=MemoryDigest(
                 compacted_through_turn=2,
-                rolling_summary="此前大家在门厅商量晚饭。",
-                open_loops=("还没决定在哪里吃",),
+                rolling_summary="此前玩家在修理铺说明遮雨需求。",
+                open_loops=("还没决定怎样使用防雨布",),
             ),
             events=(
                 MemoryEvent(
                     turn_no=3,
                     commit_id="commit_3",
-                    player_text="我看看饭篮。",
-                    narrative="你看过饭篮，里面的饭菜仍然热着。",
-                    scene_before="building_lobby",
-                    scene_after="building_lobby",
+                    player_text="我看看防雨布。",
+                    narrative="你看过架子上的旧防雨布，它已经洗净叠好。",
+                    scene_before="workshop",
+                    scene_after="workshop",
                 ),
             ),
-            character_catalog=(("aunt_chen", "陈阿姨"),),
-            scene_catalog=(("building_lobby", "九号楼门厅"),),
+            character_catalog=(("keeper_zhou", "周师傅"),),
+            scene_catalog=(("workshop", "修理铺"),),
         )
 
     def response_json(self) -> str:
         return json.dumps({
-            "rolling_summary": "大家在门厅商量晚饭，并看过仍然热着的饭菜。",
-            "open_loops": ["还没决定在哪里吃"],
+            "rolling_summary": "玩家在修理铺说明遮雨需求，并看过洗净的旧防雨布。",
+            "open_loops": ["还没决定怎样使用防雨布"],
             "character_notes": {
-                "aunt_chen": ["在等玩家一起决定"],
+                "keeper_zhou": ["在等玩家说明具体用途"],
                 "unknown_person": ["不应进入小结"],
             },
             "scene_notes": {
-                "building_lobby": ["饭菜仍然热着"],
+                "workshop": ["防雨布已经洗净叠好"],
                 "unknown_scene": ["不应进入小结"],
             },
-            "recently_resolved": ["已经看过饭篮"],
+            "recently_resolved": ["已经看过防雨布"],
             "compacted_through_turn": 999,
         }, ensure_ascii=False)
 
     def test_prompt_contains_only_previous_digest_events_and_catalogs(self) -> None:
         prompt = build_memory_compaction_messages(self.request())
         flat = json.dumps(prompt, ensure_ascii=False)
-        self.assertIn("此前大家在门厅商量晚饭", flat)
-        self.assertIn("你看过饭篮", flat)
-        self.assertIn("aunt_chen", flat)
-        self.assertIn("building_lobby", flat)
+        self.assertIn("此前玩家在修理铺说明遮雨需求", flat)
+        self.assertIn("你看过架子上的旧防雨布", flat)
+        self.assertIn("keeper_zhou", flat)
+        self.assertIn("workshop", flat)
         self.assertNotIn("状态 patch", prompt[1]["content"])
 
     def test_coercion_owns_boundary_and_filters_unknown_subject_ids(self) -> None:
@@ -328,11 +331,11 @@ class MemoryCompactionProviderTest(unittest.TestCase):
         self.assertEqual(digest.compacted_through_turn, 3)
         self.assertEqual(
             [group.subject_id for group in digest.character_notes],
-            ["aunt_chen"],
+            ["keeper_zhou"],
         )
         self.assertEqual(
             [group.subject_id for group in digest.scene_notes],
-            ["building_lobby"],
+            ["workshop"],
         )
 
     def test_provider_uses_low_cost_policy_and_no_repair_retry(self) -> None:

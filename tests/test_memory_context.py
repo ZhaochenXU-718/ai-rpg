@@ -38,7 +38,7 @@ from server.engine.trace import TraceRecorder
 
 
 ROOT = Path(__file__).resolve().parent.parent
-STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
+STORY_PATH = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
 
 
 def event(turn_no: int, *, size: int = 0) -> MemoryEvent:
@@ -48,23 +48,23 @@ def event(turn_no: int, *, size: int = 0) -> MemoryEvent:
         commit_id=f"commit_{turn_no}",
         player_text=f"玩家行动 {turn_no}{suffix}",
         narrative=f"已提交叙事 {turn_no}{suffix}",
-        scene_before="building_lobby",
-        scene_after="building_lobby",
+        scene_before="workshop",
+        scene_after="workshop",
     )
 
 
 def digest() -> MemoryDigest:
     return MemoryDigest(
         compacted_through_turn=4,
-        rolling_summary="前四回合里，大家一直在商量怎样安排晚饭。",
-        open_loops=("晚饭地点仍未确定",),
+        rolling_summary="前四回合里，大家一直在商量怎样使用遮雨布。",
+        open_loops=("遮雨布的用途仍未确定",),
         character_notes=(
-            MemoryNoteGroup("aunt_chen", ("愿意继续听玩家的安排",)),
+            MemoryNoteGroup("keeper_zhou", ("愿意继续听玩家说明用途",)),
         ),
         scene_notes=(
-            MemoryNoteGroup("building_lobby", ("饭篮暂时还在门厅",)),
+            MemoryNoteGroup("workshop", ("防雨布暂时还在修理铺",)),
         ),
-        recently_resolved=("已经确认饭菜足够",),
+        recently_resolved=("已经确认架子上有旧防雨布",),
     )
 
 
@@ -76,7 +76,7 @@ class CapturingGenerationProvider(LLMProvider):
     def render_narrative(self, request):
         self.narrative_request = request
         return NarrativeResponse(
-            text="你接着先前的话题，把晚饭安排又说得具体了一些。",
+            text="你接着先前的话题，把遮雨布的用途又说得具体了一些。",
             model="capture",
         )
 
@@ -86,7 +86,7 @@ class CapturingGenerationProvider(LLMProvider):
             suggestion_id="suggestion_continue",
             perception_revision=request.perception.state_revision,
             title="继续当前话题",
-            action_text="我继续把眼前的晚饭安排说具体。",
+            action_text="我继续把眼前的遮雨布用途说具体。",
             focus="social",
             rationale="承接尚未解决的当前话题。",
         )
@@ -139,10 +139,10 @@ class MemoryContextTest(unittest.TestCase):
             [item.turn_no for item in context.uncompacted_events],
             [5, 6, 7, 8],
         )
-        self.assertEqual(context.open_loops, ("晚饭地点仍未确定",))
+        self.assertEqual(context.open_loops, ("遮雨布的用途仍未确定",))
         self.assertEqual(
-            context.character_notes["aunt_chen"],
-            ("愿意继续听玩家的安排",),
+            context.character_notes["keeper_zhou"],
+            ("愿意继续听玩家说明用途",),
         )
         self.assertEqual(MemoryContext.from_dict(context.to_dict()), context)
 
@@ -196,7 +196,7 @@ class MemoryContextTest(unittest.TestCase):
         provider = CapturingGenerationProvider()
         recorder = TraceRecorder(None, session.session_id)
 
-        narrate_player_turn(session, provider, "我继续讨论晚饭。", recorder)
+        narrate_player_turn(session, provider, "我继续说明用途。", recorder)
         generate_action_suggestions(session, provider, recorder)
 
         expected = session.memory_context()
@@ -208,7 +208,7 @@ class MemoryContextTest(unittest.TestCase):
         session = self.session_with_digest()
         provider = CapturingGenerationProvider()
         recorder = TraceRecorder(None, session.session_id)
-        narrate_player_turn(session, provider, "我继续讨论晚饭。", recorder)
+        narrate_player_turn(session, provider, "我继续说明用途。", recorder)
         generate_action_suggestions(session, provider, recorder)
 
         narrative_messages = build_narrative_messages(
@@ -230,8 +230,8 @@ class MemoryContextTest(unittest.TestCase):
 
         extraction = FactExtractionRequest(
             perception=session.perception(),
-            player_text="我继续讨论晚饭。",
-            narrative="你继续把晚饭安排说得具体。",
+            player_text="我继续说明用途。",
+            narrative="你继续把遮雨布的用途说得具体。",
             ledger={},
         )
         extraction_prompt = json.dumps(
@@ -249,8 +249,8 @@ class MemoryContextTest(unittest.TestCase):
         player_context = session.memory_context()
         serialized = json.dumps(player_context.to_dict(), ensure_ascii=False)
         self.assertNotIn("private transport detail", serialized)
-        self.assertIsNone(session.memory_context("xiaoyu"))
-        self.assertEqual(session.subject_perception("xiaoyu").recent_events, ())
+        self.assertIsNone(session.memory_context("neighbor_lin"))
+        self.assertEqual(session.subject_perception("neighbor_lin").recent_events, ())
         with self.assertRaises(SessionError):
             session.memory_context("unknown_subject")
 
@@ -258,7 +258,7 @@ class MemoryContextTest(unittest.TestCase):
         session = self.session_with_digest()
         context = session.memory_context()
         stale = context.model_copy(update={"state_revision": 999})
-        wrong_subject = context.model_copy(update={"subject_id": "xiaoyu"})
+        wrong_subject = context.model_copy(update={"subject_id": "neighbor_lin"})
 
         with self.assertRaisesRegex(ValueError, "revision"):
             NarrativeRequest(
@@ -278,7 +278,7 @@ class MemoryContextTest(unittest.TestCase):
             session = self.session_with_digest()
             provider = CapturingGenerationProvider()
             recorder = TraceRecorder(Path(temp_dir), session.session_id)
-            narrate_player_turn(session, provider, "我继续讨论晚饭。", recorder)
+            narrate_player_turn(session, provider, "我继续说明用途。", recorder)
             generate_action_suggestions(session, provider, recorder)
             records = [
                 json.loads(line)

@@ -47,15 +47,15 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 无网络冒烟；mock 不猜测物理变化
-python server/cli.py content/rooftop_supper.yaml --llm mock
+# 当前没有正式活动展示故事；可用最小测试夹具做无网络冒烟
+python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm mock
 
 # 使用 DeepSeek
 export DEEPSEEK_API_KEY="你的密钥"
-python server/cli.py content/rooftop_supper.yaml --llm deepseek
+python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm deepseek
 
 # 校验与测试
-python tools/validate_content.py content/rooftop_supper.yaml
+python tools/validate_content.py tests/fixtures/open_neighbor_scene.yaml
 python -m unittest discover -s tests -v
 ```
 
@@ -71,4 +71,6 @@ CLI 命令：`ideas`、`idea <编号>`、`who`、`state`、`memory`、`memory ra
 - [记忆与小结](docs/memory-and-summaries.md)
 - [行动提案](docs/action-suggestions.md)
 
-`content/midnight_archive.yaml` 是 `pre_pivot_archive` 历史样本，只保留研究价值，不能启动新会话，也不再接受旧机械 DSL 的深度维护。
+当前没有正式活动展示故事。`tests/fixtures/open_neighbor_scene.yaml` 只用于引擎测试，不代表产品体验。
+
+`content/midnight_archive.yaml` 与 `content/rooftop_supper.yaml` 均为 `pre_pivot_archive` 历史样本，只保留研究价值，不能启动新会话，也不再作为当前设计样板。

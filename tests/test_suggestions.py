@@ -12,7 +12,7 @@ from server.engine.trace import TraceRecorder
 
 
 ROOT = Path(__file__).resolve().parent.parent
-STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
+STORY_PATH = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
 
 
 class SuggestedActionsTest(unittest.TestCase):
@@ -85,15 +85,15 @@ class SuggestedActionsTest(unittest.TestCase):
             suggestion_id="suggestion_visible",
             perception_revision=self.session.state_revision,
             title="直接询问",
-            action_text="陈阿姨，您想怎么安排这顿饭？",
+            action_text="周师傅，我把防雨布的用途说明一下。",
             focus="social",
             rationale="只回应当前可见人物。",
         )
         hidden_character = SuggestedAction(
             suggestion_id="suggestion_hidden",
             perception_revision=self.session.state_revision,
-            title="询问罗叔",
-            action_text="我问问罗叔是否愿意上楼吃饭。",
+            title="询问林姐",
+            action_text="我问问林姐院子里的长桌该怎么遮。",
             focus="investigate",
             rationale="引用当前不可见的作者人物。",
         )
@@ -106,20 +106,18 @@ class SuggestedActionsTest(unittest.TestCase):
         )
 
         prompt_boundaries = "\n".join(provider.request.boundaries)
-        self.assertNotIn("罗叔", prompt_boundaries)
-        self.assertNotIn("阿禾", prompt_boundaries)
+        self.assertNotIn("林姐", prompt_boundaries)
         rendered = "\n".join(
             action.title + action.action_text + action.rationale
             for action in suggestions.actions
         )
-        self.assertNotIn("罗叔", rendered)
-        self.assertNotIn("阿禾", rendered)
+        self.assertNotIn("林姐", rendered)
         self.assertTrue(all(
             action.action_text.startswith("我")
             for action in suggestions.actions
         ))
         self.assertIn(
-            "我对陈阿姨说：“您想怎么安排这顿饭？”",
+            "我对周师傅说：“我把防雨布的用途说明一下。”",
             {action.action_text for action in suggestions.actions},
         )
 

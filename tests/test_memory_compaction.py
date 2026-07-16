@@ -22,7 +22,7 @@ from server.engine.trace import TraceRecorder
 
 
 ROOT = Path(__file__).resolve().parent.parent
-STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
+STORY_PATH = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
 
 
 def memory_event(turn_no: int, *, narrative: str | None = None) -> MemoryEvent:
@@ -31,8 +31,8 @@ def memory_event(turn_no: int, *, narrative: str | None = None) -> MemoryEvent:
         commit_id=f"commit_{turn_no}",
         player_text=f"行动 {turn_no}",
         narrative=narrative or f"已提交叙事 {turn_no}",
-        scene_before="building_lobby",
-        scene_after="building_lobby",
+        scene_before="workshop",
+        scene_after="workshop",
     )
 
 
@@ -40,14 +40,14 @@ def digest(through_turn: int, label: str = "前四回合的小结") -> MemoryDig
     return MemoryDigest(
         compacted_through_turn=through_turn,
         rolling_summary=label,
-        open_loops=("晚饭地点还没有最后确定",),
+        open_loops=("遮雨布的用途还没有最后确定",),
         character_notes=(
-            MemoryNoteGroup("aunt_chen", ("愿意继续商量晚饭安排",)),
+            MemoryNoteGroup("keeper_zhou", ("愿意继续听玩家说明用途",)),
         ),
         scene_notes=(
-            MemoryNoteGroup("building_lobby", ("大家暂时仍在门厅",)),
+            MemoryNoteGroup("workshop", ("大家暂时仍在修理铺",)),
         ),
-        recently_resolved=("已经看过饭篮",),
+        recently_resolved=("已经看过架子上的旧物",),
     )
 
 
@@ -159,10 +159,10 @@ class MemoryCompactionPipelineTest(unittest.TestCase):
         scene_ids = {
             item[0] for item in provider.compaction_request.scene_catalog
         }
-        self.assertEqual(character_ids, {"player", "aunt_chen"})
-        self.assertEqual(scene_ids, {"building_lobby"})
-        self.assertNotIn("xiaoyu", character_ids)
-        self.assertNotIn("rooftop", scene_ids)
+        self.assertEqual(character_ids, {"player", "keeper_zhou"})
+        self.assertEqual(scene_ids, {"workshop"})
+        self.assertNotIn("neighbor_lin", character_ids)
+        self.assertNotIn("courtyard", scene_ids)
 
     def test_model_cannot_move_the_engine_selected_boundary(self) -> None:
         session = GameSession(self.story, log_dir=None)

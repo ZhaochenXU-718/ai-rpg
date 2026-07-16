@@ -71,7 +71,9 @@ initial_state:
 ## 校验
 
 ```bash
-python tools/validate_content.py content/rooftop_supper.yaml
+python tools/validate_content.py tests/fixtures/open_neighbor_scene.yaml
 ```
 
 校验器检查 ID、必填人物卡、出口引用、人物初始位置、关键物品定义与归属。`pre_pivot_archive` 只做归档身份识别，不再深度维护旧 DSL。
+
+当前仓库没有正式活动展示故事；`open_neighbor_scene` 是测试夹具。`rooftop_supper` 已归档，不能用作新内容模板。

@@ -13,20 +13,21 @@ from tools.validate_content import validate_content
 
 
 ROOT = Path(__file__).resolve().parent.parent
-ROOFTOP = ROOT / "content" / "rooftop_supper.yaml"
+ACTIVE_FIXTURE = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
+RETIRED_CASE = ROOT / "content" / "rooftop_supper.yaml"
 ARCHIVE = ROOT / "content" / "midnight_archive.yaml"
 
 
 class FactCommitSkeletonTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.story = Story.load(ROOFTOP)
+        self.story = Story.load(ACTIVE_FIXTURE)
         self.session = GameSession(self.story, log_dir=None)
 
     def test_prose_commits_advance_revision_without_hidden_effects(self) -> None:
         first = self.session.commit_fact_batch(FactBatch(
             state_revision=self.session.state_revision,
-            player_text="我先听陈阿姨说完。",
-            narrative="你在门厅里停下脚步。",
+            player_text="我先听周师傅说完。",
+            narrative="你在修理铺里停下脚步。",
         ))
         second = self.session.commit_fact_batch(FactBatch(
             state_revision=self.session.state_revision,
@@ -48,32 +49,36 @@ class FactCommitSkeletonTest(unittest.TestCase):
         before_items = copy.deepcopy(self.session.state["item_locations"])
 
         result = self.session.commit_narrative(
-            "我拿起饭篮走向天台。",
+            "我拿起防雨布走向院子。",
             "你伸手示意自己的打算。",
         )
 
         self.assertEqual(self.session.state["positions"], before_positions)
         self.assertEqual(self.session.state["item_locations"], before_items)
         self.assertNotIn("positions.player", {path for path, _, _ in result.changes})
-        self.assertNotIn("item_locations.food_basket", {
+        self.assertNotIn("item_locations.rain_canvas", {
             path for path, _, _ in result.changes
         })
 
     def test_archive_cannot_start_a_new_runtime_session(self) -> None:
-        with self.assertRaisesRegex(SessionError, "narrative_first"):
-            GameSession(Story.load(ARCHIVE), log_dir=None)
+        for path in (ARCHIVE, RETIRED_CASE):
+            with self.subTest(path=path.name):
+                with self.assertRaisesRegex(SessionError, "narrative_first"):
+                    GameSession(Story.load(path), log_dir=None)
 
 
 class NarrativeContentValidationTest(unittest.TestCase):
     def load(self) -> dict:
-        return yaml.safe_load(ROOFTOP.read_text(encoding="utf-8"))
+        return yaml.safe_load(ACTIVE_FIXTURE.read_text(encoding="utf-8"))
 
     def test_active_and_archived_content_both_validate(self) -> None:
         active = validate_content(self.load())
         archived = validate_content(yaml.safe_load(ARCHIVE.read_text(encoding="utf-8")))
+        retired = validate_content(yaml.safe_load(RETIRED_CASE.read_text(encoding="utf-8")))
         self.assertEqual(active.errors, [])
         self.assertEqual(active.warnings, [])
         self.assertEqual(archived.errors, [])
+        self.assertEqual(retired.errors, [])
 
     def test_retired_top_level_mechanics_are_rejected(self) -> None:
         for field, value in (
@@ -92,10 +97,10 @@ class NarrativeContentValidationTest(unittest.TestCase):
 
     def test_item_request_policy_and_scene_suggestions_are_rejected(self) -> None:
         broken = self.load()
-        broken["items"]["picnic_mat"]["request_policy"] = {
-            "purposes": {"cover": "铺桌"}
+        broken["items"]["rain_canvas"]["request_policy"] = {
+            "purposes": {"cover": "遮桌"}
         }
-        broken["scenes"]["building_lobby"]["suggested_intents"] = ["talk"]
+        broken["scenes"]["workshop"]["suggested_intents"] = ["talk"]
         report = validate_content(broken)
         self.assertTrue(any("request_policy is retired" in e for e in report.errors))
         self.assertTrue(any("suggested_intents is retired" in e for e in report.errors))
@@ -103,7 +108,7 @@ class NarrativeContentValidationTest(unittest.TestCase):
     def test_npc_card_requires_motivation_voice_and_relationship(self) -> None:
         broken = self.load()
         for field in ("motivation", "voice", "initial_relationship"):
-            del broken["characters"]["clerk_luo"][field]
+            del broken["characters"]["keeper_zhou"][field]
         report = validate_content(broken)
         for field in ("motivation", "voice", "initial_relationship"):
             self.assertTrue(any(
@@ -113,16 +118,16 @@ class NarrativeContentValidationTest(unittest.TestCase):
 
     def test_schema_v2_still_requires_positions_and_item_locations(self) -> None:
         missing_character = self.load()
-        del missing_character["initial_state"]["positions"]["ahe"]
+        del missing_character["initial_state"]["positions"]["neighbor_lin"]
         self.assertTrue(any(
-            "missing character 'ahe'" in e
+            "missing character 'neighbor_lin'" in e
             for e in validate_content(missing_character).errors
         ))
 
         missing_item = self.load()
-        del missing_item["initial_state"]["item_locations"]["food_basket"]
+        del missing_item["initial_state"]["item_locations"]["rain_canvas"]
         self.assertTrue(any(
-            "missing item 'food_basket'" in e
+            "missing item 'rain_canvas'" in e
             for e in validate_content(missing_item).errors
         ))
 

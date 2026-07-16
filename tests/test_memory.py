@@ -18,7 +18,7 @@ from server.engine.trace import TraceRecorder
 
 
 ROOT = Path(__file__).resolve().parent.parent
-STORY_PATH = ROOT / "content" / "rooftop_supper.yaml"
+STORY_PATH = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
 
 
 class NarrativeMemoryTest(unittest.TestCase):
@@ -32,7 +32,7 @@ class NarrativeMemoryTest(unittest.TestCase):
             player_text=f"玩家行动 {label}",
             narrative=f"已提交叙事 {label}",
             state_changes=changes or {},
-            references=("aunt_chen",) if label == "一" else (),
+            references=("keeper_zhou",) if label == "一" else (),
         ))
 
     def test_successful_turn_appends_exact_memory_event(self) -> None:
@@ -44,21 +44,21 @@ class NarrativeMemoryTest(unittest.TestCase):
         self.assertEqual(event.commit_id, result.committed_turn.commit_id)
         self.assertEqual(event.player_text, "玩家行动 一")
         self.assertEqual(event.narrative, "已提交叙事 一")
-        self.assertEqual(event.scene_before, "building_lobby")
-        self.assertEqual(event.scene_after, "building_lobby")
-        self.assertEqual(event.references, ("aunt_chen",))
-        self.assertEqual(event.participants, ("player", "aunt_chen"))
+        self.assertEqual(event.scene_before, "workshop")
+        self.assertEqual(event.scene_after, "workshop")
+        self.assertEqual(event.references, ("keeper_zhou",))
+        self.assertEqual(event.participants, ("player", "keeper_zhou"))
         self.assertEqual(event.physical_changes, ())
 
     def test_physical_change_is_copied_into_memory_without_becoming_summary(self) -> None:
-        self.commit("移动", {"positions.player": "convenience_store"})
+        self.commit("移动", {"positions.player": "courtyard"})
 
         event = self.session.memory.events[-1]
-        self.assertEqual(event.scene_after, "convenience_store")
+        self.assertEqual(event.scene_after, "courtyard")
         self.assertEqual(len(event.physical_changes), 1)
         self.assertEqual(event.physical_changes[0].path, "positions.player")
-        self.assertEqual(event.physical_changes[0].previous, "building_lobby")
-        self.assertEqual(event.physical_changes[0].new, "convenience_store")
+        self.assertEqual(event.physical_changes[0].previous, "workshop")
+        self.assertEqual(event.physical_changes[0].new, "courtyard")
         self.assertEqual(self.session.memory.rolling_summary, "")
         self.assertEqual(self.session.memory.open_loops, ())
 
@@ -83,7 +83,7 @@ class NarrativeMemoryTest(unittest.TestCase):
             ("已提交叙事 玩家经历",),
         )
         self.assertEqual(
-            self.session.subject_perception("xiaoyu").recent_events,
+            self.session.subject_perception("neighbor_lin").recent_events,
             (),
         )
 
@@ -138,8 +138,8 @@ class NarrativeMemoryTest(unittest.TestCase):
             commit_id="commit_one",
             player_text="行动",
             narrative="叙事",
-            scene_before="building_lobby",
-            scene_after="building_lobby",
+            scene_before="workshop",
+            scene_after="workshop",
         )
         memory = MemoryState().append(event)
         with self.assertRaisesRegex(ValueError, "advance turn_no"):
@@ -158,7 +158,7 @@ class NarrativeMemoryTest(unittest.TestCase):
             resolve_player_turn(
                 session,
                 ScriptedProvider(
-                    narratives=["你停下来听陈阿姨把话说完。"],
+                    narratives=["你停下来听周师傅把话说完。"],
                     fact_extractions=[()],
                 ),
                 recorder,
@@ -188,7 +188,7 @@ class NarrativeMemoryTest(unittest.TestCase):
         self.assertEqual(session_commit["memory_event"]["turn_no"], 1)
         self.assertEqual(
             trace_commit["memory_event"]["narrative"],
-            "你停下来听陈阿姨把话说完。",
+            "你停下来听周师傅把话说完。",
         )
 
 

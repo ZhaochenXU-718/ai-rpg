@@ -73,6 +73,10 @@ class GenericRuntimeContentIndependenceTests(unittest.TestCase):
                 selected = choose_story_path(None, content_dir)
             self.assertEqual(selected, second)
 
+    def test_retired_rooftop_case_is_not_discovered_as_active_content(self) -> None:
+        retired = ROOT / "content" / "rooftop_supper.yaml"
+        self.assertNotIn(retired, discover_story_paths(ROOT / "content"))
+
 
 if __name__ == "__main__":
     unittest.main()
