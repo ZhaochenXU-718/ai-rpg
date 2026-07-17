@@ -40,6 +40,51 @@ critical_reminders:
 
 `ai_plot` 只接受上述五个键，拼错的键会被校验器拒绝——这防止本应保密的字段因键名笔误而流入行动提案。
 
+## modules（可选）
+
+模块是作者预写的剧情素材——"发生什么"加"何时适合出现"——不是分支脚本、任务或效果规则。编排器按类别策略、冷却与在场实体做确定性筛选，把少量候选交给旁白；自然语言触发语义由旁白判断。
+
+```yaml
+modules:
+  zhou_hesitation:
+    category: character        # main | character | pressure | aftermath | side
+    title: "周师傅的迟疑"
+    purpose: "这段戏在故事中的作用"          # 必填
+    hook: "抛给玩家的钩子怎么写"              # 必填
+    trigger: "什么时候适合出现（自然语言）"    # 必填
+    involves: [keeper_zhou, rain_canvas]     # 可选；引用人物/物品/场景 ID，在场才候选
+    escalation: "玩家接住钩子后往哪升级"       # 可选
+    resolution: "怎样算收尾"                  # 可选
+    fallback: "玩家忽略时怎样消退"            # 可选
+    repeatable: false                        # 可选，默认 false
+    cooldown_turns: 4                        # 可选，默认由类别策略决定
+    min_turn: 6                              # 可选，最早出现回合
+    priority: normal                         # 可选：low | normal | high
+    tags: [neighborly]                       # 可选自由标签，引擎不解析
+    requires:                                # 可选结构性依赖
+      - module: other_module
+        status: resolved                     # engaged | resolved | dropped
+```
+
+类别是功能枚举（引擎按它区分编排策略），题材化分类用 `tags` 表达。模块**不允许** `effects`、`when`、`state_patch`、`conditions`——它没有任何状态权限。
+
+模块软状态 `unseen → offered → engaged → resolved / dropped` 存在叙事记忆中，随 checkpoint 和分支恢复：候选进入已提交回合记 `offered`；被忽略 3 次自动消退为 `dropped`；`engaged`/`resolved` 由 M2 小结标注，`resolved` 终态，`dropped` 可被晚接的钩子复活为 `engaged`。
+
+## openings（可选）
+
+```yaml
+openings:
+  courtyard_start:
+    title: "从院子开始"
+    intro: "可选的开场引导文字"
+    positions:
+      player: courtyard   # 覆盖 initial_state.positions 中的对应条目
+```
+
+开场只覆盖初始位置并附加引导文字；进入游戏后所有开场走同一运行管线。CLI 用 `--opening <id>` 选择。
+
+活动内容不再支持：`intents`、`world_board`、`generation`、`storylets`、`endings`、`genre_system`、`perception`、`world_rules`、`resolution_limits`、`quote_warnings`。
+
 ## player_role
 
 ```yaml

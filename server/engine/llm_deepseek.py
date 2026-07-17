@@ -34,10 +34,10 @@ from .llm_protocol import (
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
-NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v7"
+NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v8"
 SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v4"
 FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v2"
-MEMORY_COMPACTION_PROMPT_VERSION = "deepseek-memory-compaction-v1"
+MEMORY_COMPACTION_PROMPT_VERSION = "deepseek-memory-compaction-v2"
 MAX_REPAIR_ROUNDS = 1
 
 
@@ -113,11 +113,12 @@ RENDER_SYSTEM_PROMPT = """\
 2. 不使用远处人物，也不替玩家决定下一步行动。
 3. 【作者私有上下文】是故事蓝图与在场人物的私有人物卡，仅用于扮演人物和把握长线方向；它不代表玩家已知。在场人物按各自的动机、压力、口吻和行为模式行动；人物秘密可以驱动回避、迟疑或撒谎，但在玩家尚未探明前不得直接说破，也不得写成玩家已知的事实。
 4. 【作者私有上下文】中的 critical_reminders 是作者最高优先级的少量规则，每回合都必须遵守。
-5. 人物换场或关键物品转手时写清楚实际发生的变化，不跳过当前在场和物品归属。
-6. 若事实清单含冲突反馈，修正冲突部分，不在正文解释校验过程。
-7. 服从给定视角与文风；玩家视角使用第二人称“你”。
-8. 输出 2-5 句连贯散文，不提协议、阶段、数值或系统；只输出叙事文本。
-9. 【软叙事记忆】可能有遗漏或概括误差；当前事实清单与当前感知优先。开放事项、提议和人物小结不能被擅自写成已经完成的事实，记忆中的远处人物也不算当前在场。
+5. candidate_modules 是当前可选的剧情素材：只在自然贴合玩家行动时编织其钩子，一回合至多推进一个；玩家忽略过的钩子（offers_count 大于 0）应换一种更轻的方式或干脆不提；不得强推模块，也不得替玩家接受钩子。
+6. 人物换场或关键物品转手时写清楚实际发生的变化，不跳过当前在场和物品归属。
+7. 若事实清单含冲突反馈，修正冲突部分，不在正文解释校验过程。
+8. 服从给定视角与文风；玩家视角使用第二人称“你”。
+9. 输出 2-5 句连贯散文，不提协议、阶段、数值或系统；只输出叙事文本。
+10. 【软叙事记忆】可能有遗漏或概括误差；当前事实清单与当前感知优先。开放事项、提议和人物小结不能被擅自写成已经完成的事实，记忆中的远处人物也不算当前在场。
 """
 
 
@@ -172,14 +173,16 @@ MEMORY_COMPACTION_SYSTEM_PROMPT = """\
 3. 新回合明确纠正旧小结时，以新回合为准。
 4. open_loops 只保存仍需后续承接的事项；已解决内容可放入 recently_resolved。
 5. character_notes 和 scene_notes 只能使用给定 catalog 中的机器 ID。
-6. 所有字段都是软叙事记忆，不输出状态 patch、承诺 ID、生命周期或数值。
-7. 只输出以下完整 json：
+6. module_updates 只在待压缩回合明确显示时标注：玩家清楚接住了某个钩子填 engaged；该线索已明确收尾填 resolved；玩家明确回绝或彻底翻篇填 dropped。只能使用 module_catalog 中的 ID；不确定时留空对象；不要把模块标题或内部状态写进 rolling_summary。
+7. 所有字段都是软叙事记忆，不输出状态 patch、承诺 ID、生命周期或数值。
+8. 只输出以下完整 json：
 {
   "rolling_summary": "简洁连贯的故事回顾",
   "open_loops": ["仍待承接的事项"],
   "character_notes": {"character_id": ["人物目前表现出的立场或约定"]},
   "scene_notes": {"scene_id": ["场景中值得延续的叙事变化"]},
-  "recently_resolved": ["最近已经解决、不要反复重提的事项"]
+  "recently_resolved": ["最近已经解决、不要反复重提的事项"],
+  "module_updates": {"module_id": "engaged|resolved|dropped"}
 }
 """
 
@@ -257,6 +260,10 @@ def build_memory_compaction_messages(
         "待压缩的已提交回合": [event.to_dict() for event in request.events],
         "character_catalog": dict(request.character_catalog),
         "scene_catalog": dict(request.scene_catalog),
+        "module_catalog": {
+            module_id: {"title": title, "status": status}
+            for module_id, title, status in request.module_catalog
+        },
     }
     return [
         {"role": "system", "content": MEMORY_COMPACTION_SYSTEM_PROMPT},
@@ -400,6 +407,23 @@ def _coerce_note_groups(
     return tuple(groups)
 
 
+def _coerce_module_updates(
+    raw: Any,
+    *,
+    allowed_ids: set[str],
+) -> tuple[tuple[str, str], ...]:
+    if not isinstance(raw, dict):
+        return ()
+    allowed_statuses = {"engaged", "resolved", "dropped"}
+    updates: list[tuple[str, str]] = []
+    for module_id, status in raw.items():
+        module_id = str(module_id)
+        status = str(status or "").strip().lower()
+        if module_id in allowed_ids and status in allowed_statuses:
+            updates.append((module_id, status))
+    return tuple(updates)
+
+
 def coerce_memory_digest(
     content: str,
     request: MemoryCompactionRequest,
@@ -423,6 +447,10 @@ def coerce_memory_digest(
         recently_resolved=_coerce_text_list(
             data.get("recently_resolved"),
             limit=5,
+        ),
+        module_updates=_coerce_module_updates(
+            data.get("module_updates"),
+            allowed_ids={item[0] for item in request.module_catalog},
         ),
     )
 

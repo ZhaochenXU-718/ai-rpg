@@ -149,6 +149,10 @@ def main() -> int:
         default="mock",
         help="叙事 provider；deepseek 需设置 DEEPSEEK_API_KEY。",
     )
+    parser.add_argument(
+        "--opening",
+        help="开场 ID；故事定义 openings 时可选，省略则使用默认初始位置。",
+    )
     args = parser.parse_args()
 
     story_path = choose_story_path(args.story)
@@ -166,6 +170,7 @@ def main() -> int:
         session = GameSession(
             story,
             log_dir=None if args.no_log else "data/sessions",
+            opening_id=args.opening,
         )
         provider = create_provider(args.llm)
     except (SessionError, LLMProviderError) as exc:
@@ -178,6 +183,12 @@ def main() -> int:
     suggestion_set = None
 
     print(render_intro(story, session.state))
+    if session.opening_id:
+        opening = story.openings.get(session.opening_id) or {}
+        intro = str(opening.get("intro") or "").strip()
+        if intro:
+            print()
+            print(intro)
     print()
     print_help()
 

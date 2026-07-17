@@ -7,6 +7,7 @@ from typing import Any
 from .author_context import build_author_context
 from .llm import LLMProvider, NarrativeRequest
 from .llm_protocol import EntityKind, PhysicalFactViolation
+from .modules import select_candidate_modules
 from .session import GameSession
 from .trace import TraceRecorder
 
@@ -102,6 +103,12 @@ def narrate_player_turn(
             entity.entity_id
             for entity in perception.visible_entities
             if entity.kind == EntityKind.CHARACTER
+        ),
+        candidate_modules=select_candidate_modules(
+            session.story,
+            session.state,
+            session.memory,
+            session.turn_no,
         ),
     )
     try:

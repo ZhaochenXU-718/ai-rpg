@@ -7,6 +7,7 @@ from typing import Any
 
 from .llm import LLMProvider, MemoryCompactionRequest
 from .memory import plan_memory_compaction
+from .modules import compaction_module_catalog, compaction_module_updates
 from .session import GameSession
 from .trace import TraceRecorder
 
@@ -103,6 +104,9 @@ def maybe_compact_memory(
                 for scene_id in session.story.scenes
                 if scene_id in known_scene_ids
             ),
+            module_catalog=compaction_module_catalog(
+                session.story, session.memory
+            ),
         )
         _record_safely(recorder, "memory_compaction_requested", common)
         response = provider.compact_memory(request)
@@ -130,6 +134,20 @@ def maybe_compact_memory(
             through_turn=plan.through_turn,
             error=error,
         )
+
+    if response.digest.module_updates:
+        try:
+            records = compaction_module_updates(
+                session.memory, response.digest.module_updates
+            )
+            if records is not None:
+                session.apply_module_states(records, reason="memory_compaction")
+        except Exception as exc:
+            # Module lifecycle stays soft: a bad update must not undo the digest.
+            _record_safely(recorder, "module_update_error", {
+                **common,
+                "error": str(exc).strip() or type(exc).__name__,
+            })
 
     _record_safely(recorder, "memory_compaction", {
         **common,

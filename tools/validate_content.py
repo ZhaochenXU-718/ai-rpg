@@ -72,6 +72,13 @@ AI_PLOT_FIELDS = {
     "hidden_truth",
 }
 MAX_CRITICAL_REMINDERS = 4
+# Mirrors server/engine/modules.py CATEGORY_POLICIES; a test keeps them equal.
+MODULE_CATEGORIES = {"main", "character", "pressure", "aftermath", "side"}
+REQUIRED_MODULE_FIELDS = {"category", "title", "purpose", "hook", "trigger"}
+OPTIONAL_MODULE_TEXT_FIELDS = ("escalation", "resolution", "fallback")
+MODULE_PRIORITIES = {"low", "normal", "high"}
+REQUIRES_STATUSES = {"engaged", "resolved", "dropped"}
+OPENING_FIELDS = {"title", "intro", "positions"}
 REQUIRED_SCENE_FIELDS = {
     "name",
     "purpose",
@@ -360,6 +367,141 @@ def _validate_author_layers(data: dict[str, Any], report: ValidationReport) -> N
         )
 
 
+def _validate_modules(
+    data: dict[str, Any],
+    characters: dict[str, Any],
+    scenes: dict[str, Any],
+    items: dict[str, Any],
+    report: ValidationReport,
+) -> None:
+    """Modules carry narrative semantics only; no effects, no state patches."""
+    if "modules" not in data:
+        return
+    modules = data.get("modules")
+    if not isinstance(modules, dict) or not modules:
+        report.error("root.modules must be a non-empty mapping when present.")
+        return
+    known_entities = set(characters) | set(scenes) | set(items)
+    for module_id, spec in modules.items():
+        context = f"modules.{module_id}"
+        _validate_machine_id(module_id, context, report)
+        if not isinstance(spec, dict):
+            report.error(f"{context} must be a mapping.")
+            continue
+        for field in sorted(REQUIRED_MODULE_FIELDS):
+            if not _non_empty_string(spec.get(field)):
+                report.error(f"{context} missing required field: {field}")
+        category = spec.get("category")
+        if _non_empty_string(category) and category not in MODULE_CATEGORIES:
+            report.error(
+                f"{context}.category '{category}' is not recognized; "
+                f"allowed: {', '.join(sorted(MODULE_CATEGORIES))}."
+            )
+        for field in OPTIONAL_MODULE_TEXT_FIELDS:
+            if field in spec and not _non_empty_string(spec.get(field)):
+                report.error(
+                    f"{context}.{field} must be a non-empty string when present."
+                )
+        if "repeatable" in spec and not isinstance(spec.get("repeatable"), bool):
+            report.error(f"{context}.repeatable must be a boolean.")
+        for field in ("cooldown_turns", "min_turn"):
+            if field in spec and (
+                not isinstance(spec.get(field), int) or spec[field] < 1
+            ):
+                report.error(f"{context}.{field} must be a positive integer.")
+        if "priority" in spec and spec.get("priority") not in MODULE_PRIORITIES:
+            report.error(
+                f"{context}.priority must be one of: "
+                f"{', '.join(sorted(MODULE_PRIORITIES))}."
+            )
+        if "tags" in spec:
+            tags = spec.get("tags")
+            if not isinstance(tags, list) or not all(
+                _non_empty_string(tag) for tag in tags
+            ):
+                report.error(f"{context}.tags must be a list of non-empty strings.")
+        involves = spec.get("involves")
+        if involves is not None:
+            if not isinstance(involves, list):
+                report.error(f"{context}.involves must be a list of entity ids.")
+            else:
+                for entity_id in involves:
+                    if str(entity_id) not in known_entities:
+                        report.error(
+                            f"{context}.involves references unknown entity "
+                            f"'{entity_id}'."
+                        )
+        for index, requirement in enumerate(spec.get("requires") or []):
+            requirement_context = f"{context}.requires[{index}]"
+            if not isinstance(requirement, dict) or set(requirement) != {
+                "module",
+                "status",
+            }:
+                report.error(
+                    f"{requirement_context} must contain exactly module and status."
+                )
+                continue
+            target = requirement.get("module")
+            if target not in modules or target == module_id:
+                report.error(
+                    f"{requirement_context}.module references unknown or self "
+                    f"module '{target}'."
+                )
+            if requirement.get("status") not in REQUIRES_STATUSES:
+                report.error(
+                    f"{requirement_context}.status must be one of: "
+                    f"{', '.join(sorted(REQUIRES_STATUSES))}."
+                )
+        for retired in ("effects", "when", "state_patch", "conditions"):
+            if retired in spec:
+                report.error(
+                    f"{context}.{retired} is not allowed; modules carry "
+                    "narrative semantics only."
+                )
+
+
+def _validate_openings(
+    data: dict[str, Any],
+    characters: dict[str, Any],
+    scenes: dict[str, Any],
+    report: ValidationReport,
+) -> None:
+    if "openings" not in data:
+        return
+    openings = data.get("openings")
+    if not isinstance(openings, dict) or not openings:
+        report.error("root.openings must be a non-empty mapping when present.")
+        return
+    for opening_id, spec in openings.items():
+        context = f"openings.{opening_id}"
+        _validate_machine_id(opening_id, context, report)
+        if not isinstance(spec, dict):
+            report.error(f"{context} must be a mapping.")
+            continue
+        for key in set(spec) - OPENING_FIELDS:
+            report.error(f"{context}.{key} is not a recognized opening field.")
+        if not _non_empty_string(spec.get("title")):
+            report.error(f"{context}.title must be a non-empty string.")
+        if "intro" in spec and not _non_empty_string(spec.get("intro")):
+            report.error(f"{context}.intro must be a non-empty string when present.")
+        positions = spec.get("positions")
+        if positions is None:
+            continue
+        if not isinstance(positions, dict) or not positions:
+            report.error(f"{context}.positions must be a non-empty mapping.")
+            continue
+        for character_id, scene_id in positions.items():
+            if character_id not in characters:
+                report.error(
+                    f"{context}.positions has unknown character '{character_id}'."
+                )
+            if scene_id not in scenes:
+                report.error(
+                    f"{context}.positions.{character_id} references unknown "
+                    f"scene '{scene_id}'."
+                )
+
+
 def validate_content(data: dict[str, Any]) -> ValidationReport:
     report = ValidationReport()
     profile = data.get("content_profile")
@@ -409,6 +551,8 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
     _validate_scenes(scenes, report)
     _validate_items(items, report)
     _validate_initial_state(initial, characters, scenes, items, report)
+    _validate_modules(data, characters, scenes, items, report)
+    _validate_openings(data, characters, scenes, report)
     return report
 
 

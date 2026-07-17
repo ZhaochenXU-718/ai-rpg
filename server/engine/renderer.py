@@ -101,6 +101,15 @@ def render_memory(story: Story, memory: MemoryState, *, raw: bool = False) -> st
         for group in memory.scene_notes:
             name = story.location_name({}, group.subject_id)
             lines.append(f"- {name}：" + "；".join(group.notes))
+    if memory.module_states:
+        lines.append("剧情模块（软状态）：")
+        for record in memory.module_states:
+            spec = story.modules.get(record.module_id) or {}
+            title = str(spec.get("title") or record.module_id)
+            lines.append(
+                f"- {title}［{record.module_id}］：{record.status}"
+                f"（抛出 {record.offers_count} 次）"
+            )
     lines.append("最近经历：")
     if not memory.recent_events:
         lines.append("（还没有已提交回合。）")

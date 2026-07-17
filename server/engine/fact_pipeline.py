@@ -6,6 +6,7 @@ from .iron_laws import build_fact_ledger, validate_fact_extraction
 from .llm import FactExtractionRequest, LLMProvider
 from .llm_protocol import PhysicalFactViolation
 from .memory_pipeline import maybe_compact_memory
+from .modules import offered_module_states, select_candidate_modules
 from .narration import narrate_player_turn
 from .resolver import TurnResult
 from .session import GameSession, SessionError
@@ -34,6 +35,12 @@ def resolve_player_turn(
 ) -> TurnResult:
     """Resolve one player input without charging failed prose candidates."""
     perception = session.perception()
+    candidate_module_ids = tuple(
+        candidate.module_id
+        for candidate in select_candidate_modules(
+            session.story, session.state, session.memory, session.turn_no
+        )
+    )
     feedback: tuple[PhysicalFactViolation, ...] = ()
     attempts = max(0, min(2, max_regenerations)) + 1
 
@@ -97,6 +104,15 @@ def resolve_player_turn(
         })
         if validation.accepted and validation.batch is not None:
             result = session.commit_fact_batch(validation.batch)
+            if candidate_module_ids:
+                session.apply_module_states(
+                    offered_module_states(
+                        session.memory,
+                        candidate_module_ids,
+                        result.turn_no,
+                    ),
+                    reason="candidates_offered",
+                )
             compaction = maybe_compact_memory(session, provider, recorder)
             recorder.record("turn_committed", {
                 "turn": result.turn_no,
@@ -109,6 +125,10 @@ def resolve_player_turn(
                 ),
                 "memory_event": session.memory.events[-1].to_dict(),
                 "memory_compaction": compaction.to_dict(),
+                "module_candidates": list(candidate_module_ids),
+                "module_states": [
+                    record.__dict__ for record in session.memory.module_states
+                ],
             })
             return result
 

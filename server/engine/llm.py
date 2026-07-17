@@ -121,7 +121,12 @@ class FactExtractionResponse:
 
 @dataclass(frozen=True)
 class MemoryCompactionRequest:
-    """Old committed events and the previous soft digest."""
+    """Old committed events and the previous soft digest.
+
+    ``module_catalog`` lists already-surfaced modules as (id, title, status);
+    the compactor may move them to engaged/resolved/dropped but never sees
+    unseen modules.
+    """
 
     story_id: str
     state_revision: int
@@ -129,6 +134,7 @@ class MemoryCompactionRequest:
     events: tuple[MemoryEvent, ...]
     character_catalog: tuple[tuple[str, str], ...]
     scene_catalog: tuple[tuple[str, str], ...]
+    module_catalog: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclass(frozen=True)

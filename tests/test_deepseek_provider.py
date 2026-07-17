@@ -99,7 +99,7 @@ class NarrativeProviderTest(unittest.TestCase):
         self.assertFalse(transport.calls[0][1]["json_mode"])
         self.assertEqual(transport.calls[0][1]["thinking"], "disabled")
         self.assertEqual(transport.calls[0][1]["max_tokens"], 400)
-        self.assertEqual(response.prompt_version, "deepseek-narrate-v7")
+        self.assertEqual(response.prompt_version, "deepseek-narrate-v8")
         self.assertEqual(response.diagnostics["final_content_state"], "valid")
         self.assertEqual(response.diagnostics["attempts"][0]["finish_reason"], "stop")
         self.assertIn("可以补充不改变连续性", transport.calls[0][0][0]["content"])
@@ -350,7 +350,7 @@ class MemoryCompactionProviderTest(unittest.TestCase):
         self.assertTrue(options["json_mode"])
         self.assertEqual(
             response.prompt_version,
-            "deepseek-memory-compaction-v1",
+            "deepseek-memory-compaction-v2",
         )
 
         bad_transport = FakeTransport(["not json", self.response_json()])

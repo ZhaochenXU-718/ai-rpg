@@ -40,8 +40,28 @@ class MemoryNoteGroup:
 
 
 @dataclass(frozen=True)
+class ModuleRecord:
+    """Soft lifecycle state of one authored story module.
+
+    Never authoritative: it gates which modules the orchestrator may offer
+    and is advanced by code (offered/faded) or by M2 compaction
+    (engaged/resolved/dropped).
+    """
+
+    module_id: str
+    status: str = "unseen"
+    offers_count: int = 0
+    last_offered_turn: int = 0
+
+
+@dataclass(frozen=True)
 class MemoryDigest:
-    """Model-produced soft context derived from committed events."""
+    """Model-produced soft context derived from committed events.
+
+    ``module_updates`` are transient transition commands (module_id, status)
+    parsed from one compaction call; they are applied through the module
+    transition rules and never stored verbatim.
+    """
 
     compacted_through_turn: int
     rolling_summary: str
@@ -49,6 +69,7 @@ class MemoryDigest:
     character_notes: tuple[MemoryNoteGroup, ...] = ()
     scene_notes: tuple[MemoryNoteGroup, ...] = ()
     recently_resolved: tuple[str, ...] = ()
+    module_updates: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,6 +104,7 @@ class MemoryState:
     character_notes: tuple[MemoryNoteGroup, ...] = ()
     scene_notes: tuple[MemoryNoteGroup, ...] = ()
     recently_resolved: tuple[str, ...] = ()
+    module_states: tuple[ModuleRecord, ...] = ()
     last_compaction_attempt_turn: int = 0
     last_compaction_error: str = ""
 
@@ -132,6 +154,22 @@ class MemoryState:
             last_compaction_attempt_turn=attempt_turn,
             last_compaction_error="",
         )
+
+    def module_record(self, module_id: str) -> ModuleRecord:
+        for record in self.module_states:
+            if record.module_id == module_id:
+                return record
+        return ModuleRecord(module_id=module_id)
+
+    def with_module_states(
+        self,
+        records: tuple[ModuleRecord, ...],
+    ) -> "MemoryState":
+        """Replace module lifecycle records; transition policy lives elsewhere."""
+        seen = [record.module_id for record in records]
+        if len(seen) != len(set(seen)):
+            raise ValueError("module states must not contain duplicates")
+        return replace(self, module_states=tuple(records))
 
     def record_compaction_failure(
         self,

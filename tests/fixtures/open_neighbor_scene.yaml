@@ -1,6 +1,6 @@
 id: open_neighbor_scene
 title: "开放场景夹具：院子里的遮雨布"
-version: 0.5.0
+version: 0.6.0
 schema_version: 2
 content_profile: narrative_first
 language: zh-CN
@@ -27,6 +27,51 @@ narrative_guidelines:
 critical_reminders:
   - "不替玩家决定说什么或做什么。"
   - "周师傅不会主动说出防雨布的来历。"
+
+openings:
+  workshop_start:
+    title: "从修理铺开始"
+    positions:
+      player: workshop
+  courtyard_start:
+    title: "从院子开始"
+    intro: "你先在院子里打量那张长桌，再决定去哪儿找能遮住它的东西。"
+    positions:
+      player: courtyard
+
+modules:
+  canvas_request:
+    category: main
+    title: "开口借防雨布"
+    purpose: "把玩家从观察推进到正面开口，推动主线。"
+    hook: "周师傅整理架子时，那块叠好的防雨布正好露出来。"
+    trigger: "玩家在修理铺与周师傅交谈、但尚未明确说明来意时。"
+    involves: [keeper_zhou, rain_canvas]
+    escalation: "玩家含糊其辞时，周师傅会直接问用途和归还时间。"
+    resolution: "玩家说明用途并获得防雨布。"
+    priority: high
+  zhou_hesitation:
+    category: character
+    title: "周师傅的迟疑"
+    purpose: "带出防雨布的来历，让周师傅立体起来。"
+    hook: "周师傅的目光会在防雨布上多停一下，欲言又止。"
+    trigger: "玩家借走防雨布之后，再次与周师傅独处时。"
+    involves: [keeper_zhou, rain_canvas]
+    escalation: "玩家追问时他先岔开话题；玩家表现出珍惜物件时才说出来历。"
+    resolution: "玩家知晓来历并妥善归还。"
+    fallback: "玩家始终不接话，他在归还时只说一句「放这儿就行」。"
+    cooldown_turns: 4
+  lin_aftermath:
+    category: aftermath
+    title: "林姐的疙瘩"
+    purpose: "让绕过邻居的选择留下可感的余波。"
+    hook: "林姐搭话时比平时淡了几分。"
+    trigger: "玩家此前对周师傅的旧物之情毫无回应、事情却已办成之后。"
+    involves: [neighbor_lin]
+    requires:
+      - module: zhou_hesitation
+        status: dropped
+    tags: [neighborly]
 
 player_role:
   id: player

@@ -21,7 +21,13 @@ PerceptionSnapshot + MemoryContext
 
 ### 2.1 NarrativeAuthorContext
 
-与感知快照分离的作者私有通道，只随 `NarrativeRequest` 交给旁白：`story_brief`（`ai_plot`）、`emotional_contract`、`active_guidelines`、`critical_reminders` 和当前在场人物的完整私有卡。它用于扮演与长线方向，不代表玩家已知；行动提案只拿到去掉 `hidden_truth` 的脱敏故事方向，事实抽取与记忆压缩完全收不到该通道。字段路由由 prompt 快照测试守护，作者上下文随每回合旁白记入 trace。
+与感知快照分离的作者私有通道，只随 `NarrativeRequest` 交给旁白：`story_brief`（`ai_plot`）、`emotional_contract`、`active_guidelines`、`critical_reminders`、当前在场人物的完整私有卡，以及 `candidate_modules`（编排器筛出的少量剧情素材）。它用于扮演与长线方向，不代表玩家已知；行动提案只拿到去掉 `hidden_truth` 的脱敏故事方向，事实抽取与记忆压缩完全收不到该通道。字段路由由 prompt 快照测试守护，作者上下文随每回合旁白记入 trace。
+
+### 2.2 模块编排
+
+模块编排器是纯代码：按类别策略、冷却、在场实体与结构性依赖筛选候选，不发起 LLM 调用、不评估自然语言触发、不产生状态 patch。候选只是旁白素材——旁白可编织其钩子，也可完全不用；玩家忽略钩子时它自然消退。
+
+模块生命周期是软状态（`unseen/offered/engaged/resolved/dropped`），存于 `MemoryState` 并随 checkpoint 与分支恢复：提交成功的回合把候选记为 `offered`；连续 3 次被忽略自动 `dropped`；`engaged` 与 `resolved` 由 M2 压缩输出 `module_updates` 标注，代码校验转移合法性（`resolved` 终态，`dropped` 可复活为 `engaged`）。压缩器只看到已浮出水面的模块，未出现的模块不会泄入小结。
 
 ## 3. SuggestedAction
 

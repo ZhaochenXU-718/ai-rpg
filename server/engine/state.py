@@ -10,12 +10,21 @@ class StatePathError(Exception):
     """Raised when a dotted state path cannot be resolved."""
 
 
-def build_initial_state(story: dict[str, Any]) -> dict[str, Any]:
+def build_initial_state(
+    story: dict[str, Any],
+    *,
+    opening_id: str | None = None,
+) -> dict[str, Any]:
     initial = copy.deepcopy(story.get("initial_state", {}))
     state = {
         "positions": initial.get("positions", {}),
         "item_locations": initial.get("item_locations", {}),
     }
+    if opening_id:
+        opening = (story.get("openings") or {}).get(opening_id) or {}
+        overrides = opening.get("positions")
+        if isinstance(overrides, dict):
+            state["positions"].update(copy.deepcopy(overrides))
     return state
 
 

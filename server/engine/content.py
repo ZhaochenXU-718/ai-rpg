@@ -70,6 +70,28 @@ class Story:
         return _authored_lines(self.data.get("critical_reminders"))
 
     @property
+    def modules(self) -> dict[str, Any]:
+        raw = self.data.get("modules")
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(module_id): spec
+            for module_id, spec in raw.items()
+            if isinstance(spec, dict)
+        }
+
+    @property
+    def openings(self) -> dict[str, Any]:
+        raw = self.data.get("openings")
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(opening_id): spec
+            for opening_id, spec in raw.items()
+            if isinstance(spec, dict)
+        }
+
+    @property
     def scenes(self) -> dict[str, Any]:
         return self.data.get("scenes") or {}
 

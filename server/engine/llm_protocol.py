@@ -141,6 +141,27 @@ class AuthorCharacterCard(ProtocolModel):
     dialogue_examples: tuple[NonEmptyStr, ...] = ()
 
 
+class CandidateModule(ProtocolModel):
+    """One eligible story module offered to the narrator as material.
+
+    Candidates carry narrative semantics only — no trigger evaluation
+    result, no effects, no state patch. ``status`` and ``offers_count``
+    tell the narrator whether this hook has been ignored before.
+    """
+
+    module_id: NonEmptyStr
+    category: NonEmptyStr
+    title: NonEmptyStr
+    purpose: str = ""
+    hook: str = ""
+    trigger: str = ""
+    escalation: str = ""
+    resolution: str = ""
+    fallback: str = ""
+    status: str = "unseen"
+    offers_count: NonNegativeInt = 0
+
+
 class NarrativeAuthorContext(ProtocolModel):
     """Author blueprint compiled for the narrator, apart from perception.
 
@@ -153,13 +174,18 @@ class NarrativeAuthorContext(ProtocolModel):
     active_guidelines: tuple[NonEmptyStr, ...] = ()
     critical_reminders: tuple[NonEmptyStr, ...] = ()
     in_scene_character_cards: tuple[AuthorCharacterCard, ...] = ()
+    candidate_modules: tuple[CandidateModule, ...] = ()
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
 
     @model_validator(mode="after")
-    def cards_are_unique(self):
+    def entries_are_unique(self):
         _ensure_unique(
             [card.character_id for card in self.in_scene_character_cards],
             "in_scene_character_cards",
+        )
+        _ensure_unique(
+            [module.module_id for module in self.candidate_modules],
+            "candidate_modules",
         )
         return self
 

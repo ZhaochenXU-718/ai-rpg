@@ -23,6 +23,7 @@ from .memory import (
     MemoryDigest,
     MemoryEvent,
     MemoryState,
+    ModuleRecord,
     build_memory_context,
 )
 from .perception import build_player_perception, build_subject_perception
@@ -76,12 +77,24 @@ class SessionError(Exception):
 
 
 class GameSession:
-    def __init__(self, story: Story, log_dir: str | None = "data/sessions") -> None:
+    def __init__(
+        self,
+        story: Story,
+        log_dir: str | None = "data/sessions",
+        *,
+        opening_id: str | None = None,
+    ) -> None:
         if story.data.get("content_profile") != "narrative_first":
             raise SessionError("only narrative_first content can start a new session")
+        if opening_id is not None and opening_id not in story.openings:
+            known = "、".join(story.openings) or "（无）"
+            raise SessionError(
+                f"unknown opening '{opening_id}'；可用开场：{known}"
+            )
         self.story = story
+        self.opening_id = opening_id
         self.session_id = uuid.uuid4().hex[:12]
-        self.state = build_initial_state(story.data)
+        self.state = build_initial_state(story.data, opening_id=opening_id)
         self.turn_no = 0
         self.state_revision = 0
         self.last_result: TurnResult | None = None
@@ -297,6 +310,36 @@ class GameSession:
                 "checkpoint_id": self.current_checkpoint_id,
                 "branch_id": self.current_branch_id,
                 "digest": digest.to_dict(),
+            })
+        except Exception:
+            pass
+
+    def apply_module_states(
+        self,
+        module_states: tuple[ModuleRecord, ...],
+        *,
+        reason: str,
+    ) -> None:
+        """Advance soft module lifecycle without touching physical revision."""
+        self.memory = self.memory.with_module_states(module_states)
+        self._replace_current_checkpoint_memory()
+        try:
+            self._logger.log({
+                "event": "module_states_updated",
+                "turn": self.turn_no,
+                "state_revision": self.state_revision,
+                "checkpoint_id": self.current_checkpoint_id,
+                "branch_id": self.current_branch_id,
+                "reason": reason,
+                "module_states": [
+                    {
+                        "module_id": record.module_id,
+                        "status": record.status,
+                        "offers_count": record.offers_count,
+                        "last_offered_turn": record.last_offered_turn,
+                    }
+                    for record in module_states
+                ],
             })
         except Exception:
             pass

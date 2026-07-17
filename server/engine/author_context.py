@@ -9,7 +9,11 @@ never enters action suggestions, fact extraction or memory compaction.
 from __future__ import annotations
 
 from .content import Story
-from .llm_protocol import AuthorCharacterCard, NarrativeAuthorContext
+from .llm_protocol import (
+    AuthorCharacterCard,
+    CandidateModule,
+    NarrativeAuthorContext,
+)
 
 
 _CARD_TEXT_FIELDS = (
@@ -51,6 +55,8 @@ def _character_card(story: Story, character_id: str) -> AuthorCharacterCard | No
 def build_author_context(
     story: Story,
     in_scene_character_ids: tuple[str, ...],
+    *,
+    candidate_modules: tuple[CandidateModule, ...] = (),
 ) -> NarrativeAuthorContext | None:
     """Return the narrator-only author context, or None when nothing is authored."""
     cards = []
@@ -66,6 +72,7 @@ def build_author_context(
         active_guidelines=story.narrative_guidelines,
         critical_reminders=story.critical_reminders,
         in_scene_character_cards=tuple(cards),
+        candidate_modules=candidate_modules,
     )
     if (
         not context.story_brief
@@ -73,6 +80,7 @@ def build_author_context(
         and not context.active_guidelines
         and not context.critical_reminders
         and not context.in_scene_character_cards
+        and not context.candidate_modules
     ):
         return None
     return context
