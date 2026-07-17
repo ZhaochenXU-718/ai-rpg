@@ -8,6 +8,16 @@ from typing import Any
 import yaml
 
 
+def _authored_lines(raw: Any) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        str(item).strip()
+        for item in raw
+        if isinstance(item, str) and item.strip()
+    )
+
+
 class Story:
     def __init__(self, data: dict[str, Any]) -> None:
         self.data = data
@@ -30,6 +40,34 @@ class Story:
     @property
     def premise(self) -> str:
         return (self.data.get("premise") or "").strip()
+
+    @property
+    def player_facing_summary(self) -> str:
+        """Player-facing pitch; never compiled into model prompts."""
+        return (self.data.get("player_facing_summary") or "").strip()
+
+    @property
+    def emotional_contract(self) -> str:
+        return (self.data.get("emotional_contract") or "").strip()
+
+    @property
+    def ai_plot(self) -> dict[str, str]:
+        raw = self.data.get("ai_plot")
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(key): str(value).strip()
+            for key, value in raw.items()
+            if isinstance(value, str) and value.strip()
+        }
+
+    @property
+    def narrative_guidelines(self) -> tuple[str, ...]:
+        return _authored_lines(self.data.get("narrative_guidelines"))
+
+    @property
+    def critical_reminders(self) -> tuple[str, ...]:
+        return _authored_lines(self.data.get("critical_reminders"))
 
     @property
     def scenes(self) -> dict[str, Any]:

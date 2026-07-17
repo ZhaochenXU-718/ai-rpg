@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from .llm import LLMProvider, SuggestionRequest
 from .llm_protocol import (
@@ -26,6 +27,28 @@ def _boundaries(session: GameSession) -> tuple[str, ...]:
         if (text := str(rule).strip())
         and not _contains_token(text, hidden_tokens)
     )
+
+
+def _story_direction(session: GameSession) -> dict[str, Any]:
+    """Desensitized long-term direction for proposal cards.
+
+    ``ai_plot.hidden_truth`` and character-card private fields stay out:
+    cards reach the player verbatim and have no disclosure guard. The
+    hidden-token filter below still drops drafts that name unseen entities
+    mentioned by the remaining blueprint text.
+    """
+    story = session.story
+    direction: dict[str, Any] = {}
+    brief = {
+        key: value
+        for key, value in story.ai_plot.items()
+        if key != "hidden_truth"
+    }
+    if brief:
+        direction["故事蓝图"] = brief
+    if story.emotional_contract:
+        direction["情绪承诺"] = story.emotional_contract
+    return direction
 
 
 def _hidden_authored_tokens(session: GameSession) -> tuple[str, ...]:
@@ -151,6 +174,7 @@ def generate_action_suggestions(
             count=count,
             boundaries=_boundaries(session),
             memory_context=memory_context,
+            story_direction=_story_direction(session),
         ))
     except Exception as exc:
         recorder.record("suggestions_fallback", {
@@ -164,6 +188,7 @@ def generate_action_suggestions(
         recorder.record("suggestions_response", {
             "turn": session.turn_no + 1,
             "state_revision": session.state_revision,
+            "story_direction": _story_direction(session),
             "model": response.model,
             "prompt_version": response.prompt_version,
             "latency_ms": response.latency_ms,

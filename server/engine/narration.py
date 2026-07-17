@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from .author_context import build_author_context
 from .llm import LLMProvider, NarrativeRequest
-from .llm_protocol import PhysicalFactViolation
+from .llm_protocol import EntityKind, PhysicalFactViolation
 from .session import GameSession
 from .trace import TraceRecorder
 
@@ -94,13 +95,23 @@ def narrate_player_turn(
     facts = build_narrative_facts(
         session, player_text, references, violations=violations
     )
+    perception = session.perception()
+    author_context = build_author_context(
+        session.story,
+        tuple(
+            entity.entity_id
+            for entity in perception.visible_entities
+            if entity.kind == EntityKind.CHARACTER
+        ),
+    )
     try:
         response = provider.render_narrative(NarrativeRequest(
             kind="turn",
-            perception=session.perception(),
+            perception=perception,
             facts=facts,
             memory_context=memory_context,
             style=_style(session),
+            author_context=author_context,
         ))
     except Exception as exc:
         if recorder is not None:
@@ -142,5 +153,8 @@ def narrate_player_turn(
                 violation.to_dict() for violation in violations
             ],
             "memory_context": memory_payload,
+            "author_context": (
+                author_context.to_dict() if author_context is not None else None
+            ),
         })
     return narrative, references

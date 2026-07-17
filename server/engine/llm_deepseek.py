@@ -34,8 +34,8 @@ from .llm_protocol import (
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
-NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v6"
-SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v3"
+NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v7"
+SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v4"
 FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v2"
 MEMORY_COMPACTION_PROMPT_VERSION = "deepseek-memory-compaction-v1"
 MAX_REPAIR_ROUNDS = 1
@@ -110,12 +110,14 @@ RENDER_SYSTEM_PROMPT = """\
 
 写作要求：
 1. 自然承接玩家行动、当前感知和软叙事记忆；可以补充不改变连续性的动作、对白和感官细节。
-2. 不使用远处人物、未披露私密信息，也不替玩家决定下一步行动。
-3. 人物换场或关键物品转手时写清楚实际发生的变化，不跳过当前在场和物品归属。
-4. 若事实清单含冲突反馈，修正冲突部分，不在正文解释校验过程。
-5. 服从给定视角与文风；玩家视角使用第二人称“你”。
-6. 输出 2-5 句连贯散文，不提协议、阶段、数值或系统；只输出叙事文本。
-7. 【软叙事记忆】可能有遗漏或概括误差；当前事实清单与当前感知优先。开放事项、提议和人物小结不能被擅自写成已经完成的事实，记忆中的远处人物也不算当前在场。
+2. 不使用远处人物，也不替玩家决定下一步行动。
+3. 【作者私有上下文】是故事蓝图与在场人物的私有人物卡，仅用于扮演人物和把握长线方向；它不代表玩家已知。在场人物按各自的动机、压力、口吻和行为模式行动；人物秘密可以驱动回避、迟疑或撒谎，但在玩家尚未探明前不得直接说破，也不得写成玩家已知的事实。
+4. 【作者私有上下文】中的 critical_reminders 是作者最高优先级的少量规则，每回合都必须遵守。
+5. 人物换场或关键物品转手时写清楚实际发生的变化，不跳过当前在场和物品归属。
+6. 若事实清单含冲突反馈，修正冲突部分，不在正文解释校验过程。
+7. 服从给定视角与文风；玩家视角使用第二人称“你”。
+8. 输出 2-5 句连贯散文，不提协议、阶段、数值或系统；只输出叙事文本。
+9. 【软叙事记忆】可能有遗漏或概括误差；当前事实清单与当前感知优先。开放事项、提议和人物小结不能被擅自写成已经完成的事实，记忆中的远处人物也不算当前在场。
 """
 
 
@@ -131,6 +133,7 @@ SUGGESTION_SYSTEM_PROMPT = """\
 6. 不得输出 plan、steps、capability、intent、状态 patch 或验证结果。
 7. 只输出 {"suggestions": [...]}。
 8. 可用【软叙事记忆】延续开放事项、避免重复已经解决的内容，但当前感知优先；记忆不能让远处人物、旧物品或旧出口变成当前可行动对象。
+9. 【故事方向】是脱敏后的作者蓝图，只用于让提案贴近长线目标与情绪基调；不得引用其中未出现在感知快照里的人物、地点或物品，也不得把方向中的事件写成已经发生。
 
 单张卡格式：
 {
@@ -190,6 +193,11 @@ def build_narrative_messages(request: NarrativeRequest) -> list[dict[str, str]]:
             "state_revision": request.perception.state_revision,
         },
         "事实清单": request.facts,
+        "作者私有上下文": (
+            request.author_context.to_dict()
+            if request.author_context is not None
+            else None
+        ),
         "软叙事记忆": (
             request.memory_context.to_dict()
             if request.memory_context is not None
@@ -210,6 +218,7 @@ def build_suggestion_messages(request: SuggestionRequest) -> list[dict[str, str]
     payload = {
         "数量上限": request.count,
         "感知快照": perception,
+        "故事方向": request.story_direction or None,
         "软叙事记忆": (
             request.memory_context.to_dict()
             if request.memory_context is not None

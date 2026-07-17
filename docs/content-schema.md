@@ -8,7 +8,37 @@
 
 `items` 可选。`design_goal`、`target_duration_minutes`、`authoring_notes` 等说明字段可保留。
 
-活动内容不再支持：`intents`、`world_board`、`generation`、`storylets`、`endings`、`genre_system`、`perception`、`world_rules`、`resolution_limits`、`quote_warnings`。
+## 作者叙事分层（可选）
+
+四个可选顶层字段把"玩家文案"和"AI 指令"正式分开：
+
+```yaml
+player_facing_summary: "给玩家看的一句话简介，不进入任何模型调用"
+
+emotional_contract: "希望玩家持续获得的感受；旁白与行动提案都会读取"
+
+ai_plot:
+  player_role: "玩家在故事中的角色"
+  main_goal: "主要目标和核心矛盾"
+  opposition: "对抗力量或阻力来源"
+  world_rules: "世界规律"
+  hidden_truth: "作者知道、玩家开场不应知道的真相"
+
+narrative_guidelines:
+  - "视角、语气、节奏等叙述规则，只进旁白"
+
+critical_reminders:
+  - "最多 4 条最高优先级防漂移规则，旁白每回合必须遵守"
+```
+
+路由规则（有 prompt 快照测试守护）：
+
+- `player_facing_summary` 不进入任何模型调用；
+- `ai_plot` 完整进入旁白的作者私有上下文；去掉 `hidden_truth` 后作为"故事方向"进入行动提案；
+- `narrative_guidelines` 与 `critical_reminders` 只进旁白；
+- `emotional_contract` 同时进旁白与行动提案。
+
+`ai_plot` 只接受上述五个键，拼错的键会被校验器拒绝——这防止本应保密的字段因键名笔误而流入行动提案。
 
 ## player_role
 
@@ -26,7 +56,9 @@ player_role:
 
 ## characters
 
-玩家需要 `name`、`role`、`public_profile`。NPC 还需要 `motivation`、`voice`、`initial_relationship`，可选 `secret`。人物卡不再包含 `initial_state`。
+玩家需要 `name`、`role`、`public_profile`。NPC 还需要 `motivation`、`voice`、`initial_relationship`，可选 `secret`、`pressure`、`behavior`、`mannerisms`、`narration_notes` 和 `dialogue_examples`（字符串列表）。人物卡不再包含 `initial_state`。
+
+人物卡私有字段（`public_profile` 之外的全部字段）只在该人物在场时进入旁白的作者私有上下文，用于扮演；它们不进入玩家感知、行动提案和事实抽取，也不代表玩家已知。
 
 ## scenes
 

@@ -1,6 +1,6 @@
 id: open_neighbor_scene
 title: "开放场景夹具：院子里的遮雨布"
-version: 0.4.0
+version: 0.5.0
 schema_version: 2
 content_profile: narrative_first
 language: zh-CN
@@ -9,6 +9,24 @@ genre: open_slice_of_life_fixture
 premise: |
   院子里准备摆一张公共长桌。玩家可以自由观察、交谈或向修理铺店主询问
   是否有能遮住桌面的东西；普通行动完全交给叙事循环。
+
+player_facing_summary: "帮院子借一块遮雨布，看似小事，却要照顾好邻里之间的分寸。"
+
+emotional_contract: "让玩家持续体会日常互助里的分寸感：小心开口、体面收尾。"
+
+ai_plot:
+  player_role: "主动张罗公共长桌的住户，需要向邻居开口借东西。"
+  main_goal: "在不伤邻里体面的前提下，为长桌找到合适的遮盖物。"
+  opposition: "没有反派；阻力来自开口借物的分寸和各家自己的安排。"
+  hidden_truth: "防雨布是周师傅亡妻缝补过的旧物；他嘴上爽快，心里在意它的去向。"
+
+narrative_guidelines:
+  - "对白短促、生活化，不使用戏剧腔。"
+  - "冲突停留在分寸与体面层面，不升级为争吵。"
+
+critical_reminders:
+  - "不替玩家决定说什么或做什么。"
+  - "周师傅不会主动说出防雨布的来历。"
 
 player_role:
   id: player
@@ -57,6 +75,12 @@ characters:
     motivation: "不耽误营业地解决邻里的实际小问题。"
     voice: "说话直接，先问用途和归还时间；确认是公共事务后会给出明确答复。"
     initial_relationship: "认识玩家这个邻居；对说明用途、尊重物品归属的人一向爽快。"
+    secret: "防雨布是亡妻缝补过的旧物；他愿意外借，但希望它被善待并按时回来。"
+    pressure: "铺子里还压着没修完的活，他不想在寒暄上耗太久。"
+    behavior: "被明确说明用途时痛快答应；察觉对方轻慢物品时会不动声色地多问一句。"
+    mannerisms: "习惯边擦手边说话，答应借出前会先看一眼那件东西。"
+    dialogue_examples:
+      - "要遮多大的桌面？今晚就用？"
   neighbor_lin:
     name: "林姐"
     role: observant_neighbor

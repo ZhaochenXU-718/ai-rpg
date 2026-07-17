@@ -57,6 +57,21 @@ REQUIRED_NARRATIVE_NPC_FIELDS = {
     "voice",
     "initial_relationship",
 }
+OPTIONAL_CHARACTER_TEXT_FIELDS = (
+    "secret",
+    "pressure",
+    "behavior",
+    "mannerisms",
+    "narration_notes",
+)
+AI_PLOT_FIELDS = {
+    "player_role",
+    "main_goal",
+    "opposition",
+    "world_rules",
+    "hidden_truth",
+}
+MAX_CRITICAL_REMINDERS = 4
 REQUIRED_SCENE_FIELDS = {
     "name",
     "purpose",
@@ -143,6 +158,21 @@ def _validate_characters(
             for field in REQUIRED_NARRATIVE_NPC_FIELDS:
                 if not _non_empty_string(card.get(field)):
                     report.error(f"{context} missing required field: {field}")
+        for field in OPTIONAL_CHARACTER_TEXT_FIELDS:
+            if field in card and not _non_empty_string(card.get(field)):
+                report.error(
+                    f"{context}.{field} must be a non-empty string when present."
+                )
+        if "dialogue_examples" in card:
+            examples = card.get("dialogue_examples")
+            if (
+                not isinstance(examples, list)
+                or not examples
+                or not all(_non_empty_string(item) for item in examples)
+            ):
+                report.error(
+                    f"{context}.dialogue_examples must be a non-empty list of strings."
+                )
         if "initial_state" in card:
             report.error(
                 f"{context}.initial_state is retired; character development belongs to memory."
@@ -290,6 +320,46 @@ def _validate_initial_state(
             report.error(f"{context}.type must be carried_by or board.")
 
 
+def _validate_author_layers(data: dict[str, Any], report: ValidationReport) -> None:
+    """Optional narrative layers: player pitch, AI blueprint, guidelines, reminders."""
+    for key in ("player_facing_summary", "emotional_contract"):
+        if key in data and not _non_empty_string(data.get(key)):
+            report.error(f"root.{key} must be a non-empty string when present.")
+
+    if "ai_plot" in data:
+        plot = data.get("ai_plot")
+        if not isinstance(plot, dict) or not plot:
+            report.error("root.ai_plot must be a non-empty mapping when present.")
+        else:
+            for key, value in plot.items():
+                if key not in AI_PLOT_FIELDS:
+                    report.error(
+                        f"ai_plot.{key} is not a recognized blueprint field; "
+                        f"allowed: {', '.join(sorted(AI_PLOT_FIELDS))}."
+                    )
+                elif not _non_empty_string(value):
+                    report.error(f"ai_plot.{key} must be a non-empty string.")
+
+    for key in ("narrative_guidelines", "critical_reminders"):
+        if key not in data:
+            continue
+        value = data.get(key)
+        if (
+            not isinstance(value, list)
+            or not value
+            or not all(_non_empty_string(item) for item in value)
+        ):
+            report.error(
+                f"root.{key} must be a non-empty list of non-empty strings when present."
+            )
+    reminders = data.get("critical_reminders")
+    if isinstance(reminders, list) and len(reminders) > MAX_CRITICAL_REMINDERS:
+        report.error(
+            f"critical_reminders must keep at most {MAX_CRITICAL_REMINDERS} "
+            "high-priority rules."
+        )
+
+
 def validate_content(data: dict[str, Any]) -> ValidationReport:
     report = ValidationReport()
     profile = data.get("content_profile")
@@ -334,6 +404,7 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
         items = {}
     initial = _mapping(data, "initial_state", report)
 
+    _validate_author_layers(data, report)
     _validate_characters(characters, player_id, report)
     _validate_scenes(scenes, report)
     _validate_items(items, report)

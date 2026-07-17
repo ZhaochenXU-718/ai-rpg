@@ -18,6 +18,7 @@ from .llm_protocol import (
     ExtractedFact,
     FactExtraction,
     MemoryContext,
+    NarrativeAuthorContext,
     PerceptionSnapshot,
     SuggestedAction,
     new_protocol_id,
@@ -26,13 +27,19 @@ from .llm_protocol import (
 
 @dataclass(frozen=True)
 class NarrativeRequest:
-    """Facts-only prose request scoped by one perception snapshot."""
+    """Facts-only prose request scoped by one perception snapshot.
+
+    ``author_context`` is the only channel that may carry authored private
+    material (blueprint, in-scene character cards); it exists for portrayal
+    and direction, not as player knowledge.
+    """
 
     kind: str
     perception: PerceptionSnapshot
     facts: dict[str, Any]
     style: dict[str, Any] = field(default_factory=dict)
     memory_context: MemoryContext | None = None
+    author_context: NarrativeAuthorContext | None = None
 
     def __post_init__(self) -> None:
         _validate_memory_context(self.perception, self.memory_context)
@@ -50,10 +57,17 @@ class NarrativeResponse:
 
 @dataclass(frozen=True)
 class SuggestionRequest:
+    """Proposal request; ``story_direction`` is desensitized author direction.
+
+    Suggestion cards reach the player verbatim, so this field must never
+    carry ``ai_plot.hidden_truth`` or character-card private fields.
+    """
+
     perception: PerceptionSnapshot
     count: int = 5
     boundaries: tuple[str, ...] = ()
     memory_context: MemoryContext | None = None
+    story_direction: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_memory_context(self.perception, self.memory_context)

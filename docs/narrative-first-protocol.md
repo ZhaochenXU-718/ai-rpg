@@ -19,6 +19,10 @@ PerceptionSnapshot + MemoryContext
 
 玩家快照不包含远处人物或 NPC 的 `secret`、`motivation` 等私有卡片。NPC 快照接口保留，但当前没有自动 NPC 回合。
 
+### 2.1 NarrativeAuthorContext
+
+与感知快照分离的作者私有通道，只随 `NarrativeRequest` 交给旁白：`story_brief`（`ai_plot`）、`emotional_contract`、`active_guidelines`、`critical_reminders` 和当前在场人物的完整私有卡。它用于扮演与长线方向，不代表玩家已知；行动提案只拿到去掉 `hidden_truth` 的脱敏故事方向，事实抽取与记忆压缩完全收不到该通道。字段路由由 prompt 快照测试守护，作者上下文随每回合旁白记入 trace。
+
 ## 3. SuggestedAction
 
 行动提案只有标题、可编辑自然语言、侧重点与理由。它绑定感知 revision，但没有计划、能力、预期状态变化或执行权限。

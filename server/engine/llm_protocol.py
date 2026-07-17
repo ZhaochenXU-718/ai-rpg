@@ -121,6 +121,49 @@ class PerceptionSnapshot(ProtocolModel):
         return self
 
 
+class AuthorCharacterCard(ProtocolModel):
+    """Author-private card for portraying one in-scene character.
+
+    Card fields exist for portrayal and direction only; none of them counts
+    as something the player already knows.
+    """
+
+    character_id: NonEmptyStr
+    name: NonEmptyStr
+    motivation: str = ""
+    voice: str = ""
+    initial_relationship: str = ""
+    secret: str = ""
+    pressure: str = ""
+    behavior: str = ""
+    mannerisms: str = ""
+    narration_notes: str = ""
+    dialogue_examples: tuple[NonEmptyStr, ...] = ()
+
+
+class NarrativeAuthorContext(ProtocolModel):
+    """Author blueprint compiled for the narrator, apart from perception.
+
+    It travels only on narrative requests: player perception, action
+    suggestions, fact extraction and memory compaction must not receive it.
+    """
+
+    story_brief: dict[str, str] = Field(default_factory=dict)
+    emotional_contract: str = ""
+    active_guidelines: tuple[NonEmptyStr, ...] = ()
+    critical_reminders: tuple[NonEmptyStr, ...] = ()
+    in_scene_character_cards: tuple[AuthorCharacterCard, ...] = ()
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+
+    @model_validator(mode="after")
+    def cards_are_unique(self):
+        _ensure_unique(
+            [card.character_id for card in self.in_scene_character_cards],
+            "in_scene_character_cards",
+        )
+        return self
+
+
 class MemoryContextEvent(ProtocolModel):
     """One cropped raw event carried only as soft generation context."""
 
