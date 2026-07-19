@@ -32,6 +32,7 @@ from server.engine.llm_deepseek import (
     build_suggestion_messages,
 )
 from server.engine.narration import narrate_player_turn
+from server.engine.renderer import render_intro
 from server.engine.session import GameSession
 from server.engine.suggestions import generate_action_suggestions
 from server.engine.trace import TraceRecorder
@@ -49,6 +50,7 @@ GUIDELINE_MARK = "戏剧腔"  # narrative_guidelines
 REMINDER_MARK = "防雨布的来历"  # critical_reminders
 CONTRACT_MARK = "分寸感"  # emotional_contract
 BLUEPRINT_MARK = "合适的遮盖物"  # ai_plot.main_goal
+OPENING_MARK = "晒得发白"  # opening_narration
 
 
 class CapturingNarrator(ScriptedProvider):
@@ -126,6 +128,7 @@ class AuthorContextRoutingTest(unittest.TestCase):
             REMINDER_MARK,
             CONTRACT_MARK,
             BLUEPRINT_MARK,
+            OPENING_MARK,
         ):
             self.assertIn(mark, user_payload)
         self.assertNotIn(PLAYER_SUMMARY_MARK, user_payload)
@@ -149,6 +152,7 @@ class AuthorContextRoutingTest(unittest.TestCase):
             MOTIVATION_MARK,
             PLAYER_SUMMARY_MARK,
             REMINDER_MARK,
+            OPENING_MARK,
         ):
             self.assertNotIn(mark, flat)
 
@@ -170,8 +174,15 @@ class AuthorContextRoutingTest(unittest.TestCase):
             CONTRACT_MARK,
             BLUEPRINT_MARK,
             PLAYER_SUMMARY_MARK,
+            OPENING_MARK,
         ):
             self.assertNotIn(mark, flat)
+
+    def test_opening_narration_renders_once_and_anchors_narrator(self) -> None:
+        intro = render_intro(self.session.story, self.session.state)
+        self.assertIn(OPENING_MARK, intro)
+        request = self._narrative_request()
+        self.assertIn(OPENING_MARK, request.author_context.opening_narration)
 
     def test_story_without_authored_layers_builds_no_context(self) -> None:
         bare = Story({

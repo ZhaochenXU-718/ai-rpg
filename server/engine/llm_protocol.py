@@ -171,6 +171,7 @@ class NarrativeAuthorContext(ProtocolModel):
 
     story_brief: dict[str, str] = Field(default_factory=dict)
     emotional_contract: str = ""
+    opening_narration: str = ""
     active_guidelines: tuple[NonEmptyStr, ...] = ()
     critical_reminders: tuple[NonEmptyStr, ...] = ()
     in_scene_character_cards: tuple[AuthorCharacterCard, ...] = ()

@@ -69,6 +69,7 @@ def build_author_context(
     context = NarrativeAuthorContext(
         story_brief=story.ai_plot,
         emotional_contract=story.emotional_contract,
+        opening_narration=story.opening_narration,
         active_guidelines=story.narrative_guidelines,
         critical_reminders=story.critical_reminders,
         in_scene_character_cards=tuple(cards),
@@ -77,6 +78,7 @@ def build_author_context(
     if (
         not context.story_brief
         and not context.emotional_contract
+        and not context.opening_narration
         and not context.active_guidelines
         and not context.critical_reminders
         and not context.in_scene_character_cards

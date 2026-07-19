@@ -10,12 +10,14 @@
 
 ## 作者叙事分层（可选）
 
-四个可选顶层字段把"玩家文案"和"AI 指令"正式分开：
+以下可选顶层字段把"玩家文案"和"AI 指令"正式分开：
 
 ```yaml
 player_facing_summary: "给玩家看的一句话简介，不进入任何模型调用"
 
 emotional_contract: "希望玩家持续获得的感受；旁白与行动提案都会读取"
+
+opening_narration: "人写的开场正文：启动时展示一次，并每回合作为文风与事实锚进入旁白"
 
 ai_plot:
   player_role: "玩家在故事中的角色"
@@ -36,7 +38,8 @@ critical_reminders:
 - `player_facing_summary` 不进入任何模型调用；
 - `ai_plot` 完整进入旁白的作者私有上下文；去掉 `hidden_truth` 后作为"故事方向"进入行动提案；
 - `narrative_guidelines` 与 `critical_reminders` 只进旁白；
-- `emotional_contract` 同时进旁白与行动提案。
+- `emotional_contract` 同时进旁白与行动提案；
+- `opening_narration` 玩家可见（开场渲染一次）且只进旁白——它是给模型续写的示范散文，不是秘密。
 
 `ai_plot` 只接受上述五个键，拼错的键会被校验器拒绝——这防止本应保密的字段因键名笔误而流入行动提案。
 

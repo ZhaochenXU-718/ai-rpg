@@ -28,6 +28,8 @@ def render_intro(story: Story, state: dict[str, Any]) -> str:
     if story.premise:
         parts += [story.premise, ""]
     parts.append(render_scene_entry(story, story.current_location(state), state))
+    if story.opening_narration:
+        parts += ["", story.opening_narration]
     return "\n".join(parts)
 
 

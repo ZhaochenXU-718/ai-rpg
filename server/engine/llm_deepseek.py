@@ -34,7 +34,7 @@ from .llm_protocol import (
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
-NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v8"
+NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v9"
 SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v4"
 FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v2"
 MEMORY_COMPACTION_PROMPT_VERSION = "deepseek-memory-compaction-v2"
@@ -111,7 +111,7 @@ RENDER_SYSTEM_PROMPT = """\
 写作要求：
 1. 自然承接玩家行动、当前感知和软叙事记忆；可以补充不改变连续性的动作、对白和感官细节。
 2. 不使用远处人物，也不替玩家决定下一步行动。
-3. 【作者私有上下文】是故事蓝图与在场人物的私有人物卡，仅用于扮演人物和把握长线方向；它不代表玩家已知。在场人物按各自的动机、压力、口吻和行为模式行动；人物秘密可以驱动回避、迟疑或撒谎，但在玩家尚未探明前不得直接说破，也不得写成玩家已知的事实。
+3. 【作者私有上下文】是故事蓝图与在场人物的私有人物卡，仅用于扮演人物和把握长线方向；它不代表玩家已知。在场人物按各自的动机、压力、口吻和行为模式行动；人物秘密可以驱动回避、迟疑或撒谎，但在玩家尚未探明前不得直接说破，也不得写成玩家已知的事实。例外是 opening_narration：它是已经展示给玩家的开场正文，续写时自然承接它的文风、节奏和既定事实，不要复述它。
 4. 【作者私有上下文】中的 critical_reminders 是作者最高优先级的少量规则，每回合都必须遵守。
 5. candidate_modules 是当前可选的剧情素材：只在自然贴合玩家行动时编织其钩子，一回合至多推进一个；玩家忽略过的钩子（offers_count 大于 0）应换一种更轻的方式或干脆不提；不得强推模块，也不得替玩家接受钩子。
 6. 人物换场或关键物品转手时写清楚实际发生的变化，不跳过当前在场和物品归属。

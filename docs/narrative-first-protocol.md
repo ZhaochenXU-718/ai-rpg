@@ -21,7 +21,7 @@ PerceptionSnapshot + MemoryContext
 
 ### 2.1 NarrativeAuthorContext
 
-与感知快照分离的作者私有通道，只随 `NarrativeRequest` 交给旁白：`story_brief`（`ai_plot`）、`emotional_contract`、`active_guidelines`、`critical_reminders`、当前在场人物的完整私有卡，以及 `candidate_modules`（编排器筛出的少量剧情素材）。它用于扮演与长线方向，不代表玩家已知；行动提案只拿到去掉 `hidden_truth` 的脱敏故事方向，事实抽取与记忆压缩完全收不到该通道。字段路由由 prompt 快照测试守护，作者上下文随每回合旁白记入 trace。
+与感知快照分离的作者私有通道，只随 `NarrativeRequest` 交给旁白：`story_brief`（`ai_plot`）、`emotional_contract`、`opening_narration`（已展示给玩家的开场正文，作为常驻文风与事实锚）、`active_guidelines`、`critical_reminders`、当前在场人物的完整私有卡，以及 `candidate_modules`（编排器筛出的少量剧情素材）。它用于扮演与长线方向，不代表玩家已知；行动提案只拿到去掉 `hidden_truth` 的脱敏故事方向，事实抽取与记忆压缩完全收不到该通道。字段路由由 prompt 快照测试守护，作者上下文随每回合旁白记入 trace。
 
 ### 2.2 模块编排
 

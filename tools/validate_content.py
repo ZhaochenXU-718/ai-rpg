@@ -329,7 +329,7 @@ def _validate_initial_state(
 
 def _validate_author_layers(data: dict[str, Any], report: ValidationReport) -> None:
     """Optional narrative layers: player pitch, AI blueprint, guidelines, reminders."""
-    for key in ("player_facing_summary", "emotional_contract"):
+    for key in ("player_facing_summary", "emotional_contract", "opening_narration"):
         if key in data and not _non_empty_string(data.get(key)):
             report.error(f"root.{key} must be a non-empty string when present.")
 

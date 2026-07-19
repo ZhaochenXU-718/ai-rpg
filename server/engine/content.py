@@ -51,6 +51,11 @@ class Story:
         return (self.data.get("emotional_contract") or "").strip()
 
     @property
+    def opening_narration(self) -> str:
+        """Authored first prose passage; shown once and anchors the narrator."""
+        return (self.data.get("opening_narration") or "").strip()
+
+    @property
     def ai_plot(self) -> dict[str, str]:
         raw = self.data.get("ai_plot")
         if not isinstance(raw, dict):
