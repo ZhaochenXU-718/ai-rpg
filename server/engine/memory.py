@@ -308,8 +308,15 @@ def build_memory_context(
 
 def plan_memory_compaction(
     memory: MemoryState,
+    *,
+    urgent: bool = False,
 ) -> MemoryCompactionPlan | None:
-    """Return one bounded compaction batch, or ``None`` when not due."""
+    """Return one bounded compaction batch, or ``None`` when not due.
+
+    ``urgent`` lets module bookkeeping bypass the batch-size threshold when
+    a requires-gated module is waiting on an M2 status judgement. The recent
+    protection window and the retry cooldown still apply unchanged.
+    """
     if len(memory.events) <= RECENT_MEMORY_WINDOW:
         return None
     latest_turn = memory.events[-1].turn_no
@@ -335,6 +342,8 @@ def plan_memory_compaction(
         trigger = "event_window"
     elif character_count >= COMPACTION_CHAR_BUDGET:
         trigger = "character_budget"
+    elif urgent:
+        trigger = "module_bookkeeping"
     else:
         return None
 

@@ -256,9 +256,13 @@ modules:
     min_turn: 1               # [可选] 最早出现回合，默认由类别决定
     priority: normal          # [可选] low | normal | high，默认 normal
     tags: []                  # [可选] 自由标签，引擎不解析
-    # requires:               # [可选] 结构性依赖：其他模块到达某软状态后才解锁
+    # requires:               # [可选] 结构性依赖：其他模块到达某软状态后才解锁。
     #   - module: other_module_id
-    #     status: resolved    # engaged | resolved | dropped
+    #     status: resolved    # offered | engaged | resolved | dropped
+    #   满足按进度包含：offered 表示"抛出过即可"（零时延，代码即时标记）；
+    #   engaged 被 engaged/resolved 满足；resolved/dropped 精确匹配。
+    #   选用原则：顺承关系用 trigger 语义或 offered；engaged/resolved 依赖
+    #   M2 记账（有时延），只留给"绝不能提前出现"的硬门槛（如终局、剧透）。
 
 
 # ---------------------------------------------------------------------

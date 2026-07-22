@@ -7,7 +7,11 @@ from typing import Any
 
 from .llm import LLMProvider, MemoryCompactionRequest
 from .memory import plan_memory_compaction
-from .modules import compaction_module_catalog, compaction_module_updates
+from .modules import (
+    compaction_module_catalog,
+    compaction_module_updates,
+    pending_requires_blockers,
+)
 from .session import GameSession
 from .trace import TraceRecorder
 
@@ -45,7 +49,13 @@ def maybe_compact_memory(
 ) -> MemoryCompactionOutcome:
     """Compact an eligible old-event batch without endangering its commit."""
     try:
-        plan = plan_memory_compaction(session.memory)
+        blocked_modules = pending_requires_blockers(
+            session.story, session.memory, session.turn_no
+        )
+        plan = plan_memory_compaction(
+            session.memory,
+            urgent=bool(blocked_modules),
+        )
     except Exception as exc:
         error = str(exc).strip() or type(exc).__name__
         try:
@@ -68,6 +78,7 @@ def maybe_compact_memory(
         "trigger": plan.trigger,
         "through_turn": plan.through_turn,
         "event_turns": [event.turn_no for event in plan.events],
+        "bookkeeping_blocked_modules": list(blocked_modules),
     }
 
     try:

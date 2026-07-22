@@ -43,6 +43,23 @@ COMPACTION_TRANSITIONS: dict[str, set[str]] = {
     MODULE_DROPPED: {MODULE_OFFERED, MODULE_ENGAGED},
 }
 
+# Which lifecycle statuses satisfy a ``requires`` target. Progress subsumes:
+# a predecessor that already advanced past the required stage still counts
+# ("offered" means "the hook has surfaced at least once", not "is exactly
+# offered right now"). ``dropped`` is its own branch and matches exactly,
+# except that it also counts as having been offered.
+REQUIRES_SATISFIED_BY: dict[str, set[str]] = {
+    MODULE_OFFERED: {
+        MODULE_OFFERED,
+        MODULE_ENGAGED,
+        MODULE_RESOLVED,
+        MODULE_DROPPED,
+    },
+    MODULE_ENGAGED: {MODULE_ENGAGED, MODULE_RESOLVED},
+    MODULE_RESOLVED: {MODULE_RESOLVED},
+    MODULE_DROPPED: {MODULE_DROPPED},
+}
+
 MAX_CANDIDATE_MODULES = 3
 MAX_MODULE_OFFERS = 3
 
@@ -100,6 +117,37 @@ def _present_entity_ids(story: Story, state: dict[str, Any]) -> set[str]:
     }
 
 
+def _requirement_met(
+    requirement: dict[str, Any],
+    memory: MemoryState,
+) -> bool:
+    required_module = str(requirement.get("module") or "")
+    required_status = str(requirement.get("status") or "")
+    satisfied_by = REQUIRES_SATISFIED_BY.get(required_status)
+    if satisfied_by is None:
+        return False
+    return memory.module_record(required_module).status in satisfied_by
+
+
+def _requirement_pending(
+    requirement: dict[str, Any],
+    memory: MemoryState,
+) -> bool:
+    """True when only an M2 status judgement stands between here and unlock.
+
+    ``offered`` targets are set by code and never pend; ``dropped`` needs a
+    fade, not bookkeeping. A predecessor that was never offered cannot be
+    advanced by compaction either.
+    """
+    target = str(requirement.get("status") or "")
+    record = memory.module_record(str(requirement.get("module") or ""))
+    if target == MODULE_ENGAGED:
+        return record.status == MODULE_OFFERED
+    if target == MODULE_RESOLVED:
+        return record.status in {MODULE_OFFERED, MODULE_ENGAGED}
+    return False
+
+
 def _requires_satisfied(
     spec: dict[str, Any],
     memory: MemoryState,
@@ -107,11 +155,52 @@ def _requires_satisfied(
     for requirement in spec.get("requires") or []:
         if not isinstance(requirement, dict):
             return False
-        required_module = str(requirement.get("module") or "")
-        required_status = str(requirement.get("status") or "")
-        if memory.module_record(required_module).status != required_status:
+        if not _requirement_met(requirement, memory):
             return False
     return True
+
+
+def pending_requires_blockers(
+    story: Story,
+    memory: MemoryState,
+    turn_no: int,
+) -> tuple[str, ...]:
+    """Modules blocked only by predecessor statuses M2 has not judged yet.
+
+    When non-empty, the compaction planner may run a small bookkeeping batch
+    instead of waiting for the full event window. ``involves`` presence is
+    deliberately ignored: a pending status blocks the module in every scene,
+    not just the current one.
+    """
+    upcoming_turn = turn_no + 1
+    blocked: list[str] = []
+    for module_id, spec in story.modules.items():
+        record = memory.module_record(module_id)
+        if record.status == MODULE_DROPPED:
+            continue
+        if record.status == MODULE_RESOLVED and spec.get("repeatable") is not True:
+            continue
+        policy = _policy(spec)
+        if upcoming_turn < int(spec.get("min_turn") or policy.min_turn):
+            continue
+        requirements = [
+            requirement
+            for requirement in spec.get("requires") or []
+            if isinstance(requirement, dict)
+        ]
+        unsatisfied = [
+            requirement
+            for requirement in requirements
+            if not _requirement_met(requirement, memory)
+        ]
+        if not unsatisfied:
+            continue
+        if all(
+            _requirement_pending(requirement, memory)
+            for requirement in unsatisfied
+        ):
+            blocked.append(module_id)
+    return tuple(blocked)
 
 
 def _is_eligible(

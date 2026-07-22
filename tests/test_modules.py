@@ -19,13 +19,21 @@ from server.engine.llm_deepseek import (
     build_narrative_messages,
     build_suggestion_messages,
 )
-from server.engine.memory import MemoryState, ModuleRecord
+from server.engine.memory import (
+    MemoryDigest,
+    MemoryEvent,
+    MemoryState,
+    ModuleRecord,
+    plan_memory_compaction,
+)
+from server.engine.memory_pipeline import maybe_compact_memory
 from server.engine.modules import (
     CATEGORY_POLICIES,
     MAX_MODULE_OFFERS,
     compaction_module_catalog,
     compaction_module_updates,
     offered_module_states,
+    pending_requires_blockers,
     select_candidate_modules,
 )
 from server.engine.narration import narrate_player_turn
@@ -216,6 +224,184 @@ class ModulePromptRoutingTest(unittest.TestCase):
             self.session.perception().to_dict(), ensure_ascii=False
         )
         self.assertNotIn(HOOK_MARK, perception_flat)
+
+
+def _chain_story(requires_status: str) -> Story:
+    return Story({
+        "content_profile": "narrative_first",
+        "id": "mini_chain",
+        "player_role": {"id": "player"},
+        "characters": {
+            "player": {"name": "旅人", "role": "player"},
+            "guide": {"name": "向导", "role": "npc"},
+        },
+        "scenes": {"room": {"name": "屋子"}},
+        "initial_state": {
+            "positions": {"player": "room", "guide": "room"},
+            "item_locations": {},
+        },
+        "modules": {
+            "gate": {
+                "category": "main",
+                "title": "前置",
+                "purpose": "p",
+                "hook": "h",
+                "trigger": "t",
+            },
+            "next_step": {
+                "category": "character",
+                "title": "后续",
+                "purpose": "p",
+                "hook": "h",
+                "trigger": "t",
+                "requires": [
+                    {"module": "gate", "status": requires_status}
+                ],
+            },
+        },
+    })
+
+
+def _chain_state() -> dict:
+    return {
+        "positions": {"player": "room", "guide": "room"},
+        "item_locations": {},
+    }
+
+
+def _gate_memory(status: str) -> MemoryState:
+    if status == "unseen":
+        return MemoryState()
+    return MemoryState(module_states=(
+        ModuleRecord(
+            module_id="gate",
+            status=status,
+            offers_count=1,
+            last_offered_turn=1,
+        ),
+    ))
+
+
+class RequiresSatisfactionTest(unittest.TestCase):
+    def _selected(self, requires_status: str, gate_status: str) -> list[str]:
+        story = _chain_story(requires_status)
+        candidates = select_candidate_modules(
+            story, _chain_state(), _gate_memory(gate_status), 10
+        )
+        return [candidate.module_id for candidate in candidates]
+
+    def test_offered_requirement_is_satisfied_by_later_progress(self) -> None:
+        self.assertIn("next_step", self._selected("offered", "resolved"))
+        self.assertIn("next_step", self._selected("offered", "dropped"))
+        self.assertIn("next_step", self._selected("offered", "offered"))
+
+    def test_engaged_requirement_is_satisfied_by_resolved(self) -> None:
+        self.assertIn("next_step", self._selected("engaged", "resolved"))
+
+    def test_resolved_requirement_is_not_satisfied_by_engaged(self) -> None:
+        self.assertNotIn("next_step", self._selected("resolved", "engaged"))
+
+    def test_unseen_predecessor_satisfies_nothing(self) -> None:
+        self.assertNotIn("next_step", self._selected("offered", "unseen"))
+
+
+class BookkeepingAccelerationTest(unittest.TestCase):
+    def _events(self, count: int) -> tuple[MemoryEvent, ...]:
+        return tuple(
+            MemoryEvent(
+                turn_no=index,
+                commit_id=f"c{index}",
+                player_text="问一句。",
+                narrative="发生了一点事。",
+                scene_before="room",
+                scene_after="room",
+            )
+            for index in range(1, count + 1)
+        )
+
+    def test_blockers_require_a_pending_m2_judgement(self) -> None:
+        story = _chain_story("resolved")
+        self.assertEqual(
+            pending_requires_blockers(story, _gate_memory("offered"), 10),
+            ("next_step",),
+        )
+        self.assertEqual(
+            pending_requires_blockers(story, _gate_memory("engaged"), 10),
+            ("next_step",),
+        )
+        # 已满足、从未抛出、或目标为 offered 的依赖都不构成记账需求。
+        self.assertEqual(
+            pending_requires_blockers(story, _gate_memory("resolved"), 10), ()
+        )
+        self.assertEqual(
+            pending_requires_blockers(story, _gate_memory("unseen"), 10), ()
+        )
+        self.assertEqual(
+            pending_requires_blockers(
+                _chain_story("offered"), _gate_memory("unseen"), 10
+            ),
+            (),
+        )
+
+    def test_min_turn_defers_bookkeeping_urgency(self) -> None:
+        story = _chain_story("resolved")
+        story.data["modules"]["next_step"]["min_turn"] = 20
+        self.assertEqual(
+            pending_requires_blockers(story, _gate_memory("offered"), 10), ()
+        )
+
+    def test_urgent_plan_bypasses_batch_size_but_not_window_or_cooldown(
+        self,
+    ) -> None:
+        memory = MemoryState(events=self._events(5))
+        self.assertIsNone(plan_memory_compaction(memory))
+        plan = plan_memory_compaction(memory, urgent=True)
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.trigger, "module_bookkeeping")
+        self.assertEqual([event.turn_no for event in plan.events], [1])
+
+        cooling = MemoryState(
+            events=self._events(5), last_compaction_attempt_turn=4
+        )
+        self.assertIsNone(plan_memory_compaction(cooling, urgent=True))
+
+        protected = MemoryState(events=self._events(4))
+        self.assertIsNone(plan_memory_compaction(protected, urgent=True))
+
+    def test_blocked_chain_accelerates_compaction_end_to_end(self) -> None:
+        story = _chain_story("resolved")
+        session = GameSession(story, log_dir=None)
+        for index in range(5):
+            session.commit_narrative(f"行动{index}。", f"发生了{index}。")
+        session.apply_module_states(
+            (ModuleRecord(
+                module_id="gate",
+                status="offered",
+                offers_count=1,
+                last_offered_turn=1,
+            ),),
+            reason="test",
+        )
+        provider = ScriptedProvider(memory_digests=[MemoryDigest(
+            compacted_through_turn=1,
+            rolling_summary="旧事已记。",
+            module_updates=(("gate", "resolved"),),
+        )])
+        outcome = maybe_compact_memory(
+            session, provider, TraceRecorder(None, session.session_id)
+        )
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.trigger, "module_bookkeeping")
+        self.assertEqual(
+            session.memory.module_record("gate").status, "resolved"
+        )
+        ids = [
+            candidate.module_id
+            for candidate in select_candidate_modules(
+                story, session.state, session.memory, session.turn_no
+            )
+        ]
+        self.assertIn("next_step", ids)
 
 
 class OpeningsTest(unittest.TestCase):

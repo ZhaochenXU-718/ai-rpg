@@ -29,6 +29,8 @@ PerceptionSnapshot + MemoryContext
 
 模块生命周期是软状态（`unseen/offered/engaged/resolved/dropped`），存于 `MemoryState` 并随 checkpoint 与分支恢复：提交成功的回合把候选记为 `offered`；连续 3 次被忽略自动 `dropped`；`engaged` 与 `resolved` 由 M2 压缩输出 `module_updates` 标注，代码校验转移合法性（`resolved` 终态，`dropped` 可复活为 `engaged`）。压缩器只看到已浮出水面的模块，未出现的模块不会泄入小结。
 
+`requires` 按进度包含判定（`offered` ⊂ `engaged` ⊂ `resolved`；`dropped` 独立分支，另计入"抛出过"）。当某模块被卡住、且唯一原因是前置模块"已抛出但 M2 尚未判定状态"时，压缩计划器允许绕过批量门槛提前运行一次小结（trigger 记为 `module_bookkeeping`）；最近事件保护窗与重试冷却不受影响，被卡模块清单随 trace 可查。
+
 ## 3. SuggestedAction
 
 行动提案只有标题、可编辑自然语言、侧重点与理由。它绑定感知 revision，但没有计划、能力、预期状态变化或执行权限。
@@ -44,7 +46,7 @@ PerceptionSnapshot + MemoryContext
 
 ## 5. 代码级检查
 
-人物移动检查人物与目标场景是否为作者实体、人物是否在当前感知范围、同批是否重复移动。关键物品检查物品可见性、可携带性、当前归属、接收者和共处位置。
+人物移动检查人物与目标场景是否为作者实体、人物是否在当前感知范围、同批是否重复移动。关键物品检查可转移性（物品可见，或其权威携带者本回合在场——贴身秘藏物品可以被携带者当面拿出）、可携带性、当前归属、接收者和共处位置。抽取账本同样包含在场携带者身上的隐藏物品及其归属，否则秘藏物品的转手无从提出；账本只进抽取器，不进玩家感知。
 
 任一事实冲突会拒绝整批候选。可重试冲突默认最多重写一次；失败不增加回合、revision 或 checkpoint。
 

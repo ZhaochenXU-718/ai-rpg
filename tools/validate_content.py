@@ -77,7 +77,7 @@ MODULE_CATEGORIES = {"main", "character", "pressure", "aftermath", "side"}
 REQUIRED_MODULE_FIELDS = {"category", "title", "purpose", "hook", "trigger"}
 OPTIONAL_MODULE_TEXT_FIELDS = ("escalation", "resolution", "fallback")
 MODULE_PRIORITIES = {"low", "normal", "high"}
-REQUIRES_STATUSES = {"engaged", "resolved", "dropped"}
+REQUIRES_STATUSES = {"offered", "engaged", "resolved", "dropped"}
 OPENING_FIELDS = {"title", "intro", "positions"}
 REQUIRED_SCENE_FIELDS = {
     "name",

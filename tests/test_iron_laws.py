@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from server.engine.content import Story
-from server.engine.iron_laws import validate_fact_extraction
+from server.engine.iron_laws import build_fact_ledger, validate_fact_extraction
 from server.engine.llm_protocol import (
     CharacterMoveFact,
     FactExtraction,
@@ -151,6 +151,127 @@ class PhysicalFactValidationTest(unittest.TestCase):
             validation.batch.state_changes,
             {"positions.player": "courtyard"},
         )
+
+
+def _hidden_item_story() -> Story:
+    return Story({
+        "content_profile": "narrative_first",
+        "id": "hidden_relic",
+        "player_role": {"id": "player"},
+        "characters": {
+            "player": {"name": "旅人", "role": "player"},
+            "keeper": {"name": "看守", "role": "npc"},
+            "far_scholar": {"name": "学者", "role": "npc"},
+        },
+        "scenes": {
+            "hall": {"name": "大厅"},
+            "annex": {"name": "别馆"},
+        },
+        "items": {
+            "sealed_letter": {
+                "name": "封存的信",
+                "description": "看守贴身收着的旧信。",
+                "portable": True,
+                "visible_when_carried": False,
+            },
+            "far_token": {
+                "name": "远处的信物",
+                "description": "学者随身带着的信物。",
+                "portable": True,
+                "visible_when_carried": False,
+            },
+        },
+        "initial_state": {
+            "positions": {
+                "player": "hall",
+                "keeper": "hall",
+                "far_scholar": "annex",
+            },
+            "item_locations": {
+                "sealed_letter": {"type": "carried_by", "id": "keeper"},
+                "far_token": {"type": "carried_by", "id": "far_scholar"},
+            },
+        },
+    })
+
+
+class HiddenItemTransferTest(unittest.TestCase):
+    """贴身秘藏物品的"先亮出再转交"必须可行，但防伪造边界不放松。"""
+
+    def setUp(self) -> None:
+        self.session = GameSession(_hidden_item_story(), log_dir=None)
+
+    def validate(self, narrative: str, *facts):
+        return validate_fact_extraction(
+            self.session.story,
+            self.session.state,
+            FactExtraction(
+                state_revision=self.session.state_revision,
+                facts=facts,
+            ),
+            player_text="测试行动",
+            narrative=narrative,
+            references=(),
+            perception=self.session.perception(),
+        )
+
+    def test_hidden_item_stays_out_of_player_perception(self) -> None:
+        visible = {
+            entity.entity_id
+            for entity in self.session.perception().visible_entities
+        }
+        self.assertNotIn("sealed_letter", visible)
+
+    def test_co_present_carrier_can_hand_over_hidden_item(self) -> None:
+        validation = self.validate(
+            "看守从怀里取出那封封存的信，郑重地递给你。",
+            ItemTransferFact(
+                item_id="sealed_letter",
+                from_placement=ItemPlacement(type="carried_by", id="keeper"),
+                to_placement=ItemPlacement(type="carried_by", id="player"),
+                evidence="取出那封封存的信，郑重地递给你",
+            ),
+        )
+        self.assertTrue(validation.accepted)
+        self.assertEqual(
+            validation.batch.state_changes,
+            {"item_locations.sealed_letter": {
+                "type": "carried_by",
+                "id": "player",
+            }},
+        )
+
+    def test_absent_carrier_still_blocks_hidden_item_transfer(self) -> None:
+        validation = self.validate(
+            "学者的信物凭空出现在你手中。",
+            ItemTransferFact(
+                item_id="far_token",
+                from_placement=ItemPlacement(type="carried_by", id="far_scholar"),
+                to_placement=ItemPlacement(type="carried_by", id="player"),
+                evidence="凭空出现在你手中",
+            ),
+        )
+        self.assertFalse(validation.accepted)
+        self.assertIn(
+            "physical.item_not_visible",
+            {violation.code for violation in validation.violations},
+        )
+
+    def test_ledger_lists_only_co_present_hidden_items(self) -> None:
+        ledger = build_fact_ledger(
+            self.session.story,
+            self.session.state,
+            self.session.perception(),
+        )
+        ledger_items = {entry["id"] for entry in ledger["items"]}
+        self.assertIn("sealed_letter", ledger_items)
+        self.assertNotIn("far_token", ledger_items)
+        placement = next(
+            entry["placement"]
+            for entry in ledger["items"]
+            if entry["id"] == "sealed_letter"
+        )
+        self.assertEqual(placement, {"type": "carried_by", "id": "keeper"})
 
 
 if __name__ == "__main__":

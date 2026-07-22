@@ -66,12 +66,14 @@ modules:
     tags: [neighborly]                       # 可选自由标签，引擎不解析
     requires:                                # 可选结构性依赖
       - module: other_module
-        status: resolved                     # engaged | resolved | dropped
+        status: resolved                     # offered | engaged | resolved | dropped
 ```
 
 类别是功能枚举（引擎按它区分编排策略），题材化分类用 `tags` 表达。模块**不允许** `effects`、`when`、`state_patch`、`conditions`——它没有任何状态权限。
 
 模块软状态 `unseen → offered → engaged → resolved / dropped` 存在叙事记忆中，随 checkpoint 和分支恢复：候选进入已提交回合记 `offered`；被忽略 3 次自动消退为 `dropped`；`engaged`/`resolved` 由 M2 小结标注，`resolved` 终态，`dropped` 可被晚接的钩子复活为 `engaged`。
+
+`requires` 的满足是**进度包含**而非精确匹配：`offered` 表示"钩子抛出过即可"（offered/engaged/resolved/dropped 都满足，零时延，由代码即时标记）；`engaged` 被 engaged/resolved 满足；`resolved` 与 `dropped` 精确匹配。选用原则：错序代价低的顺承用 `trigger` 语义或 `requires: offered`；只有"绝不能提前出现"的硬门槛才用 `engaged`/`resolved`——它们依赖 M2 记账，有批处理时延（引擎会在有模块被卡住时按需加速一次小结，但保护窗与冷却不变）。
 
 ## openings（可选）
 

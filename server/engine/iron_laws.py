@@ -54,6 +54,32 @@ def _violation(
     )
 
 
+def _co_present_carried_items(
+    story: Story,
+    state: dict[str, Any],
+    scene_id: str,
+) -> set[str]:
+    """Items whose authoritative carrier is physically in the scene.
+
+    A carrier can always produce what they carry, so custody may change even
+    for items hidden by ``visible_when_carried: false``. Anti-invention still
+    holds: custody must match the authoritative ledger and the carrier must
+    be co-present.
+    """
+    positions = state.get("positions") or {}
+    item_locations = state.get("item_locations") or {}
+    co_present = set()
+    for item_id in story.items:
+        placement = item_locations.get(item_id)
+        if (
+            isinstance(placement, dict)
+            and placement.get("type") == "carried_by"
+            and positions.get(placement.get("id")) == scene_id
+        ):
+            co_present.add(item_id)
+    return co_present
+
+
 def build_fact_ledger(
     story: Story,
     state: dict[str, Any],
@@ -71,6 +97,11 @@ def build_fact_ledger(
         for entity in (*perception.visible_entities, *perception.inventory)
         if entity.kind == EntityKind.ITEM
     }
+    # The ledger feeds only the extractor: hidden items with a co-present
+    # carrier must be listed, or their custody could never legally change.
+    transferable_item_ids = visible_item_ids | _co_present_carried_items(
+        story, state, perception.location_id
+    )
     positions = state.get("positions") or {}
     item_locations = state.get("item_locations") or {}
     return {
@@ -101,7 +132,7 @@ def build_fact_ledger(
                 "name": story.item_labels().get(item_id, item_id),
                 "placement": copy.deepcopy(item_locations.get(item_id)),
             }
-            for item_id in sorted(visible_item_ids)
+            for item_id in sorted(transferable_item_ids)
         ],
         "world_boundaries": list(
             (story.data.get("player_role") or {}).get("constraints") or []
@@ -181,6 +212,9 @@ def validate_fact_extraction(
         for entity in (*perception.visible_entities, *perception.inventory)
         if entity.kind == EntityKind.ITEM
     }
+    transferable_items = visible_items | _co_present_carried_items(
+        story, state, perception.location_id
+    )
     moved_actors: set[str] = set()
     transferred_items: set[str] = set()
 
@@ -251,8 +285,12 @@ def validate_fact_extraction(
             if fact.item_id not in story.items:
                 reject(fact, "physical.item_unknown", "物品转移引用了未知关键物品。")
                 continue
-            if fact.item_id not in visible_items:
-                reject(fact, "physical.item_not_visible", "关键物品不在本回合可见或持有范围内。")
+            if fact.item_id not in transferable_items:
+                reject(
+                    fact,
+                    "physical.item_not_visible",
+                    "关键物品不可见，且其当前携带者也不在场。",
+                )
                 continue
             if fact.item_id in transferred_items:
                 reject(fact, "physical.item_transferred_twice", "同一物品不能在一批事实中转移两次。")
