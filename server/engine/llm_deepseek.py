@@ -458,6 +458,11 @@ def coerce_memory_digest(
 
 class DeepSeekProvider(LLMProvider):
     name = "deepseek"
+    display_name = "DeepSeek"
+    narrative_prompt_version = NARRATIVE_PROMPT_VERSION
+    suggestion_prompt_version = SUGGESTION_PROMPT_VERSION
+    fact_extraction_prompt_version = FACT_EXTRACTION_PROMPT_VERSION
+    memory_compaction_prompt_version = MEMORY_COMPACTION_PROMPT_VERSION
 
     def __init__(
         self,
@@ -503,6 +508,28 @@ class DeepSeekProvider(LLMProvider):
             usage=dict(usage or {}),
         )
 
+    def _completion_kwargs(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        policy: DeepSeekCallPolicy,
+        json_mode: bool,
+    ) -> dict[str, Any]:
+        """Map one call policy onto provider-specific SDK arguments."""
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": policy.max_tokens,
+            "extra_body": {"thinking": {"type": policy.thinking}},
+        }
+        if policy.thinking == "disabled" and policy.temperature is not None:
+            kwargs["temperature"] = policy.temperature
+        if policy.thinking == "enabled" and policy.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = policy.reasoning_effort
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        return kwargs
+
     def _call(
         self,
         messages: list[dict[str, str]],
@@ -523,21 +550,14 @@ class DeepSeekProvider(LLMProvider):
                 from openai import OpenAI
             except ImportError as exc:
                 raise LLMProviderError(
-                    "DeepSeek provider 需要 openai SDK：pip install openai"
+                    f"{self.display_name} provider 需要 openai SDK：pip install openai"
                 ) from exc
             self._client = OpenAI(api_key=self._api_key, base_url=self.base_url)
-        kwargs: dict[str, Any] = {
-            "model": options["model"],
-            "messages": messages,
-            "max_tokens": options["max_tokens"],
-            "extra_body": {"thinking": {"type": policy.thinking}},
-        }
-        if policy.thinking == "disabled" and policy.temperature is not None:
-            kwargs["temperature"] = policy.temperature
-        if policy.thinking == "enabled" and policy.reasoning_effort is not None:
-            kwargs["reasoning_effort"] = policy.reasoning_effort
-        if effective_json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
+        kwargs = self._completion_kwargs(
+            messages,
+            policy=policy,
+            json_mode=effective_json_mode,
+        )
         response = self._client.chat.completions.create(**kwargs)
         usage = (
             response.usage.model_dump(mode="json")
@@ -709,7 +729,7 @@ class DeepSeekProvider(LLMProvider):
                     diagnostics, usage_total, "transport_error"
                 )
                 raise LLMProviderError(
-                    f"DeepSeek {error_label}调用失败：{exc}",
+                    f"{self.display_name} {error_label}调用失败：{exc}",
                     diagnostics=diagnostics,
                 ) from exc
 
@@ -762,7 +782,7 @@ class DeepSeekProvider(LLMProvider):
 
         self._finalize_diagnostics(diagnostics, usage_total, last_error)
         raise LLMProviderError(
-            f"DeepSeek {error_label}连续无法解析：{last_error}",
+            f"{self.display_name} {error_label}连续无法解析：{last_error}",
             diagnostics=diagnostics,
         )
 
@@ -787,7 +807,7 @@ class DeepSeekProvider(LLMProvider):
                     diagnostics, usage_total, "transport_error"
                 )
                 raise LLMProviderError(
-                    f"DeepSeek 旁白调用失败：{exc}",
+                    f"{self.display_name} 旁白调用失败：{exc}",
                     diagnostics=diagnostics,
                 ) from exc
             usage = dict(result.usage or {})
@@ -805,7 +825,7 @@ class DeepSeekProvider(LLMProvider):
                 return NarrativeResponse(
                     text=result.content.strip(),
                     model=self.model,
-                    prompt_version=NARRATIVE_PROMPT_VERSION,
+                    prompt_version=self.narrative_prompt_version,
                     latency_ms=round((time.monotonic() - started) * 1000, 2),
                     usage=usage_total,
                     diagnostics=self._finalize_diagnostics(
@@ -826,7 +846,7 @@ class DeepSeekProvider(LLMProvider):
 
         self._finalize_diagnostics(diagnostics, usage_total, last_error)
         raise LLMProviderError(
-            f"DeepSeek 旁白连续无法生成：{last_error}",
+            f"{self.display_name} 旁白连续无法生成：{last_error}",
             diagnostics=diagnostics,
         )
 
@@ -844,7 +864,7 @@ class DeepSeekProvider(LLMProvider):
             suggestions=suggestions,
             raw=content,
             model=self.model,
-            prompt_version=SUGGESTION_PROMPT_VERSION,
+            prompt_version=self.suggestion_prompt_version,
             latency_ms=round((time.monotonic() - started) * 1000, 2),
             usage=usage,
             diagnostics=diagnostics,
@@ -867,7 +887,7 @@ class DeepSeekProvider(LLMProvider):
             extraction=extraction,
             raw=content,
             model=self.model,
-            prompt_version=FACT_EXTRACTION_PROMPT_VERSION,
+            prompt_version=self.fact_extraction_prompt_version,
             latency_ms=round((time.monotonic() - started) * 1000, 2),
             usage=usage,
             diagnostics=diagnostics,
@@ -891,7 +911,7 @@ class DeepSeekProvider(LLMProvider):
             digest=digest,
             raw=content,
             model=self.model,
-            prompt_version=MEMORY_COMPACTION_PROMPT_VERSION,
+            prompt_version=self.memory_compaction_prompt_version,
             latency_ms=round((time.monotonic() - started) * 1000, 2),
             usage=usage,
             diagnostics=diagnostics,

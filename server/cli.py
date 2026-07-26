@@ -145,9 +145,9 @@ def main() -> int:
     parser.add_argument("--no-log", action="store_true", help="Do not write session logs.")
     parser.add_argument(
         "--llm",
-        choices=["mock", "deepseek"],
+        choices=["mock", "deepseek", "kimi"],
         default="mock",
-        help="叙事 provider；deepseek 需设置 DEEPSEEK_API_KEY。",
+        help="叙事 provider；deepseek 需设置 DEEPSEEK_API_KEY，kimi 需设置 KIMI_API_KEY。",
     )
     parser.add_argument(
         "--opening",

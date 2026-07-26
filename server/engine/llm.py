@@ -374,9 +374,14 @@ def create_provider(name: str, **kwargs: Any) -> LLMProvider:
         from .llm_deepseek import DeepSeekProvider
 
         return DeepSeekProvider(**kwargs)
+    if name == "kimi":
+        from .llm_kimi import KimiProvider
+
+        return KimiProvider(**kwargs)
     try:
         return PROVIDERS[name](**kwargs)
     except KeyError:
+        available = sorted(PROVIDERS) + ["deepseek", "kimi"]
         raise LLMProviderError(
-            f"unknown provider '{name}' (available: {sorted(PROVIDERS) + ['deepseek']})"
+            f"unknown provider '{name}' (available: {available})"
         ) from None

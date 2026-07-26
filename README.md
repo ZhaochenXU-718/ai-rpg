@@ -58,6 +58,10 @@ python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm mock
 export DEEPSEEK_API_KEY="你的密钥"
 python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm deepseek
 
+# 使用 Kimi（Moonshot AI；也可用 MOONSHOT_API_KEY，模型可用 KIMI_MODEL 覆盖，默认 kimi-k3）
+export KIMI_API_KEY="你的密钥"
+python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm kimi
+
 # 校验与测试
 python tools/validate_content.py tests/fixtures/open_neighbor_scene.yaml
 python -m unittest discover -s tests -v
