@@ -34,8 +34,8 @@ from .llm_protocol import (
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
-NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v9"
-SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v4"
+NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v10"
+SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v5"
 FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v2"
 MEMORY_COMPACTION_PROMPT_VERSION = "deepseek-memory-compaction-v2"
 MAX_REPAIR_ROUNDS = 1
@@ -77,7 +77,7 @@ NARRATIVE_CALL_POLICY = DeepSeekCallPolicy(
     capability="narration",
     thinking="disabled",
     temperature=0.7,
-    max_tokens=400,
+    max_tokens=900,
     json_mode=False,
 )
 SUGGESTION_CALL_POLICY = DeepSeekCallPolicy(
@@ -117,24 +117,25 @@ RENDER_SYSTEM_PROMPT = """\
 6. 人物换场或关键物品转手时写清楚实际发生的变化，不跳过当前在场和物品归属。
 7. 若事实清单含冲突反馈，修正冲突部分，不在正文解释校验过程。
 8. 服从给定视角与文风；玩家视角使用第二人称“你”。
-9. 输出 2-5 句连贯散文，不提协议、阶段、数值或系统；只输出叙事文本。
-10. 【软叙事记忆】可能有遗漏或概括误差；当前事实清单与当前感知优先。开放事项、提议和人物小结不能被擅自写成已经完成的事实，记忆中的远处人物也不算当前在场。
+9. 根据剧情密度输出一段 150-500 字的连贯散文；对话回合让在场人物充分表达。不提协议、阶段、数值或系统；只输出叙事文本。
+10. 【软叙事记忆】中的未压缩事件是本故事刚刚发生的原文，你的输出必须像同一篇小说的下一段那样承接最近一回合的收尾。小结与笔记可能有概括误差；当前事实清单与当前感知优先。开放事项、提议和人物小结不能被擅自写成已经完成的事实，记忆中的远处人物也不算当前在场。
 """
 
 
 SUGGESTION_SYSTEM_PROMPT = """\
-你是互动叙事游戏的行动提案器。根据当前感知快照生成不同侧重点的可编辑行动卡，并输出 json。
+你是互动叙事游戏的行动提案器。这是一个连续的故事：【软叙事记忆】中最近一回合的结尾就是当前时刻，每张行动卡都是玩家在这个时刻的下一步。先读懂最近发生了什么，再生成不同侧重点的可编辑行动卡，并输出 json。
 
 提案要求：
-1. 只能引用感知快照中可见的人物、物品、环境和出口；不得利用隐藏事实。
-2. 卡片只写玩家准备说什么或做什么，不保证尚未提交的结果。
-3. 不得创建人物或替玩家宣告尚未发生的结果。
-4. action_text 使用第一人称自然语言，可由玩家直接采用或任意改写。
-5. 卡片之间应在目标、方式或侧重点上有实质差异；没有合适卡片时宁可少给。
-6. 不得输出 plan、steps、capability、intent、状态 patch 或验证结果。
-7. 只输出 {"suggestions": [...]}。
-8. 可用【软叙事记忆】延续开放事项、避免重复已经解决的内容，但当前感知优先；记忆不能让远处人物、旧物品或旧出口变成当前可行动对象。
-9. 【故事方向】是脱敏后的作者蓝图，只用于让提案贴近长线目标与情绪基调；不得引用其中未出现在感知快照里的人物、地点或物品，也不得把方向中的事件写成已经发生。
+1. 每张卡都必须像同一篇小说的下一句那样自然承接最近一回合的收尾；侧重差异体现在玩家选择哪个方向回应当下，而不是脱离当前情节另起炉灶。
+2. 只能引用感知快照中可见的人物、物品、环境和出口；不得利用隐藏事实。
+3. 卡片只写玩家准备说什么或做什么，不保证尚未提交的结果。
+4. 不得创建人物或替玩家宣告尚未发生的结果。
+5. action_text 使用第一人称自然语言，可由玩家直接采用或任意改写。
+6. 卡片之间应在目标、方式或侧重点上有实质差异；没有合适卡片时宁可少给。
+7. 不得输出 plan、steps、capability、intent、状态 patch 或验证结果。
+8. 只输出 {"suggestions": [...]}。
+9. 【软叙事记忆】的小结部分用于延续开放事项、避免重复已解决内容，但当前感知优先；记忆不能让远处人物、旧物品或旧出口变成当前可行动对象。
+10. 【故事方向】是脱敏后的作者蓝图，只用于让提案贴近长线目标与情绪基调；不得引用其中未出现在感知快照里的人物、地点或物品，也不得把方向中的事件写成已经发生。
 
 单张卡格式：
 {

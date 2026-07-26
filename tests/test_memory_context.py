@@ -186,10 +186,46 @@ class MemoryContextTest(unittest.TestCase):
         self.assertLessEqual(context.text_chars, MEMORY_CONTEXT_CHAR_BUDGET)
         self.assertEqual(context.text_chars, actual_chars)
         self.assertTrue(context.truncated)
+        # 超预算时整条丢弃最旧事件，保留下来的事件必须是完整原文。
         self.assertEqual(
             [item.turn_no for item in context.uncompacted_events],
-            list(range(13, 21)),
+            [19, 20],
         )
+        for item in context.uncompacted_events:
+            self.assertEqual(len(item.narrative), len(f"已提交叙事 {item.turn_no}") + 1000)
+
+    def test_recent_events_keep_their_endings_verbatim(self) -> None:
+        """最近散文的结尾是"现场状态"（提问、未决动作），一个字都不能丢。"""
+        question = "威克利夫教授问：你举手之前，有没有碰过你的魔杖？"
+        long_player_text = "我举手向教授描述石板朝向的变化，并请她解释这是否属于已知的符文特性。"
+        memory = MemoryState(events=(
+            event(1, size=1000),
+            event(2, size=1000),
+            event(3, size=1000),
+            MemoryEvent(
+                turn_no=4,
+                commit_id="commit_4",
+                player_text=long_player_text,
+                narrative="散" * 600 + question,
+                scene_before="workshop",
+                scene_after="workshop",
+            ),
+        ))
+        context = build_memory_context(
+            memory,
+            subject_id="player",
+            turn_no=4,
+            state_revision=4,
+        )
+        latest = context.uncompacted_events[-1]
+        self.assertTrue(latest.narrative.endswith(question))
+        self.assertEqual(latest.player_text, long_player_text)
+        # 预算不足时从最旧一侧整条丢弃：事件 1 被丢，2-4 完整保留。
+        self.assertEqual(
+            [item.turn_no for item in context.uncompacted_events],
+            [2, 3, 4],
+        )
+        self.assertTrue(context.truncated)
 
     def test_narration_and_ideas_receive_the_same_context(self) -> None:
         session = self.session_with_digest()

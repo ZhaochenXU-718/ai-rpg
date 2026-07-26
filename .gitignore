@@ -3,3 +3,4 @@ __pycache__/
 data/sessions/
 data/traces/
 .venv/
+.DS_Store

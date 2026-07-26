@@ -14,10 +14,12 @@ COMPACTION_BATCH_SIZE = 4
 COMPACTION_CHAR_BUDGET = 2400
 MAX_COMPACTION_EVENTS = 6
 COMPACTION_RETRY_TURNS = 3
-MEMORY_CONTEXT_CHAR_BUDGET = 4800
 MEMORY_CONTEXT_EVENT_LIMIT = 8
-MEMORY_CONTEXT_PLAYER_TEXT_LIMIT = 80
-MEMORY_CONTEXT_NARRATIVE_LIMIT = 280
+MEMORY_CONTEXT_EVENT_CHAR_BUDGET = 6000
+MEMORY_CONTEXT_DIGEST_CHAR_BUDGET = 2400
+MEMORY_CONTEXT_CHAR_BUDGET = (
+    MEMORY_CONTEXT_EVENT_CHAR_BUDGET + MEMORY_CONTEXT_DIGEST_CHAR_BUDGET
+)
 MEMORY_CONTEXT_SUMMARY_LIMIT = 900
 MEMORY_CONTEXT_NOTE_LIMIT = 220
 
@@ -225,36 +227,60 @@ def build_memory_context(
     turn_no: int,
     state_revision: int,
 ) -> MemoryContext:
-    """Build one bounded prompt view without mutating or trusting the digest."""
-    budget = _ContextBudget(MEMORY_CONTEXT_CHAR_BUDGET)
+    """Build one bounded prompt view without mutating or trusting the digest.
+
+    Uncompacted events enter verbatim: they are the direct prior text the
+    narrator and the suggester continue from, and cropping them severs the
+    story mid-scene (the live beat lives at the END of the latest prose).
+    Degradation therefore drops whole OLD events — the rolling summary
+    already covers them — never trims the newest ones.
+    """
+    events_truncated = False
     pending = tuple(
         event
         for event in memory.events
         if event.turn_no > memory.compacted_through_turn
     )
     if len(pending) > MEMORY_CONTEXT_EVENT_LIMIT:
-        budget.truncated = True
+        events_truncated = True
         pending = pending[-MEMORY_CONTEXT_EVENT_LIMIT:]
 
-    context_events: list[MemoryContextEvent] = []
-    for event in pending:
-        player_text = budget.take(
-            event.player_text,
-            limit=MEMORY_CONTEXT_PLAYER_TEXT_LIMIT,
-        )
-        narrative = budget.take(
-            event.narrative,
-            limit=MEMORY_CONTEXT_NARRATIVE_LIMIT,
-        )
-        if player_text and narrative:
-            context_events.append(MemoryContextEvent(
-                turn_no=event.turn_no,
-                player_text=player_text,
-                narrative=narrative,
-                scene_before=event.scene_before,
-                scene_after=event.scene_after,
-            ))
+    def _clean(value: Any) -> str:
+        return " ".join(str(value or "").split())
 
+    context_events: list[MemoryContextEvent] = []
+    events_used = 0
+    for event in reversed(pending):
+        player_text = _clean(event.player_text)
+        narrative = _clean(event.narrative)
+        if not player_text or not narrative:
+            continue
+        cost = len(player_text) + len(narrative)
+        if context_events and (
+            events_used + cost > MEMORY_CONTEXT_EVENT_CHAR_BUDGET
+        ):
+            events_truncated = True
+            break
+        if not context_events and cost > MEMORY_CONTEXT_EVENT_CHAR_BUDGET:
+            # A single oversized newest event: keep its tail — the end of
+            # the prose is the live conversational state.
+            events_truncated = True
+            allowed = max(
+                1, MEMORY_CONTEXT_EVENT_CHAR_BUDGET - len(player_text)
+            )
+            narrative = narrative[-allowed:]
+            cost = len(player_text) + len(narrative)
+        context_events.append(MemoryContextEvent(
+            turn_no=event.turn_no,
+            player_text=player_text,
+            narrative=narrative,
+            scene_before=event.scene_before,
+            scene_after=event.scene_after,
+        ))
+        events_used += cost
+    context_events.reverse()
+
+    budget = _ContextBudget(MEMORY_CONTEXT_DIGEST_CHAR_BUDGET)
     rolling_summary = budget.take(
         memory.rolling_summary,
         limit=MEMORY_CONTEXT_SUMMARY_LIMIT,
@@ -301,8 +327,8 @@ def build_memory_context(
         scene_notes=scene_notes,
         recently_resolved=recently_resolved,
         uncompacted_events=tuple(context_events),
-        text_chars=budget.used,
-        truncated=budget.truncated,
+        text_chars=events_used + budget.used,
+        truncated=events_truncated or budget.truncated,
     )
 
 
