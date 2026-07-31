@@ -58,6 +58,8 @@ class NarrationFactsTest(unittest.TestCase):
         self.assertIn("周师傅", flat)
         self.assertNotIn("林姐", flat)
         self.assertNotIn("neighbor_lin", flat)
+        self.assertNotIn("当前目标", facts)
+        self.assertNotIn(self.story.current_goal(self.session.state), flat)
         self.assertIn("必须在散文中明确写出", facts["事实表达要求"])
         self.assertNotIn("secret", flat)
 

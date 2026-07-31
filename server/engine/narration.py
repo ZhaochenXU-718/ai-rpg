@@ -58,7 +58,6 @@ def build_narrative_facts(
             "名称": perception.location_name,
             "描述": str(scene.get("entry_text") or "").strip(),
         },
-        "当前目标": perception.current_goal,
         "在场可见实体": list(visible.values()),
         "已知事实": list(perception.known_facts),
         "世界边界": [str(rule) for rule in boundaries],

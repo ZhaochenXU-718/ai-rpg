@@ -34,8 +34,8 @@ from .llm_protocol import (
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
-NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v10"
-SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v5"
+NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v11"
+SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v6"
 FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v2"
 MEMORY_COMPACTION_PROMPT_VERSION = "deepseek-memory-compaction-v2"
 MAX_REPAIR_ROUNDS = 1
@@ -217,6 +217,7 @@ def build_narrative_messages(request: NarrativeRequest) -> list[dict[str, str]]:
 
 def build_suggestion_messages(request: SuggestionRequest) -> list[dict[str, str]]:
     perception = request.perception.to_dict()
+    perception.pop("current_goal", None)
     if request.memory_context is not None:
         perception.pop("recent_events", None)
     payload = {

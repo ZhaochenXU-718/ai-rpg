@@ -261,6 +261,16 @@ class MemoryContextTest(unittest.TestCase):
             suggestion_payload["软叙事记忆"],
         )
         self.assertNotIn("recent_events", suggestion_payload["感知快照"])
+        self.assertNotIn("current_goal", suggestion_payload["感知快照"])
+        scene_goal = session.story.current_goal(session.state)
+        self.assertNotIn(
+            scene_goal,
+            json.dumps(narrative_payload, ensure_ascii=False),
+        )
+        self.assertNotIn(
+            scene_goal,
+            json.dumps(suggestion_payload, ensure_ascii=False),
+        )
         self.assertIn("当前事实清单与当前感知优先", narrative_messages[0]["content"])
         self.assertIn("当前感知优先", suggestion_messages[0]["content"])
 

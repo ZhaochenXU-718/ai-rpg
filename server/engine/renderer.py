@@ -35,7 +35,7 @@ def render_intro(story: Story, state: dict[str, Any]) -> str:
 
 def render_status(story: Story, state: dict[str, Any]) -> str:
     header = f"场景：{story.location_name(state, story.current_location(state))}"
-    lines = [header, f"当前目标：{story.current_goal(state)}"]
+    lines = [header]
     inventory = story.inventory(state)
     if inventory:
         lines.append(

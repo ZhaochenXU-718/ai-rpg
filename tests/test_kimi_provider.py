@@ -64,7 +64,7 @@ class KimiNarrativeTest(unittest.TestCase):
             narrative_request()
         )
         self.assertIn("放下扳手", response.text)
-        self.assertEqual(response.prompt_version, "kimi-narrate-v10")
+        self.assertEqual(response.prompt_version, "kimi-narrate-v11")
         self.assertEqual(response.model, "kimi-k3")
         self.assertIn("可以补充不改变连续性", transport.calls[0][0][0]["content"])
 

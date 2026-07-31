@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from server.engine.content import Story
+from server.engine.renderer import render_status
 from server.engine.session import GameSession
 from tools.validate_content import validate_content
 
@@ -36,6 +37,12 @@ class OpenSceneFixtureTest(unittest.TestCase):
         )
         self.assertEqual(self.session.state["item_locations"]["rain_canvas"], before)
         self.assertEqual(result.references, ())
+
+    def test_status_does_not_expose_authored_scene_goal(self) -> None:
+        status = render_status(self.story, self.session.state)
+        self.assertEqual(status, "场景：修理铺")
+        self.assertNotIn("当前目标", status)
+        self.assertNotIn(self.story.current_goal(self.session.state), status)
 
 if __name__ == "__main__":
     unittest.main()
