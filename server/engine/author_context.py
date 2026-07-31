@@ -57,6 +57,7 @@ def build_author_context(
     in_scene_character_ids: tuple[str, ...],
     *,
     candidate_modules: tuple[CandidateModule, ...] = (),
+    include_opening_narration: bool = True,
 ) -> NarrativeAuthorContext | None:
     """Return the narrator-only author context, or None when nothing is authored."""
     cards = []
@@ -69,7 +70,9 @@ def build_author_context(
     context = NarrativeAuthorContext(
         story_brief=story.ai_plot,
         emotional_contract=story.emotional_contract,
-        opening_narration=story.opening_narration,
+        opening_narration=(
+            story.opening_narration if include_opening_narration else ""
+        ),
         active_guidelines=story.narrative_guidelines,
         critical_reminders=story.critical_reminders,
         in_scene_character_cards=tuple(cards),

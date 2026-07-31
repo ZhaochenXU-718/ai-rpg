@@ -109,6 +109,7 @@ def narrate_player_turn(
             session.memory,
             session.turn_no,
         ),
+        include_opening_narration=session.turn_no == 0,
     )
     try:
         response = provider.render_narrative(NarrativeRequest(

@@ -26,6 +26,7 @@ from server.engine.llm import (
     ScriptedProvider,
 )
 from server.engine.llm_deepseek import (
+    LANGUAGE_STYLE_SYSTEM_PROMPT,
     RENDER_SYSTEM_PROMPT,
     build_fact_extraction_messages,
     build_narrative_messages,
@@ -41,6 +42,7 @@ from tools.validate_content import validate_content
 
 ROOT = Path(__file__).resolve().parent.parent
 STORY_PATH = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
+HOGWARTS_PATH = ROOT / "content" / "hogwarts_before_hogwarts.yaml"
 
 SECRET_MARK = "亡妻"  # keeper_zhou.secret 与 ai_plot.hidden_truth
 PRESSURE_MARK = "寒暄上耗太久"  # keeper_zhou.pressure
@@ -136,7 +138,43 @@ class AuthorContextRoutingTest(unittest.TestCase):
     def test_narrator_system_prompt_guards_disclosure_not_knowledge(self) -> None:
         self.assertIn("作者私有上下文", RENDER_SYSTEM_PROMPT)
         self.assertIn("不得直接说破", RENDER_SYSTEM_PROMPT)
+        self.assertNotIn("视觉验证码", RENDER_SYSTEM_PROMPT)
+        self.assertNotIn("比喻没有配额", RENDER_SYSTEM_PROMPT)
+        self.assertNotIn("不是 A，而是 B", RENDER_SYSTEM_PROMPT)
         self.assertNotIn("未披露私密信息", RENDER_SYSTEM_PROMPT)
+
+    def test_language_style_prompt_is_defined_separately(self) -> None:
+        self.assertIn(
+            "人物特征应当指导模型理解角色",
+            LANGUAGE_STYLE_SYSTEM_PROMPT,
+        )
+        self.assertIn("低频可选素材", LANGUAGE_STYLE_SYSTEM_PROMPT)
+        self.assertIn(
+            "优先通过判断、选择、措辞及对关系的回应",
+            LANGUAGE_STYLE_SYSTEM_PROMPT,
+        )
+        self.assertIn("情绪不要重复表达", LANGUAGE_STYLE_SYSTEM_PROMPT)
+        self.assertIn("比喻没有配额", LANGUAGE_STYLE_SYSTEM_PROMPT)
+        self.assertIn("不是 A，而是 B", LANGUAGE_STYLE_SYSTEM_PROMPT)
+        self.assertIn("不要在段尾总结主题", LANGUAGE_STYLE_SYSTEM_PROMPT)
+        self.assertIn(
+            "允许省略、误解、打断和言不由衷",
+            LANGUAGE_STYLE_SYSTEM_PROMPT,
+        )
+        self.assertIn(
+            "不复述、不引用、不改写、不概括对方刚说过的内容",
+            LANGUAGE_STYLE_SYSTEM_PROMPT,
+        )
+        self.assertIn("回声式句子", LANGUAGE_STYLE_SYSTEM_PROMPT)
+        self.assertIn(
+            "dialogue_examples 只示范句长、语气、停顿和表达习惯",
+            LANGUAGE_STYLE_SYSTEM_PROMPT,
+        )
+        self.assertIn("不得直接引用或近义复述样例", LANGUAGE_STYLE_SYSTEM_PROMPT)
+
+        rendered = build_narrative_messages(self._narrative_request())[0]["content"]
+        self.assertIn(RENDER_SYSTEM_PROMPT.strip(), rendered)
+        self.assertIn(LANGUAGE_STYLE_SYSTEM_PROMPT.strip(), rendered)
 
     def test_suggestion_prompt_gets_desensitized_direction_only(self) -> None:
         request = self._suggestion_request()
@@ -183,6 +221,22 @@ class AuthorContextRoutingTest(unittest.TestCase):
         self.assertIn(OPENING_MARK, intro)
         request = self._narrative_request()
         self.assertIn(OPENING_MARK, request.author_context.opening_narration)
+
+    def test_opening_narration_leaves_prompt_after_first_turn(self) -> None:
+        self.session.commit_narrative(
+            "我先说明来意。",
+            "周师傅听完了你的说明。",
+        )
+        provider = CapturingNarrator()
+
+        narrate_player_turn(self.session, provider, "我等周师傅回答。")
+
+        request = provider.requests[0]
+        self.assertEqual(request.author_context.opening_narration, "")
+        self.assertNotIn(
+            OPENING_MARK,
+            build_narrative_messages(request)[1]["content"],
+        )
 
     def test_story_without_authored_layers_builds_no_context(self) -> None:
         bare = Story({
@@ -254,6 +308,42 @@ class AuthorLayerValidationTest(unittest.TestCase):
         report = validate_content(data)
         self.assertTrue(
             any("dialogue_examples" in error for error in report.errors)
+        )
+
+
+class HogwartsPromptHygieneTest(unittest.TestCase):
+    def test_authored_inputs_do_not_reintroduce_known_templates(self) -> None:
+        source = HOGWARTS_PATH.read_text(encoding="utf-8")
+
+        self.assertNotIn("而不是", source)
+        self.assertNotRegex(source, r"不是[^\n]{0,60}(?:而是|才是|怕的是)")
+        self.assertNotIn("羽毛笔", source)
+        self.assertNotIn("笔记本", source)
+
+        story = Story.load(HOGWARTS_PATH)
+        dialogue_examples = "\n".join(
+            str(example)
+            for character in story.characters.values()
+            for example in (character.get("dialogue_examples") or [])
+        )
+        for echo_lead_in in ("你刚才说", "你的意思是", "所以你认为"):
+            self.assertNotIn(echo_lead_in, dialogue_examples)
+
+    def test_first_turn_prompt_avoids_known_style_pollution(self) -> None:
+        story = Story.load(HOGWARTS_PATH)
+        session = GameSession(story, log_dir=None)
+        provider = CapturingNarrator()
+
+        narrate_player_turn(session, provider, "我观察石板和威克利夫教授的反应。")
+
+        user_payload = build_narrative_messages(provider.requests[0])[1]["content"]
+        for repeated_prop in ("羽毛笔", "笔记本"):
+            self.assertNotIn(repeated_prop, user_payload)
+        for vague_habit in ("仿佛", "似乎", "某种", "缓缓", "缓慢", "轻轻", "下意识"):
+            self.assertNotIn(vague_habit, user_payload)
+        self.assertNotRegex(
+            user_payload,
+            r"不是[\s\S]{0,80}(?:而是|——是|，是)",
         )
 
 
