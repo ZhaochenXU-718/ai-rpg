@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from .iron_laws import build_fact_ledger, validate_fact_extraction
-from .llm import FactExtractionRequest, LLMProvider
+from .llm import FactExtractionRequest, LLMProvider, NarrativeStream
 from .llm_protocol import PhysicalFactViolation
-from .memory_pipeline import maybe_compact_memory
+from .memory_pipeline import BackgroundMemoryCompactor, maybe_compact_memory
 from .modules import offered_module_states, select_candidate_modules
 from .narration import narrate_player_turn
 from .resolver import TurnResult
@@ -32,8 +32,15 @@ def resolve_player_turn(
     player_text: str,
     *,
     max_regenerations: int = MAX_REGENERATIONS,
+    stream: NarrativeStream | None = None,
+    compactor: BackgroundMemoryCompactor | None = None,
 ) -> TurnResult:
-    """Resolve one player input without charging failed prose candidates."""
+    """Resolve one player input without charging failed prose candidates.
+
+    ``stream`` mirrors narrative prose to the caller as it is generated;
+    ``compactor`` moves the post-commit memory compaction call off the
+    gameplay thread instead of running it synchronously here.
+    """
     perception = session.perception()
     candidate_module_ids = tuple(
         candidate.module_id
@@ -51,6 +58,7 @@ def resolve_player_turn(
             player_text,
             recorder,
             violations=feedback,
+            stream=stream,
         )
         request = FactExtractionRequest(
             perception=perception,
@@ -113,7 +121,10 @@ def resolve_player_turn(
                     ),
                     reason="candidates_offered",
                 )
-            compaction = maybe_compact_memory(session, provider, recorder)
+            if compactor is not None:
+                compaction = compactor.kick(session)
+            else:
+                compaction = maybe_compact_memory(session, provider, recorder)
             recorder.record("turn_committed", {
                 "turn": result.turn_no,
                 "state_revision": session.state_revision,
@@ -136,6 +147,8 @@ def resolve_player_turn(
         if any(not violation.retryable for violation in feedback):
             break
         if attempt + 1 < attempts:
+            if stream is not None:
+                stream.restart("physical_conflict")
             recorder.record("narrative_regeneration", {
                 "turn": session.turn_no + 1,
                 "next_attempt": attempt + 2,

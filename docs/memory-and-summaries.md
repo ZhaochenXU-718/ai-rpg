@@ -69,6 +69,22 @@ checkpoint 保存完整 `MemoryState`。撤回会恢复祖先记忆，从祖先�
 
 失败时仍保留全部原始事件，只记录失败原因和尝试回合。接下来的 2 个回合跳过压缩，第 3 个新回合才允许再次尝试，避免持续调用失败服务。失败原因可在 `memory` 和 trace 中观察。
 
+### 后台执行
+
+压缩是软步骤却曾同步阻塞提示符（每次 ~5s）。现在 CLI 把它交给
+`BackgroundMemoryCompactor`：
+
+- 提交后 `kick` 在玩法线程完成计划与不可变请求快照，只把慢的 LLM 调用交给
+  单个 worker 线程；`session` 从不被工作线程触碰，玩法语义保持单线程。
+- 结果由主线程在安全点（CLI 每轮循环开头）调用 `poll` 应用；`kick` 时若上一
+  调用仍在途则跳过本批，等同一次被跳过的同步尝试，批次留待后续回合。
+- 撤回/恢复总是切换分支；跨分支返回的结果按 stale 丢弃（trace 事件
+  `memory_compaction_stale`），不记失败冷却。真正的调用失败仍按原有冷却
+  语义记录。
+- 后台路径的 trace 载荷带 `mode: background` 与 `applied_turn`；
+  `turn_committed` 中的 compaction 结果为 `background_scheduled`（已调度、
+  结果在后续回合可见）。同步入口 `maybe_compact_memory` 保留，语义不变。
+
 ## M3：生成上下文
 
 M3 在每次生成前从当前 `MemoryState` 派生 `MemoryContext`，不额外持久化一份副本。旁白和 `ideas` 使用同一结构：

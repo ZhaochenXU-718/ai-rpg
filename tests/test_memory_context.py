@@ -73,7 +73,7 @@ class CapturingGenerationProvider(LLMProvider):
         self.narrative_request = None
         self.suggestion_request = None
 
-    def render_narrative(self, request):
+    def render_narrative(self, request, *, stream=None):
         self.narrative_request = request
         return NarrativeResponse(
             text="你接着先前的话题，把遮雨布的用途又说得具体了一些。",

@@ -161,12 +161,35 @@ class LLMProviderError(Exception):
         self.diagnostics = dict(diagnostics or {})
 
 
+class NarrativeStream:
+    """Optional live listener for narrative prose as it is generated.
+
+    ``delta`` receives one more fragment of the current prose candidate;
+    ``restart`` announces that everything streamed so far is withdrawn and a
+    replacement candidate follows. Callers signal restart whenever the
+    previous candidate may have been shown; the listener decides whether
+    anything actually needs to be displayed. Both hooks are no-ops here, so
+    providers can call them unconditionally on an optional stream.
+    """
+
+    def delta(self, text: str) -> None:
+        pass
+
+    def restart(self, reason: str) -> None:
+        pass
+
+
 class LLMProvider:
     """Narrative-first provider surface; every capability is optional."""
 
     name = "abstract"
 
-    def render_narrative(self, request: NarrativeRequest) -> NarrativeResponse | None:
+    def render_narrative(
+        self,
+        request: NarrativeRequest,
+        *,
+        stream: NarrativeStream | None = None,
+    ) -> NarrativeResponse | None:
         return None
 
     def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:
@@ -201,12 +224,19 @@ class ScriptedProvider(LLMProvider):
         self._fact_extractions = list(fact_extractions or [])
         self._memory_digests = list(memory_digests or [])
 
-    def render_narrative(self, request: NarrativeRequest) -> NarrativeResponse | None:
+    def render_narrative(
+        self,
+        request: NarrativeRequest,
+        *,
+        stream: NarrativeStream | None = None,
+    ) -> NarrativeResponse | None:
         if not self._narratives:
             return None
         text = self._narratives.pop(0)
         if text is None:
             return None
+        if stream is not None and text:
+            stream.delta(text)
         return NarrativeResponse(text=text, model="scripted")
 
     def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:

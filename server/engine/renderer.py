@@ -123,11 +123,13 @@ def render_memory(story: Story, memory: MemoryState, *, raw: bool = False) -> st
     return "\n".join(lines)
 
 
-def render_turn(story: Story, result: TurnResult, state: dict[str, Any]) -> str:
-    lines = [
-        result.narrative.strip()
-        or "你把想法付诸尝试；当前回合没有产生需要单独记录的物理变化。"
-    ]
+def render_turn_tail(story: Story, result: TurnResult, state: dict[str, Any]) -> str:
+    """Everything a committed turn shows after the prose itself.
+
+    Split out so a client that already streamed the prose live can print
+    only the receipts and the scene entry without repeating the narrative.
+    """
+    lines: list[str] = []
     collapsed: dict[str, tuple[Any, Any]] = {}
     order: list[str] = []
     for path, previous, new in result.changes:
@@ -145,4 +147,15 @@ def render_turn(story: Story, result: TurnResult, state: dict[str, Any]) -> str:
         lines.append("（物理事实提交：" + "，".join(receipts) + "）")
     if result.scene_after != result.scene_before:
         lines.extend(["", render_scene_entry(story, result.scene_after, state)])
+    return "\n".join(lines)
+
+
+def render_turn(story: Story, result: TurnResult, state: dict[str, Any]) -> str:
+    lines = [
+        result.narrative.strip()
+        or "你把想法付诸尝试；当前回合没有产生需要单独记录的物理变化。"
+    ]
+    tail = render_turn_tail(story, result, state)
+    if tail:
+        lines.append(tail)
     return "\n".join(lines)

@@ -13,13 +13,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server.engine.content import Story
 from server.engine.fact_pipeline import resolve_player_turn
-from server.engine.llm import LLMProviderError, create_provider
+from server.engine.llm import LLMProviderError, NarrativeStream, create_provider
+from server.engine.memory_pipeline import BackgroundMemoryCompactor
 from server.engine.renderer import (
     render_characters,
     render_intro,
     render_memory,
     render_status,
     render_turn,
+    render_turn_tail,
 )
 from server.engine.session import GameSession, SessionError
 from server.engine.suggestions import (
@@ -115,24 +117,65 @@ def print_suggestions(suggestion_set) -> None:
         print(f"    侧重点：{suggestion.rationale}")
 
 
+class ConsoleNarrativeStream(NarrativeStream):
+    """Print prose fragments live; announce when a shown candidate is withdrawn."""
+
+    RESTART_NOTICES = {
+        "physical_conflict": "（上面这段与物理事实核对冲突，已撤回，正在重写……）",
+        "narration_fallback": "（上面这段未能完成，已撤回。）",
+    }
+    DEFAULT_NOTICE = "（上面这段已撤回，正在重写……）"
+
+    def __init__(self) -> None:
+        self.text = ""
+
+    def delta(self, text: str) -> None:
+        print(text, end="", flush=True)
+        self.text += text
+
+    def restart(self, reason: str) -> None:
+        if not self.text:
+            return
+        print("\n" + self.RESTART_NOTICES.get(reason, self.DEFAULT_NOTICE))
+        self.text = ""
+
+    def close(self) -> None:
+        """Terminate the streamed line so following output starts cleanly."""
+        if self.text and not self.text.endswith("\n"):
+            print(flush=True)
+
+
 def execute_narrative_turn(
     session: GameSession,
     provider,
     recorder: TraceRecorder,
     player_text: str,
+    compactor: BackgroundMemoryCompactor | None = None,
 ) -> None:
     recorder.record("turn_input", {
         "turn": session.turn_no + 1,
         "state_revision": session.state_revision,
         "player_text": player_text,
     })
-    result = resolve_player_turn(
-        session,
-        provider,
-        recorder,
-        player_text,
-    )
-    print(render_turn(session.story, result, session.state))
+    stream = ConsoleNarrativeStream()
+    try:
+        result = resolve_player_turn(
+            session,
+            provider,
+            recorder,
+            player_text,
+            stream=stream,
+            compactor=compactor,
+        )
+    finally:
+        stream.close()
+    if stream.text.strip() and stream.text.strip() == result.narrative.strip():
+        tail = render_turn_tail(session.story, result, session.state)
+        if tail:
+            print(tail)
+    else:
+        # provider 未流式输出（或流式内容与提交散文不一致）时整段打印保底。
+        print(render_turn(session.story, result, session.state))
 
 
 def main() -> int:
@@ -180,6 +223,7 @@ def main() -> int:
         None if args.no_log else "data/traces",
         session.session_id,
     )
+    compactor = BackgroundMemoryCompactor(provider, recorder)
     suggestion_set = None
 
     print(render_intro(story, session.state))
@@ -194,6 +238,8 @@ def main() -> int:
 
     last_scene = None
     while True:
+        # 上一回合的后台记忆小结若已完成，在这个安全点应用到会话。
+        compactor.poll(session)
         if (
             suggestion_set is not None
             and suggestion_set.perception_revision != session.state_revision
@@ -280,7 +326,8 @@ def main() -> int:
                     "state_revision": session.state_revision,
                 })
                 execute_narrative_turn(
-                    session, provider, recorder, action_text
+                    session, provider, recorder, action_text,
+                    compactor=compactor,
                 )
             except (LLMProviderError, SessionError) as exc:
                 print(f"（提案无法执行：{exc}。）")
@@ -293,7 +340,9 @@ def main() -> int:
             print(json.dumps(session.state, ensure_ascii=False, indent=2, default=str))
             continue
         try:
-            execute_narrative_turn(session, provider, recorder, line)
+            execute_narrative_turn(
+                session, provider, recorder, line, compactor=compactor
+            )
         except (LLMProviderError, SessionError) as exc:
             print(f"（本回合未提交：{exc}。）")
 

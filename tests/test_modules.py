@@ -54,7 +54,7 @@ class CapturingNarrator(ScriptedProvider):
         super().__init__([])
         self.requests = []
 
-    def render_narrative(self, request):
+    def render_narrative(self, request, *, stream=None):
         self.requests.append(request)
         return None
 

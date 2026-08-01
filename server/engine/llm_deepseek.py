@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Literal, Union
@@ -18,6 +19,7 @@ from .llm import (
     MemoryCompactionResponse,
     NarrativeRequest,
     NarrativeResponse,
+    NarrativeStream,
     SuggestionRequest,
     SuggestionResponse,
 )
@@ -507,6 +509,8 @@ class DeepSeekProvider(LLMProvider):
         self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
         self._transport = transport
         self._client = None
+        # 后台记忆压缩与前台生成可能并发使用同一 provider；client 初始化需要互斥。
+        self._client_lock = threading.Lock()
         if transport is None and not self._api_key:
             raise LLMProviderError(
                 "缺少 DeepSeek API key：请设置环境变量 DEEPSEEK_API_KEY"
@@ -555,6 +559,7 @@ class DeepSeekProvider(LLMProvider):
         *,
         policy: DeepSeekCallPolicy,
         json_mode: bool | None = None,
+        stream: NarrativeStream | None = None,
     ) -> DeepSeekCallResult:
         effective_json_mode = policy.json_mode if json_mode is None else json_mode
         options: dict[str, Any] = {
@@ -563,20 +568,33 @@ class DeepSeekProvider(LLMProvider):
             "json_mode": effective_json_mode,
         }
         if self._transport is not None:
-            return self._normalize_transport_result(self._transport(messages, options))
+            result = self._normalize_transport_result(
+                self._transport(messages, options)
+            )
+            # 测试与脚本 transport 不分块；整段作为一个 delta 保持监听语义一致。
+            if stream is not None and result.content:
+                stream.delta(result.content)
+            return result
         if self._client is None:
-            try:
-                from openai import OpenAI
-            except ImportError as exc:
-                raise LLMProviderError(
-                    f"{self.display_name} provider 需要 openai SDK：pip install openai"
-                ) from exc
-            self._client = OpenAI(api_key=self._api_key, base_url=self.base_url)
+            with self._client_lock:
+                if self._client is None:
+                    try:
+                        from openai import OpenAI
+                    except ImportError as exc:
+                        raise LLMProviderError(
+                            f"{self.display_name} provider 需要 openai SDK："
+                            "pip install openai"
+                        ) from exc
+                    self._client = OpenAI(
+                        api_key=self._api_key, base_url=self.base_url
+                    )
         kwargs = self._completion_kwargs(
             messages,
             policy=policy,
             json_mode=effective_json_mode,
         )
+        if stream is not None:
+            return self._streaming_completion(kwargs, stream)
         response = self._client.chat.completions.create(**kwargs)
         usage = (
             response.usage.model_dump(mode="json")
@@ -595,6 +613,46 @@ class DeepSeekProvider(LLMProvider):
                 getattr(choice.message, "reasoning_content", "") or ""
             ),
             finish_reason=str(choice.finish_reason or "") or None,
+            usage=usage,
+        )
+
+    def _streaming_completion(
+        self,
+        kwargs: dict[str, Any],
+        stream: NarrativeStream,
+    ) -> DeepSeekCallResult:
+        """Forward content deltas live, then return the assembled result."""
+        response = self._client.chat.completions.create(
+            **kwargs,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        finish_reason: str | None = None
+        usage: dict[str, Any] = {}
+        for chunk in response:
+            chunk_usage = getattr(chunk, "usage", None)
+            if chunk_usage is not None:
+                usage = chunk_usage.model_dump(mode="json")
+            if not getattr(chunk, "choices", None):
+                continue
+            choice = chunk.choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is not None:
+                piece = str(getattr(delta, "content", "") or "")
+                if piece:
+                    content_parts.append(piece)
+                    stream.delta(piece)
+                reasoning = str(getattr(delta, "reasoning_content", "") or "")
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+            if choice.finish_reason:
+                finish_reason = str(choice.finish_reason)
+        return DeepSeekCallResult(
+            content="".join(content_parts),
+            reasoning_content="".join(reasoning_parts),
+            finish_reason=finish_reason,
             usage=usage,
         )
 
@@ -805,7 +863,12 @@ class DeepSeekProvider(LLMProvider):
             diagnostics=diagnostics,
         )
 
-    def render_narrative(self, request: NarrativeRequest) -> NarrativeResponse | None:
+    def render_narrative(
+        self,
+        request: NarrativeRequest,
+        *,
+        stream: NarrativeStream | None = None,
+    ) -> NarrativeResponse | None:
         started = time.monotonic()
         messages = build_narrative_messages(request)
         policy = self.call_policies["narration"]
@@ -814,7 +877,7 @@ class DeepSeekProvider(LLMProvider):
         last_error = "empty_content"
         for attempt in range(1, MAX_REPAIR_ROUNDS + 2):
             try:
-                result = self._call(messages, policy=policy)
+                result = self._call(messages, policy=policy, stream=stream)
             except Exception as exc:
                 self._record_transport_error(
                     diagnostics,
@@ -855,6 +918,9 @@ class DeepSeekProvider(LLMProvider):
                 last_error = self._empty_reason(result, False)
                 self._mark_failed_attempt(diagnostics, entry, last_error)
             if attempt <= MAX_REPAIR_ROUNDS:
+                if stream is not None and result.content.strip():
+                    # 已流出的候选被撤回，重写候选随后到达。
+                    stream.restart(last_error)
                 messages.append({
                     "role": "user",
                     "content": (

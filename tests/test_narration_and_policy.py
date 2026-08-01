@@ -27,7 +27,7 @@ class NarrativeProvider(ScriptedProvider):
         self.text = text
         self.requests = []
 
-    def render_narrative(self, request):
+    def render_narrative(self, request, *, stream=None):
         self.requests.append(request)
         if self.text is None:
             return None

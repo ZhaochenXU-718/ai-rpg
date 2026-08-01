@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .author_context import build_author_context
-from .llm import LLMProvider, NarrativeRequest
+from .llm import LLMProvider, NarrativeRequest, NarrativeStream
 from .llm_protocol import EntityKind, PhysicalFactViolation
 from .modules import select_candidate_modules
 from .session import GameSession
@@ -86,6 +86,7 @@ def narrate_player_turn(
     player_text: str,
     recorder: TraceRecorder | None = None,
     violations: tuple[PhysicalFactViolation, ...] = (),
+    stream: NarrativeStream | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     references = match_references(session, player_text)
     memory_context = session.memory_context()
@@ -119,7 +120,7 @@ def narrate_player_turn(
             memory_context=memory_context,
             style=_style(session),
             author_context=author_context,
-        ))
+        ), stream=stream)
     except Exception as exc:
         if recorder is not None:
             recorder.record("narration_error", {
@@ -143,6 +144,10 @@ def narrate_player_turn(
                 "reason": "provider_unavailable_or_empty",
                 "memory_context": memory_payload,
             })
+        if stream is not None:
+            # provider 中途可能已流出残句；先撤回，再整段送出降级文本。
+            stream.restart("narration_fallback")
+            stream.delta(narrative)
         return narrative, references
 
     narrative = response.text.strip()

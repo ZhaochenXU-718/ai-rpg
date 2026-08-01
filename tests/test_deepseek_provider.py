@@ -13,6 +13,7 @@ from server.engine.llm import (
     LLMProviderError,
     MemoryCompactionRequest,
     NarrativeRequest,
+    NarrativeStream,
     SuggestionRequest,
     create_provider,
 )
@@ -56,6 +57,17 @@ class FakeTransport:
             finish_reason="stop",
             usage={"total_tokens": 50},
         )
+
+
+class RecordingStream(NarrativeStream):
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str]] = []
+
+    def delta(self, text: str) -> None:
+        self.events.append(("delta", text))
+
+    def restart(self, reason: str) -> None:
+        self.events.append(("restart", reason))
 
 
 def perception() -> PerceptionSnapshot:
@@ -137,6 +149,109 @@ class NarrativeProviderTest(unittest.TestCase):
         self.assertEqual(
             response.diagnostics["retry_reasons"], ["length_exhausted"]
         )
+
+
+class NarrativeStreamingTest(unittest.TestCase):
+    def request(self) -> NarrativeRequest:
+        return NarrativeRequest(
+            kind="turn",
+            perception=perception(),
+            facts={"玩家输入": "我先问问周师傅。"},
+        )
+
+    def test_transport_content_reaches_stream_as_single_delta(self) -> None:
+        transport = FakeTransport(["周师傅放下扳手，等你把用途说完。"])
+        stream = RecordingStream()
+        response = DeepSeekProvider(transport=transport).render_narrative(
+            self.request(), stream=stream
+        )
+        self.assertEqual(
+            stream.events,
+            [("delta", "周师傅放下扳手，等你把用途说完。")],
+        )
+        self.assertEqual(response.text, "周师傅放下扳手，等你把用途说完。")
+
+    def test_withdrawn_length_candidate_signals_restart(self) -> None:
+        transport = FakeTransport([
+            DeepSeekCallResult(
+                content="没有写完的叙事",
+                finish_reason="length",
+                usage={"total_tokens": 30},
+            ),
+            "第二次生成成功。",
+        ])
+        stream = RecordingStream()
+        response = DeepSeekProvider(transport=transport).render_narrative(
+            self.request(), stream=stream
+        )
+        self.assertEqual(stream.events, [
+            ("delta", "没有写完的叙事"),
+            ("restart", "length_exhausted"),
+            ("delta", "第二次生成成功。"),
+        ])
+        self.assertEqual(response.text, "第二次生成成功。")
+
+    def test_empty_candidate_retries_without_restart_signal(self) -> None:
+        transport = FakeTransport(["", "第二次生成成功。"])
+        stream = RecordingStream()
+        DeepSeekProvider(transport=transport).render_narrative(
+            self.request(), stream=stream
+        )
+        self.assertEqual(stream.events, [("delta", "第二次生成成功。")])
+
+    def test_sdk_streaming_path_forwards_chunks_and_assembles_result(self) -> None:
+        def chunk(content=None, reasoning=None, finish=None, usage=None):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=content,
+                        reasoning_content=reasoning,
+                    ),
+                    finish_reason=finish,
+                )],
+                usage=usage,
+            )
+
+        usage_report = SimpleNamespace(
+            model_dump=lambda mode: {"total_tokens": 42}
+        )
+        chunks = [
+            chunk(content="周师傅"),
+            chunk(reasoning="内部推理不进入流"),
+            chunk(content="放下扳手。", finish="stop"),
+            SimpleNamespace(choices=[], usage=usage_report),
+        ]
+        captured: dict = {}
+
+        def create(**kwargs):
+            captured.update(kwargs)
+            return iter(chunks)
+
+        provider = DeepSeekProvider(api_key="test-key")
+        provider._client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
+        stream = RecordingStream()
+        response = provider.render_narrative(self.request(), stream=stream)
+
+        self.assertTrue(captured["stream"])
+        self.assertEqual(captured["stream_options"], {"include_usage": True})
+        self.assertEqual(stream.events, [
+            ("delta", "周师傅"),
+            ("delta", "放下扳手。"),
+        ])
+        self.assertEqual(response.text, "周师傅放下扳手。")
+        self.assertEqual(response.usage["total_tokens"], 42)
+        self.assertEqual(
+            response.diagnostics["attempts"][0]["finish_reason"], "stop"
+        )
+
+    def test_non_streaming_call_stays_on_blocking_path(self) -> None:
+        transport = FakeTransport(["周师傅放下扳手。"])
+        response = DeepSeekProvider(transport=transport).render_narrative(
+            self.request()
+        )
+        self.assertEqual(response.text, "周师傅放下扳手。")
 
 
 class SuggestionProviderTest(unittest.TestCase):

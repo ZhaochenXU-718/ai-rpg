@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from server.engine.memory import (
     MemoryState,
     plan_memory_compaction,
 )
+from server.engine.memory_pipeline import BackgroundMemoryCompactor
 from server.engine.renderer import render_memory
 from server.engine.session import GameSession
 from server.engine.trace import TraceRecorder
@@ -78,6 +80,25 @@ class CapturingCompactionProvider(ScriptedProvider):
     def compact_memory(self, request):
         self.compaction_request = request
         self._memory_digests.append(digest(request.events[-1].turn_no))
+        return super().compact_memory(request)
+
+
+class BlockingCompactionProvider(ScriptedProvider):
+    """Holds the background compaction call until released by the test."""
+
+    def __init__(self, turns: int, digests: list[MemoryDigest]) -> None:
+        super().__init__(
+            narratives=[f"叙事 {index}" for index in range(1, turns + 1)],
+            fact_extractions=[() for _ in range(turns)],
+            memory_digests=digests,
+        )
+        self.release = threading.Event()
+        self.compaction_calls = 0
+
+    def compact_memory(self, request):
+        self.compaction_calls += 1
+        if not self.release.wait(timeout=5):
+            raise AssertionError("blocking compaction was never released")
         return super().compact_memory(request)
 
 
@@ -315,6 +336,107 @@ class MemoryCompactionPipelineTest(unittest.TestCase):
         failed_rendered = render_memory(self.story, failed)
         self.assertIn("上次小结失败", failed_rendered)
         self.assertIn("原始事件仍完整保留", failed_rendered)
+
+
+class BackgroundCompactionTest(unittest.TestCase):
+    """kick 只调度、poll/flush 在主线程应用；session 从不被工作线程触碰。"""
+
+    def setUp(self) -> None:
+        self.story = Story.load(STORY_PATH)
+
+    def play_turns(
+        self,
+        session: GameSession,
+        provider: ScriptedProvider,
+        recorder: TraceRecorder,
+        compactor: BackgroundMemoryCompactor,
+        count: int,
+    ) -> None:
+        for index in range(1, count + 1):
+            resolve_player_turn(
+                session,
+                provider,
+                recorder,
+                f"行动 {index}",
+                compactor=compactor,
+            )
+
+    def test_kick_runs_off_thread_and_flush_applies_digest(self) -> None:
+        session = GameSession(self.story, log_dir=None)
+        provider = ScriptedProvider(
+            narratives=[f"叙事 {index}" for index in range(1, 9)],
+            fact_extractions=[() for _ in range(8)],
+            memory_digests=[digest(4)],
+        )
+        recorder = TraceRecorder(None, session.session_id)
+        compactor = BackgroundMemoryCompactor(provider, recorder)
+        self.play_turns(session, provider, recorder, compactor, 8)
+
+        outcome = compactor.flush(session, timeout=5)
+        self.assertIsNotNone(outcome)
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "background")
+        self.assertEqual(outcome.through_turn, 4)
+        self.assertEqual(session.memory.compacted_through_turn, 4)
+        self.assertEqual(session.memory.rolling_summary, "前四回合的小结")
+        checkpoint_memory = session.get_checkpoint(
+            session.current_checkpoint_id
+        ).memory
+        self.assertEqual(checkpoint_memory, session.memory)
+
+    def test_in_flight_call_skips_new_kicks_until_released(self) -> None:
+        session = GameSession(self.story, log_dir=None)
+        provider = BlockingCompactionProvider(12, [digest(4)])
+        recorder = TraceRecorder(None, session.session_id)
+        compactor = BackgroundMemoryCompactor(provider, recorder)
+
+        self.play_turns(session, provider, recorder, compactor, 12)
+        self.assertEqual(provider.compaction_calls, 1)
+        self.assertTrue(compactor.busy)
+        self.assertEqual(session.memory.compacted_through_turn, 0)
+
+        provider.release.set()
+        outcome = compactor.flush(session, timeout=5)
+        self.assertTrue(outcome.success)
+        self.assertEqual(session.memory.compacted_through_turn, 4)
+        self.assertEqual(session.memory.rolling_summary, "前四回合的小结")
+        self.assertEqual(provider.compaction_calls, 1)
+
+    def test_result_arriving_after_undo_is_discarded_without_cooldown(self) -> None:
+        session = GameSession(self.story, log_dir=None)
+        provider = BlockingCompactionProvider(8, [digest(4)])
+        recorder = TraceRecorder(None, session.session_id)
+        compactor = BackgroundMemoryCompactor(provider, recorder)
+
+        self.play_turns(session, provider, recorder, compactor, 8)
+        self.assertTrue(compactor.busy)
+        session.undo()
+        provider.release.set()
+
+        outcome = compactor.flush(session, timeout=5)
+        self.assertEqual(outcome.mode, "background_stale")
+        self.assertEqual(outcome.error, "stale_branch")
+        self.assertEqual(session.memory.compacted_through_turn, 0)
+        self.assertEqual(session.memory.rolling_summary, "")
+        self.assertEqual(session.memory.last_compaction_attempt_turn, 0)
+        self.assertEqual(session.memory.last_compaction_error, "")
+
+    def test_background_failure_keeps_events_and_sets_cooldown(self) -> None:
+        session = GameSession(self.story, log_dir=None)
+        provider = CountingFailingProvider(8)
+        recorder = TraceRecorder(None, session.session_id)
+        compactor = BackgroundMemoryCompactor(provider, recorder)
+
+        self.play_turns(session, provider, recorder, compactor, 8)
+        outcome = compactor.flush(session, timeout=5)
+        self.assertIsNotNone(outcome)
+        self.assertFalse(outcome.success)
+        self.assertIn("小结服务暂时不可用", outcome.error)
+        self.assertEqual(len(session.memory.events), 8)
+        self.assertEqual(session.memory.compacted_through_turn, 0)
+        self.assertEqual(session.memory.last_compaction_attempt_turn, 8)
+        self.assertIn("小结服务暂时不可用", session.memory.last_compaction_error)
+        self.assertEqual(provider.compaction_calls, 1)
 
 
 if __name__ == "__main__":

@@ -60,7 +60,7 @@ class CapturingNarrator(ScriptedProvider):
         super().__init__([])
         self.requests = []
 
-    def render_narrative(self, request):
+    def render_narrative(self, request, *, stream=None):
         self.requests.append(request)
         return NarrativeResponse(
             text="周师傅擦了擦手，等你把话说完。",
@@ -140,7 +140,7 @@ class AuthorContextRoutingTest(unittest.TestCase):
         self.assertIn("不得直接说破", RENDER_SYSTEM_PROMPT)
         self.assertNotIn("视觉验证码", RENDER_SYSTEM_PROMPT)
         self.assertNotIn("比喻没有配额", RENDER_SYSTEM_PROMPT)
-        self.assertNotIn("不是 A，而是 B", RENDER_SYSTEM_PROMPT)
+        self.assertNotIn("不是...而是...", RENDER_SYSTEM_PROMPT)
         self.assertNotIn("未披露私密信息", RENDER_SYSTEM_PROMPT)
 
     def test_language_style_prompt_is_defined_separately(self) -> None:
@@ -155,7 +155,7 @@ class AuthorContextRoutingTest(unittest.TestCase):
         )
         self.assertIn("情绪不要重复表达", LANGUAGE_STYLE_SYSTEM_PROMPT)
         self.assertIn("比喻没有配额", LANGUAGE_STYLE_SYSTEM_PROMPT)
-        self.assertIn("不是 A，而是 B", LANGUAGE_STYLE_SYSTEM_PROMPT)
+        self.assertIn("不是...而是...", LANGUAGE_STYLE_SYSTEM_PROMPT)
         self.assertIn("不要在段尾总结主题", LANGUAGE_STYLE_SYSTEM_PROMPT)
         self.assertIn(
             "允许省略、误解、打断和言不由衷",

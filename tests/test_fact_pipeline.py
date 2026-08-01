@@ -8,7 +8,7 @@ from pathlib import Path
 
 from server.engine.content import Story
 from server.engine.fact_pipeline import TurnResolutionError, resolve_player_turn
-from server.engine.llm import LLMProviderError, ScriptedProvider
+from server.engine.llm import LLMProviderError, NarrativeStream, ScriptedProvider
 from server.engine.llm_protocol import (
     CharacterMoveFact,
     FactExtraction,
@@ -21,6 +21,17 @@ from server.engine.trace import TraceRecorder
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
+
+
+class RecordingStream(NarrativeStream):
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str]] = []
+
+    def delta(self, text: str) -> None:
+        self.events.append(("delta", text))
+
+    def restart(self, reason: str) -> None:
+        self.events.append(("restart", reason))
 
 
 class FactPipelineTest(unittest.TestCase):
@@ -105,6 +116,37 @@ class FactPipelineTest(unittest.TestCase):
         self.assertEqual(self.session.turn_no, 1)
         self.assertEqual(self.session.state_revision, 1)
         self.assertEqual(len(self.session.checkpoint_history()), 2)
+
+    def test_stream_receives_restart_between_conflicting_candidates(self) -> None:
+        provider = ScriptedProvider(
+            narratives=[
+                "你一步走进不存在的地下密室。",
+                "你在修理铺门口停下，没有贸然离开。",
+            ],
+            fact_extractions=[
+                (CharacterMoveFact(
+                    actor_id="player",
+                    destination_id="secret_vault",
+                    evidence="你一步走进不存在的地下密室",
+                ),),
+                (),
+            ],
+        )
+        stream = RecordingStream()
+        result = resolve_player_turn(
+            self.session,
+            provider,
+            self.recorder,
+            "我找找有没有通往地下的门。",
+            max_regenerations=1,
+            stream=stream,
+        )
+        self.assertEqual(stream.events, [
+            ("delta", "你一步走进不存在的地下密室。"),
+            ("restart", "physical_conflict"),
+            ("delta", "你在修理铺门口停下，没有贸然离开。"),
+        ])
+        self.assertIn("没有贸然离开", result.narrative)
 
     def test_valid_player_move_is_extracted_and_committed(self) -> None:
         narrative = "你从修理铺门口走进相邻的公共院子。"
