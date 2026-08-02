@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "airpg-web-mock",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": [
+        "server/web.py",
+        "tests/fixtures/open_neighbor_scene.yaml",
+        "--llm",
+        "mock",
+        "--no-log",
+        "--port",
+        "8642"
+      ],
+      "port": 8642
+    }
+  ]
+}

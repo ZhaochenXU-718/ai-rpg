@@ -62,12 +62,17 @@ python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm deepseek
 export KIMI_API_KEY="你的密钥"
 python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm kimi
 
+# Web 客户端（同一引擎，浏览器访问 http://127.0.0.1:8642）
+python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi
+
 # 校验与测试
 python tools/validate_content.py tests/fixtures/open_neighbor_scene.yaml
 python -m unittest discover -s tests -v
 ```
 
 CLI 命令：`ideas`、`idea <编号>`、`who`、`state`、`memory`、`memory raw`、`undo`、`timeline`、`help`、`quit`。
+
+Web 客户端（`server/web.py` + `web/index.html`，零额外依赖）：旁白按 SSE 流式逐块显示；「灵感」按钮弹出行动提案卡，点击卡片直接作为行动执行，支持刷新重新生成；刷新页面后从已提交事件恢复完整对局记录。一个服务进程承载一个会话，与 CLI 相同；`undo`/`memory` 等调试入口暂未搬入 Web，需要时仍用 CLI。
 
 ## 文档
 

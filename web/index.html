@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIRPG</title>
+<style>
+  :root {
+    --bg: #f6f4ee;
+    --panel: #fffdf8;
+    --ink: #2b2721;
+    --muted: #8a8378;
+    --line: #e3ddd0;
+    --accent: #7a5c3d;
+    --error: #a4432f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+    line-height: 1.9;
+    font-size: 16px;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line);
+  }
+  .head-inner {
+    max-width: 44rem; margin: 0 auto; padding: 0.6rem 1rem;
+    display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+  }
+  .title { font-weight: 700; letter-spacing: 0.05em; }
+  .status {
+    font-family: system-ui, sans-serif; font-size: 0.78rem;
+    color: var(--muted); display: flex; gap: 0.9rem; flex-wrap: wrap;
+  }
+  main {
+    max-width: 44rem; margin: 0 auto;
+    padding: 1.2rem 1rem 9.5rem;
+  }
+  .block { white-space: pre-wrap; overflow-wrap: break-word; }
+  .block + .block { margin-top: 1.1rem; }
+  .intro { color: #48423a; }
+  .player {
+    font-family: system-ui, sans-serif; font-size: 0.92rem;
+    color: var(--accent);
+    border-left: 3px solid var(--accent);
+    padding: 0.15rem 0 0.15rem 0.8rem;
+  }
+  .player::before { content: "你 · "; color: var(--muted); }
+  .narrative.streaming::after {
+    content: "▍"; color: var(--accent);
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .withdrawn { opacity: 0.4; }
+  .notice {
+    font-family: system-ui, sans-serif; font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .notice.error { color: var(--error); }
+  .tail {
+    font-family: system-ui, sans-serif; font-size: 0.82rem;
+    color: var(--muted);
+  }
+  footer {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    backdrop-filter: blur(6px);
+    border-top: 1px solid var(--line);
+  }
+  .input-inner {
+    max-width: 44rem; margin: 0 auto; padding: 0.7rem 1rem 0.9rem;
+    display: flex; gap: 0.6rem; align-items: flex-end;
+  }
+  textarea {
+    flex: 1; resize: none;
+    font: inherit; font-size: 0.95rem; line-height: 1.6;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 0.55rem 0.8rem; outline: none;
+  }
+  textarea:focus { border-color: var(--accent); }
+  button {
+    font-family: system-ui, sans-serif; font-size: 0.9rem;
+    border: 1px solid var(--accent); border-radius: 10px;
+    background: var(--accent); color: #fff;
+    padding: 0.5rem 1rem; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  /* ideas overlay */
+  #overlay {
+    position: fixed; inset: 0; z-index: 10;
+    background: rgba(43, 39, 33, 0.35);
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  #overlay[hidden] { display: none; }
+  #sheet {
+    background: var(--panel);
+    width: min(44rem, 100%);
+    max-height: 72vh; overflow-y: auto;
+    border-radius: 14px 14px 0 0;
+    border: 1px solid var(--line); border-bottom: none;
+    padding: 0.4rem 1rem 1rem;
+  }
+  .sheet-head {
+    position: sticky; top: 0; background: var(--panel);
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: system-ui, sans-serif; font-size: 0.85rem;
+    color: var(--muted);
+    padding: 0.6rem 0; border-bottom: 1px solid var(--line);
+  }
+  .sheet-head .sheet-actions { display: flex; gap: 0.5rem; }
+  .sheet-head button { padding: 0.3rem 0.8rem; font-size: 0.82rem; }
+  .card {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 0.7rem 0.9rem; margin-top: 0.7rem; cursor: pointer;
+    background: #fff;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card .card-title {
+    font-family: system-ui, sans-serif; font-weight: 600; font-size: 0.92rem;
+    display: flex; align-items: center; gap: 0.5rem;
+  }
+  .badge {
+    font-size: 0.7rem; font-weight: 500; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 99px;
+    padding: 0 0.5rem;
+  }
+  .card .card-action { margin-top: 0.3rem; font-size: 0.92rem; }
+  .card .card-why {
+    font-family: system-ui, sans-serif; font-size: 0.78rem;
+    color: var(--muted); margin-top: 0.3rem;
+  }
+  .sheet-note {
+    font-family: system-ui, sans-serif; font-size: 0.85rem;
+    color: var(--muted); padding: 1rem 0;
+  }
+  .sheet-note.error { color: var(--error); }
+</style>
+</head>
+<body>
+<header>
+  <div class="head-inner">
+    <span class="title" id="storyTitle">AIRPG</span>
+    <span class="status">
+      <span id="sceneName"></span>
+      <span id="inventory"></span>
+      <span id="turnNo"></span>
+    </span>
+  </div>
+</header>
+
+<main id="transcript"></main>
+
+<footer>
+  <div class="input-inner">
+    <textarea id="input" rows="2"
+      placeholder="输入你的行动……（Enter 发送，Shift+Enter 换行）"></textarea>
+    <button id="ideasBtn" class="ghost" title="生成行动提案">灵感</button>
+    <button id="sendBtn">发送</button>
+  </div>
+</footer>
+
+<div id="overlay" hidden>
+  <div id="sheet">
+    <div class="sheet-head">
+      <span>行动提案 · 点击直接执行，可完全忽略</span>
+      <span class="sheet-actions">
+        <button id="refreshBtn" class="ghost">刷新</button>
+        <button id="closeBtn" class="ghost">关闭</button>
+      </span>
+    </div>
+    <div id="ideasList"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const transcript = $("transcript");
+const input = $("input");
+const sendBtn = $("sendBtn");
+const ideasBtn = $("ideasBtn");
+const overlay = $("overlay");
+const ideasList = $("ideasList");
+
+const NOTICES = {
+  physical_conflict: "（上面这段与物理事实核对冲突，已撤回，正在重写……）",
+  narration_fallback: "（上面这段未能完成，已撤回。）",
+};
+const DEFAULT_NOTICE = "（上面这段已撤回，正在重写……）";
+let busy = false;
+
+function scrollBottom() {
+  window.scrollTo({ top: document.body.scrollHeight });
+}
+
+function block(cls, text) {
+  const el = document.createElement("div");
+  el.className = "block " + cls;
+  el.textContent = text;
+  transcript.appendChild(el);
+  scrollBottom();
+  return el;
+}
+
+function setStatus(s) {
+  $("storyTitle").textContent = s.story_title;
+  document.title = s.story_title;
+  $("sceneName").textContent = "场景：" + s.scene_name;
+  $("inventory").textContent =
+    s.inventory.length ? "持有：" + s.inventory.join("、") : "";
+  $("turnNo").textContent = "回合 " + s.turn_no;
+}
+
+function setBusy(value) {
+  busy = value;
+  sendBtn.disabled = value;
+  ideasBtn.disabled = value;
+  input.disabled = value;
+  if (!value) input.focus();
+}
+
+async function streamPost(url, body, onEvent) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const type = res.headers.get("Content-Type") || "";
+  if (!type.includes("text/event-stream")) {
+    const data = await res.json().catch(() => ({}));
+    onEvent({ type: "error", message: data.error || `请求失败（${res.status}）` });
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) >= 0) {
+      const frame = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)));
+      }
+    }
+  }
+}
+
+async function runTurn(url, body, playerText) {
+  if (busy) return;
+  setBusy(true);
+  if (playerText !== null) block("player", playerText);
+  let paragraph = block("narrative streaming", "");
+  try {
+    await streamPost(url, body, (ev) => {
+      if (ev.type === "player_text") {
+        const el = document.createElement("div");
+        el.className = "block player";
+        el.textContent = ev.text;
+        transcript.insertBefore(el, paragraph);
+      } else if (ev.type === "delta") {
+        paragraph.textContent += ev.text;
+        scrollBottom();
+      } else if (ev.type === "restart") {
+        // 屏幕上还没有字就保持沉默，与 CLI 的监听器语义一致。
+        if (paragraph.textContent) {
+          paragraph.classList.remove("streaming");
+          paragraph.classList.add("withdrawn");
+          block("notice", NOTICES[ev.reason] || DEFAULT_NOTICE);
+          paragraph = block("narrative streaming", "");
+        }
+      } else if (ev.type === "committed") {
+        paragraph.textContent = ev.narrative;
+        paragraph.classList.remove("streaming");
+        if (ev.tail) block("tail", ev.tail);
+        setStatus(ev.snapshot);
+      } else if (ev.type === "error") {
+        if (paragraph.textContent) {
+          paragraph.classList.remove("streaming");
+          paragraph.classList.add("withdrawn");
+        } else {
+          paragraph.remove();
+        }
+        block("notice error", ev.message);
+      }
+    });
+  } catch (err) {
+    block("notice error", "（连接中断：" + err.message + "）");
+  }
+  paragraph.classList.remove("streaming");
+  setBusy(false);
+  scrollBottom();
+}
+
+function sendCurrentInput() {
+  const text = input.value.trim();
+  if (!text || busy) return;
+  input.value = "";
+  runTurn("/api/turn", { text }, text);
+}
+
+function renderIdeas(actions) {
+  ideasList.textContent = "";
+  for (const action of actions) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const title = document.createElement("div");
+    title.className = "card-title";
+    title.textContent = action.title;
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = action.focus;
+    title.appendChild(badge);
+    const body = document.createElement("div");
+    body.className = "card-action";
+    body.textContent = action.action_text;
+    const why = document.createElement("div");
+    why.className = "card-why";
+    why.textContent = "侧重点：" + action.rationale;
+    card.append(title, body, why);
+    card.addEventListener("click", () => {
+      overlay.hidden = true;
+      runTurn("/api/idea", { suggestion_id: action.suggestion_id }, null);
+    });
+    ideasList.appendChild(card);
+  }
+}
+
+async function openIdeas(refresh) {
+  if (busy) return;
+  overlay.hidden = false;
+  ideasList.innerHTML = '<div class="sheet-note">正在生成提案……</div>';
+  $("refreshBtn").disabled = true;
+  try {
+    const res = await fetch("/api/ideas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      ideasList.innerHTML = "";
+      const note = document.createElement("div");
+      note.className = "sheet-note error";
+      note.textContent = data.error || `提案生成失败（${res.status}）`;
+      ideasList.appendChild(note);
+      return;
+    }
+    renderIdeas(data.actions);
+  } catch (err) {
+    ideasList.innerHTML = "";
+    const note = document.createElement("div");
+    note.className = "sheet-note error";
+    note.textContent = "（连接中断：" + err.message + "）";
+    ideasList.appendChild(note);
+  } finally {
+    $("refreshBtn").disabled = false;
+  }
+}
+
+async function boot() {
+  try {
+    const res = await fetch("/api/state");
+    const data = await res.json();
+    setStatus(data.snapshot);
+    for (const text of data.intro) block("intro", text);
+    for (const event of data.history) {
+      block("player", event.player_text);
+      block("narrative", event.narrative);
+    }
+    scrollBottom();
+  } catch (err) {
+    block("notice error", "（无法连接服务器：" + err.message + "）");
+  }
+  input.focus();
+}
+
+sendBtn.addEventListener("click", sendCurrentInput);
+input.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.shiftKey) {
+    ev.preventDefault();
+    sendCurrentInput();
+  }
+});
+ideasBtn.addEventListener("click", () => openIdeas(false));
+$("refreshBtn").addEventListener("click", () => openIdeas(true));
+$("closeBtn").addEventListener("click", () => { overlay.hidden = true; });
+overlay.addEventListener("click", (ev) => {
+  if (ev.target === overlay) overlay.hidden = true;
+});
+
+boot();
+</script>
+</body>
+</html>
