@@ -64,10 +64,10 @@ class KimiNarrativeTest(unittest.TestCase):
             narrative_request()
         )
         self.assertIn("放下扳手", response.text)
-        self.assertEqual(response.prompt_version, "kimi-narrate-v16")
+        self.assertEqual(response.prompt_version, "kimi-narrate-v17")
         self.assertEqual(response.model, "kimi-k3")
         self.assertIn("可以补充不改变连续性", transport.calls[0][0][0]["content"])
-        self.assertIn("不是成为模型每回合必须复述的视觉验证码", transport.calls[0][0][0]["content"])
+        self.assertIn("简短不是目标，有效才是目标", transport.calls[0][0][0]["content"])
 
     def test_provider_failure_is_reported_as_kimi(self) -> None:
         transport = FakeTransport(["", ""])

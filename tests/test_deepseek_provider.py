@@ -111,11 +111,11 @@ class NarrativeProviderTest(unittest.TestCase):
         self.assertFalse(transport.calls[0][1]["json_mode"])
         self.assertEqual(transport.calls[0][1]["thinking"], "disabled")
         self.assertEqual(transport.calls[0][1]["max_tokens"], 900)
-        self.assertEqual(response.prompt_version, "deepseek-narrate-v16")
+        self.assertEqual(response.prompt_version, "deepseek-narrate-v17")
         self.assertEqual(response.diagnostics["final_content_state"], "valid")
         self.assertEqual(response.diagnostics["attempts"][0]["finish_reason"], "stop")
         self.assertIn("可以补充不改变连续性", transport.calls[0][0][0]["content"])
-        self.assertIn("不是成为模型每回合必须复述的视觉验证码", transport.calls[0][0][0]["content"])
+        self.assertIn("简短不是目标，有效才是目标", transport.calls[0][0][0]["content"])
         self.assertIn("subject_id", transport.calls[0][0][1]["content"])
 
     def test_empty_narration_retries_once_then_succeeds(self) -> None:
