@@ -13,6 +13,9 @@
     --line: #e3ddd0;
     --accent: #7a5c3d;
     --error: #a4432f;
+    --dev-bg: #eef2eb;
+    --dev-line: #b7c2b2;
+    --dev-ink: #40513e;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
@@ -37,6 +40,11 @@
   .status {
     font-family: system-ui, sans-serif; font-size: 0.78rem;
     color: var(--muted); display: flex; gap: 0.9rem; flex-wrap: wrap;
+  }
+  .dev-mode {
+    color: var(--dev-ink); border: 1px solid var(--dev-line);
+    background: var(--dev-bg); border-radius: 99px;
+    padding: 0 0.5rem;
   }
   main {
     max-width: 44rem; margin: 0 auto;
@@ -66,6 +74,52 @@
   .tail {
     font-family: system-ui, sans-serif; font-size: 0.82rem;
     color: var(--muted);
+  }
+  .editor-comparison {
+    width: min(68rem, calc(100vw - 2rem));
+    margin: 1rem 0 1.4rem 50%; transform: translateX(-50%);
+    border: 1px solid var(--dev-line); border-radius: 12px;
+    background: var(--dev-bg); color: var(--dev-ink);
+    overflow: hidden;
+  }
+  .editor-comparison-head {
+    padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--dev-line);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 0.7rem; flex-wrap: wrap;
+    font-family: system-ui, sans-serif; font-size: 0.78rem;
+  }
+  .editor-comparison-title { font-weight: 650; letter-spacing: 0.03em; }
+  .editor-comparison-badges { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+  .editor-chip {
+    border: 1px solid var(--dev-line); border-radius: 99px;
+    background: color-mix(in srgb, var(--panel) 70%, transparent);
+    padding: 0.05rem 0.45rem;
+  }
+  .editor-grid {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1px; background: var(--dev-line);
+  }
+  .editor-pane { background: var(--panel); min-width: 0; }
+  .editor-pane.selected { box-shadow: inset 0 0 0 2px var(--dev-ink); }
+  .editor-pane-label {
+    padding: 0.35rem 0.65rem; border-bottom: 1px solid var(--line);
+    font-family: system-ui, sans-serif; font-size: 0.75rem;
+    color: var(--muted); display: flex; justify-content: space-between;
+  }
+  .editor-pane-label .selected-mark { color: var(--dev-ink); font-weight: 650; }
+  .editor-pane-text {
+    min-height: 7rem; padding: 0.7rem 0.8rem;
+    white-space: pre-wrap; overflow-wrap: break-word;
+    color: var(--ink); line-height: 1.8;
+  }
+  .editor-comparison-meta {
+    padding: 0.55rem 0.75rem; border-top: 1px solid var(--dev-line);
+    font-family: system-ui, sans-serif; font-size: 0.75rem;
+    line-height: 1.65; color: var(--dev-ink);
+  }
+  @media (max-width: 720px) {
+    .editor-grid { grid-template-columns: 1fr; }
+    .editor-pane-text { min-height: 0; }
   }
   footer {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
@@ -152,6 +206,7 @@
       <span id="sceneName"></span>
       <span id="inventory"></span>
       <span id="turnNo"></span>
+      <span id="devMode" class="dev-mode" hidden></span>
     </span>
   </div>
 </header>
@@ -195,6 +250,26 @@ const NOTICES = {
   narration_fallback: "（上面这段未能完成，已撤回。）",
 };
 const DEFAULT_NOTICE = "（上面这段已撤回，正在重写……）";
+const EDITOR_REASONS = {
+  shadow_mode: "shadow 模式只观察，不采用候选",
+  edited_candidate_accepted: "候选通过保护检查与物理事实复核",
+  editor_unchanged: "编辑器逐字返回初稿",
+  editor_error: "编辑器调用失败，回退初稿",
+  editor_candidate_rejected: "候选未通过代码级保护",
+  edited_fact_check_error: "候选事实复核调用失败",
+  edited_fact_validation_failed: "候选未通过物理事实校验",
+  physical_facts_changed: "编辑前后的物理状态变化不一致",
+};
+const GUARD_REASONS = {
+  empty_candidate: "空输出",
+  output_artifact: "包含编辑说明或 Markdown 围栏",
+  over_compressed: "压缩幅度超过下限",
+  scope_expanded: "扩写幅度超过上限",
+  protected_term_removed: "删除了受保护名称",
+  protected_term_added: "添加了原稿未出现的可见名称",
+  number_removed: "删除或改写了数字",
+  number_added: "添加或改写了数字",
+};
 let busy = false;
 
 function scrollBottom() {
@@ -225,6 +300,73 @@ function setBusy(value) {
   ideasBtn.disabled = value;
   input.disabled = value;
   if (!value) input.focus();
+}
+
+function renderEditorComparison(data) {
+  const panel = document.createElement("section");
+  panel.className = "editor-comparison";
+
+  const head = document.createElement("div");
+  head.className = "editor-comparison-head";
+  const title = document.createElement("span");
+  title.className = "editor-comparison-title";
+  title.textContent = `开发 · 行编辑对照 · 回合 ${data.turn}`;
+  const badges = document.createElement("span");
+  badges.className = "editor-comparison-badges";
+  for (const value of [data.mode, data.status]) {
+    const chip = document.createElement("span");
+    chip.className = "editor-chip";
+    chip.textContent = value;
+    badges.appendChild(chip);
+  }
+  head.append(title, badges);
+
+  const grid = document.createElement("div");
+  grid.className = "editor-grid";
+  const panes = [
+    ["编辑前", data.draft, data.selected === "draft"],
+    ["编辑后", data.candidate ?? "（编辑器没有返回候选）", data.selected === "edited"],
+  ];
+  for (const [labelText, prose, selected] of panes) {
+    const pane = document.createElement("div");
+    pane.className = "editor-pane" + (selected ? " selected" : "");
+    const label = document.createElement("div");
+    label.className = "editor-pane-label";
+    const labelName = document.createElement("span");
+    labelName.textContent = labelText;
+    label.appendChild(labelName);
+    if (selected) {
+      const mark = document.createElement("span");
+      mark.className = "selected-mark";
+      mark.textContent = "最终采用";
+      label.appendChild(mark);
+    }
+    const text = document.createElement("div");
+    text.className = "editor-pane-text";
+    text.textContent = prose;
+    pane.append(label, text);
+    grid.appendChild(pane);
+  }
+
+  const guard = data.guard || {};
+  const guardReasons = (guard.reasons || []).map(
+    (reason) => GUARD_REASONS[reason] || reason
+  );
+  const meta = document.createElement("div");
+  meta.className = "editor-comparison-meta";
+  const pieces = [
+    `选择原因：${EDITOR_REASONS[data.reason] || data.reason}`,
+    `字符比例：${guard.char_ratio ?? "—"}`,
+    `粗粒度保护：${guard.accepted ? "通过" : "拒绝"}`,
+  ];
+  if (guardReasons.length) pieces.push("Guard：" + guardReasons.join("；"));
+  if (data.error) pieces.push("错误：" + data.error);
+  meta.textContent = pieces.join(" · ");
+
+  panel.append(head, grid, meta);
+  transcript.appendChild(panel);
+  scrollBottom();
+  return panel;
 }
 
 async function streamPost(url, body, onEvent) {
@@ -280,6 +422,8 @@ async function runTurn(url, body, playerText) {
           block("notice", NOTICES[ev.reason] || DEFAULT_NOTICE);
           paragraph = block("narrative streaming", "");
         }
+      } else if (ev.type === "editor_comparison") {
+        renderEditorComparison(ev);
       } else if (ev.type === "committed") {
         paragraph.textContent = ev.narrative;
         paragraph.classList.remove("streaming");
@@ -374,10 +518,21 @@ async function boot() {
     const res = await fetch("/api/state");
     const data = await res.json();
     setStatus(data.snapshot);
+    if (data.developer?.editor_comparison) {
+      const devMode = $("devMode");
+      devMode.hidden = false;
+      devMode.textContent = `编辑对照 · ${data.developer.prose_editor_mode}`;
+    }
+    const comparisons = new Map(
+      (data.editor_comparisons || []).map((item) => [item.turn, item])
+    );
     for (const text of data.intro) block("intro", text);
     for (const event of data.history) {
       block("player", event.player_text);
       block("narrative", event.narrative);
+      if (comparisons.has(event.turn_no)) {
+        renderEditorComparison(comparisons.get(event.turn_no));
+      }
     }
     scrollBottom();
   } catch (err) {

@@ -1,8 +1,9 @@
 """Provider-neutral interfaces for narrative-first generation.
 
-Providers write prose, propose editable action cards, extract a narrow set of
-physical facts and compact old narrative events. None of these methods can
-mutate authoritative state; fact validation sits behind this interface.
+Providers write and optionally line-edit prose, propose editable action cards,
+extract a narrow set of physical facts and compact old narrative events. None
+of these methods can mutate authoritative state; fact validation sits behind
+this interface.
 """
 
 from __future__ import annotations
@@ -47,6 +48,31 @@ class NarrativeRequest:
 
 @dataclass(frozen=True)
 class NarrativeResponse:
+    text: str
+    model: str
+    prompt_version: str = "n/a"
+    latency_ms: float = 0.0
+    usage: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ProseEditRequest:
+    """A completed draft plus the minimum public context needed to line-edit it.
+
+    The editor deliberately does not receive author-private context or the full
+    memory digest. It may preserve the draft's voice and continuity, but it may
+    not use editing as a second opportunity to advance the story.
+    """
+
+    draft: str
+    player_text: str
+    previous_narrative: str = ""
+    protected_terms: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProseEditResponse:
     text: str
     model: str
     prompt_version: str = "n/a"
@@ -195,6 +221,9 @@ class LLMProvider:
     def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:
         raise LLMProviderError(f"provider '{self.name}' does not support suggestions")
 
+    def edit_narrative(self, request: ProseEditRequest) -> ProseEditResponse:
+        raise LLMProviderError(f"provider '{self.name}' does not support prose editing")
+
     def extract_facts(self, request: FactExtractionRequest) -> FactExtractionResponse:
         raise LLMProviderError(f"provider '{self.name}' does not support fact extraction")
 
@@ -218,11 +247,13 @@ class ScriptedProvider(LLMProvider):
             FactExtraction | tuple[ExtractedFact, ...]
         ] | None = None,
         memory_digests: list[MemoryDigest] | None = None,
+        prose_edits: list[str | None] | None = None,
     ) -> None:
         self._narratives = list(narratives or [])
         self._suggestion_batches = list(suggestion_batches or [])
         self._fact_extractions = list(fact_extractions or [])
         self._memory_digests = list(memory_digests or [])
+        self._prose_edits = list(prose_edits or [])
 
     def render_narrative(
         self,
@@ -238,6 +269,14 @@ class ScriptedProvider(LLMProvider):
         if stream is not None and text:
             stream.delta(text)
         return NarrativeResponse(text=text, model="scripted")
+
+    def edit_narrative(self, request: ProseEditRequest) -> ProseEditResponse:
+        if not self._prose_edits:
+            raise LLMProviderError("scripted provider has no prose edit left")
+        text = self._prose_edits.pop(0)
+        if text is None:
+            raise LLMProviderError("scripted prose editor returned no text")
+        return ProseEditResponse(text=text, model="scripted")
 
     def propose_suggestions(self, request: SuggestionRequest) -> SuggestionResponse:
         if not self._suggestion_batches:
@@ -284,6 +323,14 @@ class HeuristicMockProvider(LLMProvider):
     """Story-neutral development provider using only scoped perception."""
 
     name = "mock"
+
+    def edit_narrative(self, request: ProseEditRequest) -> ProseEditResponse:
+        """Offline development keeps the draft unchanged instead of faking style."""
+        return ProseEditResponse(
+            text=request.draft,
+            model="heuristic-mock-editor-0.1",
+            prompt_version="identity-prose-editor-v1",
+        )
 
     def extract_facts(self, request: FactExtractionRequest) -> FactExtractionResponse:
         """Fail closed: the development mock never invents authoritative facts."""

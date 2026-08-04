@@ -20,6 +20,7 @@ from .llm_deepseek import (
     FACT_EXTRACTION_PROMPT_VERSION,
     MEMORY_COMPACTION_PROMPT_VERSION,
     NARRATIVE_PROMPT_VERSION,
+    PROSE_EDIT_PROMPT_VERSION,
     SUGGESTION_PROMPT_VERSION,
     DeepSeekCallPolicy,
     DeepSeekProvider,
@@ -40,6 +41,7 @@ class KimiProvider(DeepSeekProvider):
     name = "kimi"
     display_name = "Kimi"
     narrative_prompt_version = _kimi_prompt_version(NARRATIVE_PROMPT_VERSION)
+    prose_edit_prompt_version = _kimi_prompt_version(PROSE_EDIT_PROMPT_VERSION)
     suggestion_prompt_version = _kimi_prompt_version(SUGGESTION_PROMPT_VERSION)
     fact_extraction_prompt_version = _kimi_prompt_version(
         FACT_EXTRACTION_PROMPT_VERSION

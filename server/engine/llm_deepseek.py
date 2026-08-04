@@ -20,6 +20,8 @@ from .llm import (
     NarrativeRequest,
     NarrativeResponse,
     NarrativeStream,
+    ProseEditRequest,
+    ProseEditResponse,
     SuggestionRequest,
     SuggestionResponse,
 )
@@ -37,6 +39,7 @@ from .llm_protocol import (
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
 NARRATIVE_PROMPT_VERSION = "deepseek-narrate-v17"
+PROSE_EDIT_PROMPT_VERSION = "deepseek-prose-edit-v1"
 SUGGESTION_PROMPT_VERSION = "deepseek-suggestions-v6"
 FACT_EXTRACTION_PROMPT_VERSION = "deepseek-fact-extraction-v2"
 MEMORY_COMPACTION_PROMPT_VERSION = "deepseek-memory-compaction-v2"
@@ -80,6 +83,13 @@ NARRATIVE_CALL_POLICY = DeepSeekCallPolicy(
     thinking="disabled",
     temperature=0.7,
     max_tokens=900,
+    json_mode=False,
+)
+PROSE_EDIT_CALL_POLICY = DeepSeekCallPolicy(
+    capability="prose_edit",
+    thinking="disabled",
+    temperature=0.2,
+    max_tokens=1000,
     json_mode=False,
 )
 SUGGESTION_CALL_POLICY = DeepSeekCallPolicy(
@@ -138,6 +148,37 @@ LANGUAGE_STYLE_SYSTEM_PROMPT = """\
 10. 人物卡中的 dialogue_examples 只用于理解句长、语气和表达习惯，不是已经发生的对白。不得直接复制样例中的具体事件、数字和物件。
 
 编辑和生成都应遵循同一判断：删除一句话前，先判断删除后是否损失人物、张力、节奏、视角、空间或信息；若有实际损失，应当保留或做局部修改。
+"""
+
+
+PROSE_EDIT_SYSTEM_PROMPT = """\
+你是中文互动小说的行编辑。输入是叙事器已经完成的初稿，故事内容已经确定。
+你的职责不是续写、重构或缩写故事，而是去除无功能的表达，同时保护节奏、人物声音、心理运动、叙事视角和阅读体验。
+
+最高原则：
+1. 经济性不等于极简。不要以更短为目标；某种表达像常见 AI 模式，只能成为检查信号，不能成为删除理由。
+2. 删除或改写前，先判断是否会损失新信息、人物特征、心理变化、节奏或强调、空间与感官定位、潜台词、悬念或视角。只要会损失其中任何一项，就保留或只做局部修改。
+3. 保持事件、事实、发生顺序、动作执行者、对话说话者、因果和行动结果不变；保持角色的知识边界、线索披露程度、不确定性、人物立场和玩家能动性不变。
+4. 不添加新事实、新动作、新台词、新意图、新比喻或新专名；【必须保留的词】中凡是在初稿出现的词都必须继续出现，数字不得增删或改写。
+5. 如果初稿没有明确问题，逐字原样返回。
+
+优先检查：
+- 同一意义被再次解释，却没有增加信息、态度或关系变化；
+- 动作已经完整表现情绪，随后又机械命名同一情绪；
+- 多个近义修饰语只增加音量，不增加层次；
+- 气氛描写没有承担空间、人物、节奏或伏笔功能；
+- 连续同形短句、整齐排比或固定转折只是在制造虚假戏剧感；
+- 对话复述双方与读者都已知道的信息。
+
+特别保护：
+- 能表现思考、质疑、误解、施压、回声或人物习惯的重复；
+- 必要的停顿、过渡、内心处理和 POV 对可见行为的有限判断；
+- 人物声音、潜台词、有意留下的歧义和信息空缺；
+- 长短句形成的节奏，以及同时承担多种叙事功能的细节。
+
+失败编辑示例：把“她的指尖在绒布边缘停了一瞬，那动作太快，不像是犹豫，更像是在克制某种更深的反应”压成“她的手停在绒布上”。后者更短，却丢失了 POV 判断、人物心理与悬念，因此不能这样修改。
+
+只输出编辑后的正文，不输出标题、分析、修改说明、引号包裹或 Markdown 围栏。
 """
 
 
@@ -236,6 +277,19 @@ def build_narrative_messages(request: NarrativeRequest) -> list[dict[str, str]]:
                 f"{LANGUAGE_STYLE_SYSTEM_PROMPT}"
             ),
         },
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
+def build_prose_edit_messages(request: ProseEditRequest) -> list[dict[str, str]]:
+    payload = {
+        "玩家本回合行动": request.player_text,
+        "上一回合正文": request.previous_narrative or None,
+        "必须保留的词": list(request.protected_terms),
+        "待编辑初稿": request.draft,
+    }
+    return [
+        {"role": "system", "content": PROSE_EDIT_SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
@@ -486,6 +540,7 @@ class DeepSeekProvider(LLMProvider):
     name = "deepseek"
     display_name = "DeepSeek"
     narrative_prompt_version = NARRATIVE_PROMPT_VERSION
+    prose_edit_prompt_version = PROSE_EDIT_PROMPT_VERSION
     suggestion_prompt_version = SUGGESTION_PROMPT_VERSION
     fact_extraction_prompt_version = FACT_EXTRACTION_PROMPT_VERSION
     memory_compaction_prompt_version = MEMORY_COMPACTION_PROMPT_VERSION
@@ -503,6 +558,7 @@ class DeepSeekProvider(LLMProvider):
         self.base_url = base_url or os.environ.get("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL)
         self.call_policies = {
             "narration": NARRATIVE_CALL_POLICY,
+            "prose_edit": PROSE_EDIT_CALL_POLICY,
             "suggestions": replace(
                 SUGGESTION_CALL_POLICY,
                 temperature=temperature,
@@ -957,6 +1013,74 @@ class DeepSeekProvider(LLMProvider):
             prompt_version=self.suggestion_prompt_version,
             latency_ms=round((time.monotonic() - started) * 1000, 2),
             usage=usage,
+            diagnostics=diagnostics,
+        )
+
+    def edit_narrative(self, request: ProseEditRequest) -> ProseEditResponse:
+        messages = build_prose_edit_messages(request)
+        started = time.monotonic()
+        policy = self.call_policies["prose_edit"]
+        usage_total: dict[str, Any] = {}
+        diagnostics = self._new_diagnostics(policy)
+        last_error = "empty_content"
+
+        for attempt in range(1, MAX_REPAIR_ROUNDS + 2):
+            try:
+                result = self._call(messages, policy=policy)
+            except Exception as exc:
+                self._record_transport_error(
+                    diagnostics,
+                    attempt=attempt,
+                    json_mode=False,
+                    error=exc,
+                )
+                self._finalize_diagnostics(
+                    diagnostics, usage_total, "transport_error"
+                )
+                raise LLMProviderError(
+                    f"{self.display_name} 行编辑调用失败：{exc}",
+                    diagnostics=diagnostics,
+                ) from exc
+
+            usage = dict(result.usage or {})
+            self._merge_usage(usage_total, usage)
+            entry = self._record_attempt(
+                diagnostics,
+                result,
+                attempt=attempt,
+                json_mode=False,
+            )
+            if result.finish_reason == "length":
+                last_error = "length_exhausted"
+                self._mark_failed_attempt(diagnostics, entry, last_error)
+            elif result.content.strip():
+                return ProseEditResponse(
+                    text=result.content.strip(),
+                    model=self.model,
+                    prompt_version=self.prose_edit_prompt_version,
+                    latency_ms=round((time.monotonic() - started) * 1000, 2),
+                    usage=usage_total,
+                    diagnostics=self._finalize_diagnostics(
+                        diagnostics, usage_total, "valid"
+                    ),
+                )
+            else:
+                last_error = self._empty_reason(result, False)
+                self._mark_failed_attempt(diagnostics, entry, last_error)
+
+            if attempt <= MAX_REPAIR_ROUNDS:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"上一条编辑结果无法使用（{last_error}）。"
+                        "请重新阅读全文，只输出完整的编辑后正文；"
+                        "若无需修改，逐字返回初稿。"
+                    ),
+                })
+
+        self._finalize_diagnostics(diagnostics, usage_total, last_error)
+        raise LLMProviderError(
+            f"{self.display_name} 行编辑连续无法生成：{last_error}",
             diagnostics=diagnostics,
         )
 

@@ -14,6 +14,7 @@ from server.engine.llm import (
     MemoryCompactionRequest,
     NarrativeRequest,
     NarrativeStream,
+    ProseEditRequest,
     SuggestionRequest,
     create_provider,
 )
@@ -21,11 +22,13 @@ from server.engine.llm_deepseek import (
     FACT_EXTRACTION_CALL_POLICY,
     MEMORY_COMPACTION_CALL_POLICY,
     NARRATIVE_CALL_POLICY,
+    PROSE_EDIT_CALL_POLICY,
     SUGGESTION_CALL_POLICY,
     DeepSeekCallResult,
     DeepSeekProvider,
     build_fact_extraction_messages,
     build_memory_compaction_messages,
+    build_prose_edit_messages,
     build_suggestion_messages,
     coerce_fact_extraction,
     coerce_memory_digest,
@@ -252,6 +255,47 @@ class NarrativeStreamingTest(unittest.TestCase):
             self.request()
         )
         self.assertEqual(response.text, "周师傅放下扳手。")
+
+
+class ProseEditorProviderTest(unittest.TestCase):
+    def request(self) -> ProseEditRequest:
+        return ProseEditRequest(
+            draft="周师傅点了点头，又再次答应把旧防雨布借给你。",
+            player_text="我说明用途。",
+            previous_narrative="周师傅等着你开口。",
+            protected_terms=("周师傅", "旧防雨布"),
+        )
+
+    def test_editor_uses_functional_prompt_and_plain_text_policy(self) -> None:
+        edited = "周师傅点了点头，答应把旧防雨布借给你。"
+        transport = FakeTransport([edited])
+        response = DeepSeekProvider(transport=transport).edit_narrative(
+            self.request()
+        )
+
+        self.assertEqual(response.text, edited)
+        self.assertEqual(response.prompt_version, "deepseek-prose-edit-v1")
+        options = transport.calls[0][1]
+        self.assertEqual(options["capability"], "prose_edit")
+        self.assertEqual(options["thinking"], "disabled")
+        self.assertEqual(options["temperature"], 0.2)
+        self.assertEqual(options["max_tokens"], 1000)
+        self.assertFalse(options["json_mode"])
+        prompt = build_prose_edit_messages(self.request())
+        flat = json.dumps(prompt, ensure_ascii=False)
+        self.assertIn("经济性不等于极简", flat)
+        self.assertIn("如果初稿没有明确问题，逐字原样返回", flat)
+        self.assertIn("必须保留的词", flat)
+        self.assertNotIn("作者私有上下文", prompt[1]["content"])
+
+    def test_empty_editor_response_retries_once(self) -> None:
+        transport = FakeTransport(["", "周师傅点头答应了。"])
+        response = DeepSeekProvider(transport=transport).edit_narrative(
+            self.request()
+        )
+        self.assertEqual(response.text, "周师傅点头答应了。")
+        self.assertEqual(len(transport.calls), 2)
+        self.assertEqual(response.diagnostics["retry_reasons"], ["empty_content"])
 
 
 class SuggestionProviderTest(unittest.TestCase):
@@ -481,6 +525,7 @@ class CallPolicyTest(unittest.TestCase):
     def test_every_current_capability_has_an_explicit_policy(self) -> None:
         policies = (
             NARRATIVE_CALL_POLICY,
+            PROSE_EDIT_CALL_POLICY,
             SUGGESTION_CALL_POLICY,
             FACT_EXTRACTION_CALL_POLICY,
             MEMORY_COMPACTION_CALL_POLICY,
@@ -489,6 +534,7 @@ class CallPolicyTest(unittest.TestCase):
             {policy.capability for policy in policies},
             {
                 "narration",
+                "prose_edit",
                 "suggestions",
                 "fact_extraction",
                 "memory_compaction",

@@ -27,8 +27,19 @@ def suggestion(action_text: str, revision: int = 0) -> SuggestedAction:
 
 
 class WebGameTest(unittest.TestCase):
-    def game(self, provider: ScriptedProvider) -> WebGame:
-        return WebGame(Story.load(FIXTURE), provider)
+    def game(
+        self,
+        provider: ScriptedProvider,
+        *,
+        prose_editor_mode: str = "off",
+        show_editor_comparison: bool = False,
+    ) -> WebGame:
+        return WebGame(
+            Story.load(FIXTURE),
+            provider,
+            prose_editor_mode=prose_editor_mode,
+            show_editor_comparison=show_editor_comparison,
+        )
 
     def test_turn_streams_delta_then_committed_and_updates_snapshot(self) -> None:
         game = self.game(ScriptedProvider(
@@ -60,6 +71,93 @@ class WebGameTest(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "error")
         self.assertIn("本回合未提交", events[-1]["message"])
         self.assertEqual(game.session.turn_no, 0)
+
+    def test_editor_on_emits_only_the_selected_candidate(self) -> None:
+        draft = "周师傅点了点头，又再次答应把防雨布借给你。"
+        edited = "周师傅点了点头，答应把防雨布借给你。"
+        game = self.game(
+            ScriptedProvider(
+                narratives=[draft],
+                prose_edits=[edited],
+                fact_extractions=[(), ()],
+            ),
+            prose_editor_mode="on",
+        )
+        events: list[dict] = []
+        game.run_turn("我说明来意。", events.append)
+
+        self.assertEqual(
+            [event["type"] for event in events], ["delta", "committed"]
+        )
+        self.assertEqual(events[0]["text"], edited)
+        self.assertEqual(events[1]["narrative"], edited)
+
+    def test_development_panel_event_exposes_shadow_comparison(self) -> None:
+        draft = (
+            "周师傅没有立刻回答。他把扳手搁在桌边，等你把用途说完，"
+            "才慢慢点了点头。"
+        )
+        edited = (
+            "周师傅没有立刻回答。他把扳手搁在桌边，听完你的用途，"
+            "才慢慢点头。"
+        )
+        game = self.game(
+            ScriptedProvider(
+                narratives=[draft],
+                prose_edits=[edited],
+                fact_extractions=[()],
+            ),
+            prose_editor_mode="shadow",
+            show_editor_comparison=True,
+        )
+        events: list[dict] = []
+        game.run_turn("我说明来意。", events.append)
+
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["delta", "editor_comparison", "committed"],
+        )
+        comparison = events[1]
+        self.assertEqual(comparison["draft"], draft)
+        self.assertEqual(comparison["candidate"], edited)
+        self.assertEqual(comparison["mode"], "shadow")
+        self.assertEqual(comparison["selected"], "draft")
+        self.assertEqual(comparison["reason"], "shadow_mode")
+        self.assertTrue(comparison["guard"]["accepted"])
+
+        state = game.state()
+        self.assertEqual(state["developer"]["prose_editor_mode"], "shadow")
+        self.assertEqual(state["editor_comparisons"][0]["candidate"], edited)
+
+    def test_development_panel_marks_adopted_on_candidate(self) -> None:
+        draft = "周师傅点了点头，又再次答应把防雨布借给你。"
+        edited = "周师傅点了点头，答应把防雨布借给你。"
+        game = self.game(
+            ScriptedProvider(
+                narratives=[draft],
+                prose_edits=[edited],
+                fact_extractions=[(), ()],
+            ),
+            prose_editor_mode="on",
+            show_editor_comparison=True,
+        )
+        events: list[dict] = []
+        game.run_turn("我说明来意。", events.append)
+
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["delta", "editor_comparison", "committed"],
+        )
+        self.assertEqual(events[0]["text"], edited)
+        self.assertEqual(events[1]["selected"], "edited")
+        self.assertEqual(events[1]["reason"], "edited_candidate_accepted")
+        self.assertEqual(events[2]["narrative"], edited)
+
+    def test_comparison_data_is_absent_without_development_flag(self) -> None:
+        game = self.game(ScriptedProvider())
+        state = game.state()
+        self.assertNotIn("developer", state)
+        self.assertNotIn("editor_comparisons", state)
 
     def test_ideas_are_cached_until_refresh(self) -> None:
         provider = ScriptedProvider(

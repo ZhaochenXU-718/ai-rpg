@@ -10,8 +10,8 @@ AIRPG 当前验证一条尽量轻的循环：玩家用自然语言行动，模�
 → 编排器筛选候选剧情模块（纯代码，无状态权限）
 → 编译作者私有上下文（故事蓝图 + 在场人物卡 + 候选模块）
 → 模型生成候选散文
-→ 模型只抽取人物换场 / 关键物品转手
-→ 代码检查实体、可见性、当前位置与物品归属
+→ 模型只抽取人物换场 / 关键物品转手，代码校验初稿
+→ 可选行编辑器（默认关闭；shadow 只记录；on 复核物理变化后采用）
 → 通过后原子提交；冲突时最多重写一次
 → 保存 revision、checkpoint、trace 和分支内叙事记忆
 → 旧事件达到阈值时，尽力更新一次软小结
@@ -65,6 +65,12 @@ python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm kimi
 # Web 客户端（同一引擎，浏览器访问 http://127.0.0.1:8642）
 python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi
 
+# 可选行编辑器：建议先用 shadow 收集初稿/候选稿对照
+python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi --prose-editor shadow
+
+# 开发用 Web 对照面板：逐回合并排显示编辑前后正文与最终选择
+python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi --prose-editor shadow --show-editor-comparison
+
 # 校验与测试
 python tools/validate_content.py tests/fixtures/open_neighbor_scene.yaml
 python -m unittest discover -s tests -v
@@ -72,7 +78,7 @@ python -m unittest discover -s tests -v
 
 CLI 命令：`ideas`、`idea <编号>`、`who`、`state`、`memory`、`memory raw`、`undo`、`timeline`、`help`、`quit`。
 
-Web 客户端（`server/web.py` + `web/index.html`，零额外依赖）：旁白按 SSE 流式逐块显示；「灵感」按钮弹出行动提案卡，点击卡片直接作为行动执行，支持刷新重新生成；刷新页面后从已提交事件恢复完整对局记录。一个服务进程承载一个会话，与 CLI 相同；`undo`/`memory` 等调试入口暂未搬入 Web，需要时仍用 CLI。
+Web 客户端（`server/web.py` + `web/index.html`，零额外依赖）：旁白按 SSE 流式逐块显示；「灵感」按钮弹出行动提案卡，点击卡片直接作为行动执行，支持刷新重新生成；刷新页面后从已提交事件恢复完整对局记录。开发时可用 `--show-editor-comparison` 显示逐回合编辑前后对照，该开关要求编辑器处于 `shadow` 或 `on`。一个服务进程承载一个会话，与 CLI 相同；`undo`/`memory` 等调试入口暂未搬入 Web，需要时仍用 CLI。
 
 ## 文档
 
@@ -83,6 +89,7 @@ Web 客户端（`server/web.py` + `web/index.html`，零额外依赖）：旁白
 - [状态时间线](docs/state-timeline.md)
 - [记忆与小结](docs/memory-and-summaries.md)
 - [行动提案](docs/action-suggestions.md)
+- [可选行编辑器](docs/prose-editor.md)
 
 当前没有正式活动展示故事。`tests/fixtures/open_neighbor_scene.yaml` 只用于引擎测试，不代表产品体验。
 

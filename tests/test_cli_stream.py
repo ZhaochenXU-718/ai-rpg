@@ -96,6 +96,28 @@ class ExecuteTurnStreamingTest(unittest.TestCase):
         self.assertIn("物理事实提交", output)
         self.assertIn("positions.player", output)
 
+    def test_editor_on_prints_only_the_selected_candidate(self) -> None:
+        draft = "周师傅点了点头，又再次答应把防雨布借给你。"
+        edited = "周师傅点了点头，答应把防雨布借给你。"
+        provider = ScriptedProvider(
+            narratives=[draft],
+            prose_edits=[edited],
+            fact_extractions=[(), ()],
+        )
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            execute_narrative_turn(
+                self.session,
+                provider,
+                self.recorder,
+                "我说明来意。",
+                prose_editor_mode="on",
+            )
+        output = buffer.getvalue()
+        self.assertNotIn(draft, output)
+        self.assertEqual(output.count(edited), 1)
+        self.assertEqual(self.session.turn_no, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

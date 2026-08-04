@@ -10,6 +10,7 @@ from unittest.mock import patch
 from server.engine.llm import (
     LLMProviderError,
     NarrativeRequest,
+    ProseEditRequest,
     create_provider,
 )
 from server.engine.llm_deepseek import (
@@ -73,6 +74,17 @@ class KimiNarrativeTest(unittest.TestCase):
         transport = FakeTransport(["", ""])
         with self.assertRaisesRegex(LLMProviderError, "Kimi 旁白连续无法生成"):
             KimiProvider(transport=transport).render_narrative(narrative_request())
+
+    def test_prose_editor_reuses_shared_prompt_with_kimi_versioning(self) -> None:
+        transport = FakeTransport(["周师傅点头答应了。"])
+        response = KimiProvider(transport=transport).edit_narrative(
+            ProseEditRequest(
+                draft="周师傅点了点头，又再次答应了。",
+                player_text="我说明来意。",
+            )
+        )
+        self.assertEqual(response.prompt_version, "kimi-prose-edit-v1")
+        self.assertIn("经济性不等于极简", transport.calls[0][0][0]["content"])
 
 
 class KimiCompletionKwargsTest(unittest.TestCase):

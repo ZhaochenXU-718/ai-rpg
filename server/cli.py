@@ -151,6 +151,7 @@ def execute_narrative_turn(
     recorder: TraceRecorder,
     player_text: str,
     compactor: BackgroundMemoryCompactor | None = None,
+    prose_editor_mode: str = "off",
 ) -> None:
     recorder.record("turn_input", {
         "turn": session.turn_no + 1,
@@ -166,6 +167,7 @@ def execute_narrative_turn(
             player_text,
             stream=stream,
             compactor=compactor,
+            prose_editor_mode=prose_editor_mode,
         )
     finally:
         stream.close()
@@ -195,6 +197,12 @@ def main() -> int:
     parser.add_argument(
         "--opening",
         help="开场 ID；故事定义 openings 时可选，省略则使用默认初始位置。",
+    )
+    parser.add_argument(
+        "--prose-editor",
+        choices=["off", "shadow", "on"],
+        default="off",
+        help="可选行编辑器；shadow 只记录候选，on 通过保护检查后采用。",
     )
     args = parser.parse_args()
 
@@ -328,6 +336,7 @@ def main() -> int:
                 execute_narrative_turn(
                     session, provider, recorder, action_text,
                     compactor=compactor,
+                    prose_editor_mode=args.prose_editor,
                 )
             except (LLMProviderError, SessionError) as exc:
                 print(f"（提案无法执行：{exc}。）")
@@ -341,7 +350,12 @@ def main() -> int:
             continue
         try:
             execute_narrative_turn(
-                session, provider, recorder, line, compactor=compactor
+                session,
+                provider,
+                recorder,
+                line,
+                compactor=compactor,
+                prose_editor_mode=args.prose_editor,
             )
         except (LLMProviderError, SessionError) as exc:
             print(f"（本回合未提交：{exc}。）")

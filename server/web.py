@@ -29,6 +29,10 @@ from server.engine.llm import (
     create_provider,
 )
 from server.engine.memory_pipeline import BackgroundMemoryCompactor
+from server.engine.prose_editor import (
+    ProseEditorComparison,
+    ProseEditorObserver,
+)
 from server.engine.renderer import render_intro, render_turn_tail
 from server.engine.session import GameSession, SessionError
 from server.engine.suggestions import (
@@ -57,6 +61,23 @@ class _EmitterStream(NarrativeStream):
         self._emit({"type": "restart", "reason": reason})
 
 
+class _EmitterProseEditorObserver(ProseEditorObserver):
+    """Expose comparisons only when the server's development flag is enabled."""
+
+    def __init__(
+        self,
+        emit: Emit,
+        remember: Callable[[dict[str, Any]], None],
+    ) -> None:
+        self._emit = emit
+        self._remember = remember
+
+    def comparison(self, comparison: ProseEditorComparison) -> None:
+        payload = comparison.to_dict()
+        self._remember(payload)
+        self._emit({"type": "editor_comparison", **payload})
+
+
 class WebGame:
     """One playable session behind a lock; every public method is atomic.
 
@@ -73,6 +94,8 @@ class WebGame:
         trace_dir: str | None = None,
         log_dir: str | None = None,
         opening_id: str | None = None,
+        prose_editor_mode: str = "off",
+        show_editor_comparison: bool = False,
     ) -> None:
         self.story = story
         self.provider = provider
@@ -81,8 +104,11 @@ class WebGame:
         )
         self.recorder = TraceRecorder(trace_dir, self.session.session_id)
         self.compactor = BackgroundMemoryCompactor(provider, self.recorder)
+        self.prose_editor_mode = prose_editor_mode
+        self.show_editor_comparison = show_editor_comparison
         self._lock = threading.RLock()
         self._suggestions = None
+        self._editor_comparisons: list[dict[str, Any]] = []
         self._intro_blocks = self._build_intro_blocks()
 
     def _build_intro_blocks(self) -> tuple[str, ...]:
@@ -130,7 +156,7 @@ class WebGame:
         """Bootstrap payload: status, intro and committed history."""
         with self._lock:
             self.compactor.poll(self.session)
-            return {
+            payload = {
                 "snapshot": self._snapshot_locked(),
                 "intro": list(self._intro_blocks),
                 "history": [
@@ -142,6 +168,15 @@ class WebGame:
                     for event in self.session.memory.events
                 ],
             }
+            if self.show_editor_comparison:
+                payload["developer"] = {
+                    "editor_comparison": True,
+                    "prose_editor_mode": self.prose_editor_mode,
+                }
+                payload["editor_comparisons"] = list(
+                    self._editor_comparisons
+                )
+            return payload
 
     def run_turn(self, player_text: str, emit: Emit) -> None:
         """Resolve one input, mirroring prose to ``emit`` as it streams."""
@@ -154,6 +189,14 @@ class WebGame:
                 "player_text": player_text,
             })
             try:
+                editor_observer = (
+                    _EmitterProseEditorObserver(
+                        emit,
+                        self._editor_comparisons.append,
+                    )
+                    if self.show_editor_comparison
+                    else None
+                )
                 result = resolve_player_turn(
                     self.session,
                     self.provider,
@@ -161,6 +204,8 @@ class WebGame:
                     player_text,
                     stream=_EmitterStream(emit),
                     compactor=self.compactor,
+                    prose_editor_mode=self.prose_editor_mode,
+                    prose_editor_observer=editor_observer,
                 )
             except (LLMProviderError, SessionError) as exc:
                 emit({"type": "error", "message": f"本回合未提交：{exc}"})
@@ -360,10 +405,23 @@ def main() -> int:
     )
     parser.add_argument("--llm", choices=["mock", "deepseek", "kimi"], default="mock")
     parser.add_argument("--opening", help="开场 ID；故事定义 openings 时可选。")
+    parser.add_argument(
+        "--prose-editor",
+        choices=["off", "shadow", "on"],
+        default="off",
+        help="可选行编辑器；shadow 只记录候选，on 通过保护检查后采用。",
+    )
+    parser.add_argument(
+        "--show-editor-comparison",
+        action="store_true",
+        help="开发模式：在 Web 中逐回合显示行编辑前后对照。",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8642)
     parser.add_argument("--no-log", action="store_true")
     args = parser.parse_args()
+    if args.show_editor_comparison and args.prose_editor == "off":
+        parser.error("--show-editor-comparison 需要启用 shadow 或 on 编辑器")
 
     story_path = choose_story_path(args.story)
     if story_path is None:
@@ -384,6 +442,8 @@ def main() -> int:
             trace_dir=None if args.no_log else "data/traces",
             log_dir=None if args.no_log else "data/sessions",
             opening_id=args.opening,
+            prose_editor_mode=args.prose_editor,
+            show_editor_comparison=args.show_editor_comparison,
         )
     except (SessionError, LLMProviderError) as exc:
         print(f"（{exc}）")
