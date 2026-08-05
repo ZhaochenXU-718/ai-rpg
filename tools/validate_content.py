@@ -521,6 +521,21 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
     for key in ("title", "version", "language", "genre", "premise"):
         if not _non_empty_string(data.get(key)):
             report.error(f"root.{key} must be a non-empty string.")
+    if "genre_tags" in data:
+        genre_tags = data.get("genre_tags")
+        if not isinstance(genre_tags, list) or not genre_tags:
+            report.error("root.genre_tags must be a non-empty list of strings.")
+        elif not all(
+            _non_empty_string(tag) and len(tag.strip()) <= 24
+            for tag in genre_tags
+        ):
+            report.error(
+                "root.genre_tags entries must be non-empty strings of at most 24 characters."
+            )
+        elif len(genre_tags) > 8:
+            report.error("root.genre_tags must contain at most 8 entries.")
+        elif len({tag.strip().casefold() for tag in genre_tags}) != len(genre_tags):
+            report.error("root.genre_tags must not contain duplicates.")
     if data.get("schema_version") != 2:
         report.error("root.schema_version must be 2.")
 

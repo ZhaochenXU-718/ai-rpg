@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIRPG 故事工作室</title>
+<style>
+  :root {
+    --paper: #f4f0e7;
+    --panel: #fffdf8;
+    --panel-2: #f9f6ef;
+    --ink: #242924;
+    --muted: #73786f;
+    --line: #ded8cc;
+    --accent: #b85b3f;
+    --accent-dark: #8f3f2b;
+    --green: #386b57;
+    --green-soft: #e6f0ea;
+    --amber: #946b24;
+    --amber-soft: #f5ead3;
+    --red: #a24036;
+    --red-soft: #f6e3df;
+    --shadow: 0 16px 48px rgba(55, 45, 31, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 14px;
+  }
+  button, input, textarea, select { font: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: .48; }
+  .app { min-height: 100vh; display: grid; grid-template-columns: 252px minmax(0, 1fr); }
+  .sidebar {
+    position: fixed; inset: 0 auto 0 0; width: 252px; z-index: 5;
+    display: flex; flex-direction: column;
+    background: #242a26; color: #f7f2e8;
+    border-right: 1px solid rgba(255,255,255,.08);
+  }
+  .brand { padding: 24px 20px 18px; }
+  .brand-mark {
+    display: inline-flex; width: 34px; height: 34px; align-items: center; justify-content: center;
+    border-radius: 11px; color: #fff; background: var(--accent);
+    font-family: Georgia, serif; font-size: 20px; font-weight: 700;
+  }
+  .brand h1 { margin: 12px 0 3px; font-family: Georgia, "Songti SC", serif; font-size: 19px; letter-spacing: .04em; }
+  .brand p { margin: 0; color: #aeb7ad; font-size: 12px; }
+  .story-picker { padding: 0 14px 14px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .story-picker-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .eyebrow { color: #9ca79d; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .icon-btn {
+    width: 28px; height: 28px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px;
+    background: rgba(255,255,255,.06); color: #fff; font-size: 18px; line-height: 1;
+  }
+  .story-list { display: grid; gap: 5px; max-height: 188px; overflow: auto; }
+  .story-item {
+    width: 100%; text-align: left; border: 0; border-radius: 9px; padding: 9px 10px;
+    background: transparent; color: #cbd2ca;
+  }
+  .story-item:hover { background: rgba(255,255,255,.06); }
+  .story-item.active { background: rgba(255,255,255,.11); color: #fff; }
+  .story-item-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+  .story-item-meta { display: block; margin-top: 3px; color: #929d93; font-size: 11px; }
+  .nav { padding: 14px 10px; overflow-y: auto; flex: 1; }
+  .nav button {
+    display: flex; width: 100%; align-items: center; gap: 10px;
+    border: 0; border-radius: 9px; padding: 9px 11px; margin-bottom: 2px;
+    color: #b9c1b9; background: transparent; text-align: left;
+  }
+  .nav button:hover { color: #fff; background: rgba(255,255,255,.05); }
+  .nav button.active { color: #fff; background: rgba(184,91,63,.26); }
+  .nav-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .7; }
+  .sidebar-foot { padding: 12px 16px 18px; color: #89938a; font-size: 11px; }
+  .main { grid-column: 2; min-width: 0; }
+  .topbar {
+    position: sticky; top: 0; z-index: 4; height: 76px;
+    display: flex; align-items: center; justify-content: space-between; gap: 20px;
+    padding: 0 30px; background: rgba(244,240,231,.9); backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  .story-heading { min-width: 0; }
+  .story-heading h2 {
+    margin: 0; max-width: 54vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: Georgia, "Songti SC", serif; font-size: 21px; font-weight: 650;
+  }
+  .status-line { display: flex; align-items: center; gap: 8px; margin-top: 5px; color: var(--muted); font-size: 12px; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+  .status-dot.dirty { background: var(--amber); }
+  .status-dot.error { background: var(--red); }
+  .top-actions { display: flex; align-items: center; gap: 9px; }
+  .btn {
+    border: 1px solid var(--line); border-radius: 9px; padding: 9px 14px;
+    background: var(--panel); color: var(--ink); font-weight: 650;
+  }
+  .btn:hover { border-color: #bdb4a5; }
+  .btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-dark); }
+  .btn.subtle { background: transparent; }
+  .btn.danger { border-color: #dfb4aa; color: var(--red); background: #fff8f6; }
+  .content { max-width: 1240px; margin: 0 auto; padding: 30px; }
+  .page-head { display: flex; justify-content: space-between; gap: 22px; align-items: flex-start; margin-bottom: 22px; }
+  .page-head h3 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 28px; font-weight: 650; }
+  .page-head p { max-width: 650px; margin: 7px 0 0; color: var(--muted); line-height: 1.7; }
+  .grid { display: grid; gap: 18px; }
+  .grid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; box-shadow: var(--shadow);
+  }
+  .card + .card { margin-top: 18px; }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 17px; }
+  .card-head h4 { margin: 0; font-size: 15px; }
+  .card-head p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .metric { min-height: 108px; }
+  .metric .value { margin-top: 18px; font-family: Georgia, serif; font-size: 32px; }
+  .metric .label { color: var(--muted); font-size: 12px; }
+  .field { margin-bottom: 17px; }
+  .field:last-child { margin-bottom: 0; }
+  .field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  label.field-label { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; font-size: 12px; font-weight: 700; }
+  .field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+  .field-label-row label.field-label { margin-bottom: 0; }
+  .field-actions { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+  .assist-btn {
+    border: 0; border-radius: 7px; padding: 4px 7px; color: var(--accent-dark);
+    background: #faeee9; font-size: 10px; font-weight: 750;
+  }
+  .assist-btn:hover { background: #f3dbd1; }
+  .review-chip { border-radius: 99px; padding: 3px 7px; font-size: 10px; font-weight: 750; }
+  .review-chip.pending { color: var(--amber); background: var(--amber-soft); }
+  .review-chip.done { color: var(--green); background: var(--green-soft); }
+  .required { color: var(--accent); font-size: 10px; }
+  .help { margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+  .genre-editor {
+    border: 1px solid var(--line); border-radius: 11px; padding: 10px;
+    background: #fff;
+  }
+  .genre-editor:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(184,91,63,.1); }
+  .genre-tags, .genre-suggestions { display: flex; flex-wrap: wrap; gap: 7px; }
+  .genre-tags:empty { display: none; }
+  .genre-tags:not(:empty) { margin-bottom: 9px; }
+  .genre-tag {
+    display: inline-flex; align-items: center; gap: 6px; border-radius: 99px;
+    padding: 5px 8px 5px 10px; background: #f6e9e3; color: var(--accent-dark);
+    font-size: 12px; font-weight: 700;
+  }
+  .genre-tag button {
+    width: 18px; height: 18px; border: 0; border-radius: 50%; padding: 0;
+    background: rgba(120,55,39,.1); color: currentColor; line-height: 1;
+  }
+  .genre-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+  .genre-input-row input[type="text"] { border: 0; padding: 7px 4px; box-shadow: none; }
+  .genre-input-row .mini-btn { white-space: nowrap; }
+  .genre-suggestions { margin-top: 9px; }
+  .genre-suggestion {
+    border: 1px solid var(--line); border-radius: 99px; padding: 4px 8px;
+    background: var(--panel-2); color: var(--muted); font-size: 11px;
+  }
+  .genre-suggestion:hover { border-color: var(--accent); color: var(--accent-dark); }
+  input[type="text"], input[type="number"], textarea, select {
+    width: 100%; border: 1px solid var(--line); border-radius: 9px;
+    background: #fff; color: var(--ink); padding: 10px 11px; outline: none;
+  }
+  textarea { min-height: 96px; resize: vertical; line-height: 1.65; }
+  textarea.tall { min-height: 180px; }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(184,91,63,.1); }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  .check-row { display: flex; gap: 9px; align-items: center; min-height: 38px; }
+  .check-row label { color: var(--ink); }
+  .entity-shell { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; align-items: start; }
+  .entity-list { position: sticky; top: 96px; }
+  .entity-list-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .entity-list-head strong { font-size: 13px; }
+  .mini-btn {
+    border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
+    padding: 6px 9px; font-size: 12px; font-weight: 650;
+  }
+  .mini-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .entity-buttons { display: grid; gap: 5px; max-height: calc(100vh - 230px); overflow: auto; }
+  .entity-button {
+    width: 100%; border: 1px solid transparent; border-radius: 9px; background: transparent;
+    color: var(--ink); padding: 10px; text-align: left;
+  }
+  .entity-button:hover { background: var(--panel-2); }
+  .entity-button.active { border-color: #d9b8aa; background: #fcf0eb; }
+  .entity-button strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .entity-button span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+  .empty {
+    padding: 54px 26px; border: 1px dashed #c9c1b5; border-radius: 14px;
+    color: var(--muted); text-align: center; background: rgba(255,255,255,.38);
+  }
+  .editor-title { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 18px; }
+  .editor-title h4 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 21px; }
+  .section-label {
+    margin: 24px 0 13px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+    color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .1em;
+  }
+  .inline-list { display: grid; gap: 8px; }
+  .inline-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  .inline-row.wide { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; }
+  .remove-btn { width: 34px; height: 34px; border: 1px solid #e4c3ba; border-radius: 8px; color: var(--red); background: #fff8f6; }
+  .tag-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; }
+  .tag-check { display: flex; align-items: flex-start; gap: 8px; color: var(--ink); line-height: 1.45; }
+  .tag-check small { display: block; color: var(--muted); }
+  .issue-summary { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { border-radius: 99px; padding: 5px 9px; font-size: 11px; font-weight: 700; }
+  .chip.good { color: var(--green); background: var(--green-soft); }
+  .chip.warn { color: var(--amber); background: var(--amber-soft); }
+  .chip.bad { color: var(--red); background: var(--red-soft); }
+  .issues { display: grid; gap: 8px; }
+  .issue { border: 1px solid #e9c8c0; border-radius: 10px; padding: 11px 13px; background: #fff9f7; color: #77342c; line-height: 1.55; }
+  .issue.warning { border-color: #e7d6ad; background: #fffaf0; color: #735517; }
+  .notice { border-left: 3px solid var(--green); padding: 12px 14px; background: var(--green-soft); color: #28513f; line-height: 1.6; }
+  .top-empty { max-width: 620px; margin: 12vh auto; text-align: center; }
+  .top-empty h2 { font-family: Georgia, "Songti SC", serif; font-size: 34px; }
+  dialog { width: min(480px, calc(100vw - 28px)); border: 0; border-radius: 16px; padding: 0; box-shadow: 0 30px 100px rgba(20,20,16,.28); }
+  dialog::backdrop { background: rgba(25,29,26,.52); backdrop-filter: blur(3px); }
+  .dialog-body { padding: 23px; background: var(--panel); }
+  .dialog-body h3 { margin: 0 0 6px; font-family: Georgia, "Songti SC", serif; font-size: 23px; }
+  .dialog-body > p { margin: 0 0 20px; color: var(--muted); line-height: 1.6; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
+  .assistant-dialog { width: min(760px, calc(100vw - 28px)); }
+  .assistant-scroll { max-height: min(62vh, 620px); overflow-y: auto; margin: 16px -4px 0; padding: 0 4px; }
+  .candidate { border: 1px solid var(--line); border-radius: 12px; padding: 15px; margin-top: 10px; background: #fff; }
+  .candidate-text { white-space: pre-wrap; line-height: 1.75; font-family: Georgia, "Songti SC", serif; }
+  .candidate-why { margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+  .candidate-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 13px; flex-wrap: wrap; }
+  .original-box { border-left: 3px solid #b9b4aa; margin: 12px 0; padding: 10px 12px; background: var(--panel-2); color: var(--muted); white-space: pre-wrap; line-height: 1.65; }
+  .assistant-loading { padding: 30px 12px; text-align: center; color: var(--muted); }
+  .toast {
+    position: fixed; right: 24px; bottom: 24px; z-index: 20; max-width: 380px;
+    border-radius: 11px; padding: 12px 15px; background: #252b27; color: #fff;
+    box-shadow: 0 18px 55px rgba(0,0,0,.22); transform: translateY(14px); opacity: 0;
+    transition: .18s ease; pointer-events: none;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .mobile-menu { display: none; }
+  @media (max-width: 980px) {
+    .app { grid-template-columns: 210px minmax(0, 1fr); }
+    .sidebar { width: 210px; }
+    .content { padding: 24px 20px; }
+    .grid.three { grid-template-columns: 1fr; }
+    .entity-shell { grid-template-columns: 220px minmax(0, 1fr); }
+  }
+  @media (max-width: 760px) {
+    .app { display: block; }
+    .sidebar { transform: translateX(-100%); transition: .2s ease; width: min(84vw, 290px); }
+    body.menu-open .sidebar { transform: translateX(0); box-shadow: 20px 0 70px rgba(0,0,0,.28); }
+    .main { min-width: 0; }
+    .topbar { height: auto; min-height: 68px; padding: 10px 14px; }
+    .mobile-menu { display: inline-block; }
+    .story-heading h2 { max-width: 45vw; font-size: 17px; }
+    .top-actions .btn.subtle { display: none; }
+    .content { padding: 21px 14px; }
+    .page-head { display: block; }
+    .grid.two, .field-row { grid-template-columns: 1fr; }
+    .entity-shell { grid-template-columns: 1fr; }
+    .entity-list { position: static; }
+    .entity-buttons { max-height: 220px; }
+    .inline-row, .inline-row.wide { grid-template-columns: 1fr; }
+    .inline-row .remove-btn { width: 100%; }
+    .tag-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">A</span>
+      <h1>故事工作室</h1>
+      <p>把想法整理成可玩的故事</p>
+    </div>
+    <div class="story-picker">
+      <div class="story-picker-head">
+        <span class="eyebrow">故事</span>
+        <button class="icon-btn" id="newStoryBtn" aria-label="新建故事" title="新建故事">＋</button>
+      </div>
+      <div class="story-list" id="storyList"></div>
+    </div>
+    <nav class="nav" id="sectionNav"></nav>
+    <div class="sidebar-foot">底层内容结构由工作室自动维护</div>
+  </aside>
+
+  <section class="main">
+    <header class="topbar">
+      <button class="btn subtle mobile-menu" id="mobileMenuBtn" aria-label="打开菜单">菜单</button>
+      <div class="story-heading">
+        <h2 id="storyTitle">AIRPG 故事工作室</h2>
+        <div class="status-line"><span class="status-dot" id="saveDot"></span><span id="saveStatus">准备就绪</span></div>
+      </div>
+      <div class="top-actions">
+        <button class="btn subtle" id="saveBtn">立即保存</button>
+        <button class="btn primary" id="playBtn">试玩故事</button>
+      </div>
+    </header>
+    <main class="content" id="content"></main>
+  </section>
+</div>
+
+<dialog id="createStoryDialog">
+  <form class="dialog-body" id="createStoryForm" method="dialog">
+    <h3>创建空白故事</h3>
+    <p>从模块化表单开始，人物、场景和剧情都可以稍后手动添加。</p>
+    <div class="field">
+      <label class="field-label" for="newTitle">故事名称 <span class="required">必填</span></label>
+      <input id="newTitle" type="text" autocomplete="off" placeholder="例如：雾港最后一班船">
+    </div>
+    <div class="field-row">
+      <div id="newGenreField"></div>
+      <div class="field">
+        <label class="field-label" for="newLanguage">语言</label>
+        <select id="newLanguage"><option value="zh-CN">简体中文</option><option value="en">English</option></select>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn" value="cancel" type="button" id="cancelCreateBtn">取消</button>
+      <button class="btn primary" value="default" type="submit">创建并开始填写</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="entityDialog">
+  <form class="dialog-body" id="entityForm" method="dialog">
+    <h3 id="entityDialogTitle">手动新增</h3>
+    <p id="entityDialogHint">填写显示名称即可，底层标识由系统生成。</p>
+    <div class="field">
+      <label class="field-label" for="entityName">名称 <span class="required">必填</span></label>
+      <input id="entityName" type="text" autocomplete="off">
+    </div>
+    <div class="dialog-actions">
+      <button class="btn" type="button" id="cancelEntityBtn">取消</button>
+      <button class="btn primary" type="submit">添加</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="assistantDialog" class="assistant-dialog">
+  <div class="dialog-body">
+    <h3 id="assistantTitle">创作助手</h3>
+    <p id="assistantHint">候选不会自动写入故事，你可以先比较再决定。</p>
+    <div class="field-row">
+      <div class="field" style="margin:0">
+        <label class="field-label" for="assistInstruction">补充要求（可选）</label>
+        <input id="assistInstruction" type="text" placeholder="例如：更克制、更突出人物主动性">
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <button class="btn" id="rerunAssistBtn" type="button">重新生成</button>
+      </div>
+    </div>
+    <div class="assistant-scroll" id="assistantResults"></div>
+    <div class="dialog-actions">
+      <button class="btn" id="closeAssistantBtn" type="button">关闭</button>
+    </div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const SECTION_DEFS = [
+  ["overview", "创作概览"],
+  ["blueprint", "故事蓝图"],
+  ["player", "玩家角色"],
+  ["characters", "人物"],
+  ["scenes", "场景"],
+  ["items", "关键物品"],
+  ["modules", "剧情模块"],
+  ["prose", "开场与文风"],
+  ["validation", "检查结果"],
+];
+const GENRE_SUGGESTIONS = ["奇幻", "悬疑", "冒险", "日常", "情感", "科幻", "历史", "恐怖", "喜剧", "成长", "推理", "生存"];
+const LEGACY_GENRE_TAGS = {
+  ancient_magic_hogwarts_mystery: ["奇幻", "悬疑", "魔法学院", "远古魔法"],
+  mystery_infiltration: ["悬疑", "潜入"],
+  urban_slice_of_life: ["都市", "日常"],
+  interactive_fiction: ["未分类"],
+};
+const MAX_GENRE_TAGS = 8;
+const MAX_GENRE_TAG_LENGTH = 24;
+
+let storySummaries = [];
+let detail = null;
+let activeSection = "overview";
+let selected = { characters: null, scenes: null, items: null, modules: null };
+let dirty = false;
+let saving = false;
+let savePromise = null;
+let changeCounter = 0;
+let saveTimer = null;
+let entityKind = null;
+let pendingReviewEdits = {};
+let assistTarget = null;
+let assistResult = null;
+let toastTimer = null;
+let newStoryGenreTags = ["未分类"];
+let commitNewGenreInput = () => {};
+
+function node(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+function toast(message) {
+  const element = $("toast");
+  element.textContent = message;
+  element.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => element.classList.remove("show"), 2600);
+}
+
+function currentStory() { return detail?.story || null; }
+
+function getPath(root, path, fallback = "") {
+  let value = root;
+  for (const key of path) {
+    if (value === null || value === undefined) return fallback;
+    value = value[key];
+  }
+  return value === undefined || value === null ? fallback : value;
+}
+
+function ensureObject(root, path) {
+  let value = root;
+  for (const key of path) {
+    if (!value[key] || typeof value[key] !== "object" || Array.isArray(value[key])) value[key] = {};
+    value = value[key];
+  }
+  return value;
+}
+
+function cloneStoryValue(value) {
+  if (Array.isArray(value)) return value.map(cloneStoryValue);
+  if (value && typeof value === "object") {
+    const cloned = {};
+    for (const [key, child] of Object.entries(value)) cloned[key] = cloneStoryValue(child);
+    return cloned;
+  }
+  return value;
+}
+
+function syncStoryValueInPlace(target, source) {
+  if (Array.isArray(target) && Array.isArray(source)) {
+    for (let index = 0; index < source.length; index += 1) {
+      const current = target[index];
+      const next = source[index];
+      if (Array.isArray(current) && Array.isArray(next)) {
+        syncStoryValueInPlace(current, next);
+      } else if (
+        current && next && typeof current === "object" && typeof next === "object" &&
+        !Array.isArray(current) && !Array.isArray(next)
+      ) {
+        syncStoryValueInPlace(current, next);
+      } else {
+        target[index] = cloneStoryValue(next);
+      }
+    }
+    target.length = source.length;
+    return;
+  }
+  for (const key of Object.keys(target)) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) delete target[key];
+  }
+  for (const [key, next] of Object.entries(source)) {
+    const current = target[key];
+    if (Array.isArray(current) && Array.isArray(next)) {
+      syncStoryValueInPlace(current, next);
+    } else if (
+      current && next && typeof current === "object" && typeof next === "object" &&
+      !Array.isArray(current) && !Array.isArray(next)
+    ) {
+      syncStoryValueInPlace(current, next);
+    } else {
+      target[key] = cloneStoryValue(next);
+    }
+  }
+}
+
+function setPath(root, path, value, review = { source: "manual", status: "manual" }) {
+  const parent = ensureObject(root, path.slice(0, -1));
+  parent[path[path.length - 1]] = value;
+  recordReviewEdit(path, review.source, review.status, review.operation || "");
+  markDirty();
+}
+
+function reviewPath(path) { return Array.isArray(path) ? path.join(".") : path; }
+
+function recordReviewEdit(path, source, status, operation = "") {
+  const key = reviewPath(path);
+  if (!key) return;
+  pendingReviewEdits[key] = { path: key, source, status, operation };
+}
+
+function reviewEntry(path) {
+  const key = reviewPath(path);
+  return pendingReviewEdits[key] || detail?.review?.fields?.[key] || null;
+}
+
+function markDirty() {
+  dirty = true;
+  changeCounter += 1;
+  if (detail) detail.stats = localStats();
+  updateChrome();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 850);
+}
+
+function localStats() {
+  const story = currentStory() || {};
+  return {
+    characters: Object.keys(story.characters || {}).length,
+    scenes: Object.keys(story.scenes || {}).length,
+    items: Object.keys(story.items || {}).length,
+    modules: Object.keys(story.modules || {}).length,
+  };
+}
+
+function report() {
+  return detail?.validation || { errors: [], warnings: [], playable: false };
+}
+
+function effectiveUnreviewedCount() {
+  const fields = { ...(detail?.review?.fields || {}) };
+  for (const [path, entry] of Object.entries(pendingReviewEdits)) fields[path] = entry;
+  return Object.values(fields).filter((entry) => ["unreviewed", "needs_review"].includes(entry?.status)).length;
+}
+
+function updateChrome() {
+  const story = currentStory();
+  $("storyTitle").textContent = story?.title || "AIRPG 故事工作室";
+  const dot = $("saveDot");
+  dot.className = "status-dot";
+  if (saving) {
+    $("saveStatus").textContent = "正在保存…";
+    dot.classList.add("dirty");
+  } else if (dirty) {
+    $("saveStatus").textContent = "有未保存修改";
+    dot.classList.add("dirty");
+  } else if (report().errors.length) {
+    $("saveStatus").textContent = `已保存 · ${report().errors.length} 个待处理问题`;
+    dot.classList.add("error");
+  } else if (effectiveUnreviewedCount()) {
+    $("saveStatus").textContent = `已保存 · ${effectiveUnreviewedCount()} 处 LLM 内容待审阅`;
+    dot.classList.add("dirty");
+  } else if (story) {
+    $("saveStatus").textContent = "已保存 · 可以试玩";
+  } else {
+    $("saveStatus").textContent = "准备就绪";
+  }
+  $("saveBtn").disabled = !story || saving || !dirty;
+  $("playBtn").disabled = !story || saving || dirty || !report().playable;
+}
+
+async function api(url, options = {}) {
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `请求失败（${response.status}）`);
+    error.code = data.code;
+    throw error;
+  }
+  return data;
+}
+
+async function loadStories(preferredId = null) {
+  const data = await api("/api/stories");
+  storySummaries = data.stories || [];
+  renderStoryList();
+  if (!storySummaries.length) {
+    detail = null;
+    renderAll();
+    return;
+  }
+  const remembered = localStorage.getItem("airpg-studio-story");
+  const target = preferredId || (storySummaries.some((item) => item.id === remembered) ? remembered : storySummaries[0].id);
+  await loadStory(target);
+}
+
+async function loadStory(storyId) {
+  clearTimeout(saveTimer);
+  if (saving) await savePromise;
+  if (dirty) await saveNow();
+  if (dirty) {
+    toast("还有内容没有保存，暂时不能切换故事");
+    return;
+  }
+  detail = await api(`/api/stories/${encodeURIComponent(storyId)}`);
+  dirty = false;
+  changeCounter = 0;
+  pendingReviewEdits = {};
+  localStorage.setItem("airpg-studio-story", storyId);
+  for (const kind of Object.keys(selected)) {
+    const ids = Object.keys(detail.story[kind] || {});
+    if (!ids.includes(selected[kind])) selected[kind] = ids[0] || null;
+  }
+  renderAll();
+}
+
+function saveNow() {
+  clearTimeout(saveTimer);
+  if (!detail || !dirty) return Promise.resolve();
+  if (saving) return savePromise || Promise.resolve();
+  saving = true;
+  const sentCounter = changeCounter;
+  const payload = JSON.parse(JSON.stringify(detail.story));
+  const sentReviewEdits = Object.values(pendingReviewEdits).map((item) => ({ ...item }));
+  updateChrome();
+  savePromise = (async () => { try {
+    const updated = await api(`/api/stories/${encodeURIComponent(detail.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ revision: detail.revision, story: payload, review_edits: sentReviewEdits }),
+    });
+    detail.revision = updated.revision;
+    detail.validation = updated.validation;
+    detail.stats = updated.stats;
+    detail.review = updated.review;
+    for (const edit of sentReviewEdits) {
+      const current = pendingReviewEdits[edit.path];
+      if (current && JSON.stringify(current) === JSON.stringify(edit)) delete pendingReviewEdits[edit.path];
+    }
+    if (changeCounter === sentCounter) {
+      syncStoryValueInPlace(detail.story, updated.story);
+      dirty = false;
+    }
+    const summary = storySummaries.find((item) => item.id === detail.id);
+    if (summary) {
+      summary.title = detail.story.title;
+      summary.genre = detail.story.genre;
+      summary.genre_tags = [...(detail.story.genre_tags || [])];
+      summary.stats = updated.stats;
+      summary.error_count = updated.validation.errors.length;
+      summary.warning_count = updated.validation.warnings.length;
+      summary.playable = updated.validation.playable;
+    }
+    renderStoryList();
+    if (activeSection === "validation" || activeSection === "overview") renderContent();
+  } catch (error) {
+    if (error.code === "revision_conflict") {
+      toast("故事在其他位置有更新，请刷新页面后继续");
+    } else {
+      toast(error.message);
+    }
+  } finally {
+    saving = false;
+    savePromise = null;
+    updateChrome();
+    if (dirty && changeCounter !== sentCounter) saveTimer = setTimeout(saveNow, 500);
+  } })();
+  return savePromise;
+}
+
+function renderAll() {
+  renderStoryList();
+  renderNav();
+  renderContent();
+  updateChrome();
+}
+
+function renderStoryList() {
+  const container = $("storyList");
+  container.textContent = "";
+  if (!storySummaries.length) {
+    container.appendChild(node("div", "story-item-meta", "还没有故事"));
+    return;
+  }
+  for (const item of storySummaries) {
+    const button = node("button", "story-item" + (detail?.id === item.id ? " active" : ""));
+    const title = node("span", "story-item-title", item.title);
+    const genres = (item.genre_tags || []).slice(0, 2).join(" · ");
+    const counts = `${item.stats.characters} 人物 · ${item.stats.scenes} 场景${item.error_count ? ` · ${item.error_count} 问题` : ""}`;
+    const meta = node("span", "story-item-meta", genres ? `${genres} · ${counts}` : counts);
+    button.append(title, meta);
+    button.addEventListener("click", () => loadStory(item.id).catch((error) => toast(error.message)));
+    container.appendChild(button);
+  }
+}
+
+function renderNav() {
+  const nav = $("sectionNav");
+  nav.textContent = "";
+  for (const [id, label] of SECTION_DEFS) {
+    const button = node("button", activeSection === id ? "active" : "");
+    button.append(node("span", "nav-dot"), node("span", "", label));
+    button.disabled = !detail;
+    button.addEventListener("click", () => {
+      activeSection = id;
+      document.body.classList.remove("menu-open");
+      renderNav();
+      renderContent();
+    });
+    nav.appendChild(button);
+  }
+}
+
+function pageHead(title, description, action = null) {
+  const head = node("div", "page-head");
+  const copy = node("div");
+  copy.append(node("h3", "", title), node("p", "", description));
+  head.appendChild(copy);
+  if (action) head.appendChild(action);
+  return head;
+}
+
+function card(title, description = "") {
+  const wrapper = node("section", "card");
+  const head = node("div", "card-head");
+  const copy = node("div");
+  copy.appendChild(node("h4", "", title));
+  if (description) copy.appendChild(node("p", "", description));
+  head.appendChild(copy);
+  wrapper.appendChild(head);
+  return wrapper;
+}
+
+function field(label, value, onChange, options = {}) {
+  const wrap = node("div", "field");
+  const labelElement = node("label", "field-label");
+  labelElement.appendChild(document.createTextNode(label));
+  if (options.required) labelElement.appendChild(node("span", "required", "必填"));
+  const labelRow = node("div", "field-label-row");
+  labelRow.appendChild(labelElement);
+  if (options.path && (options.assist || reviewEntry(options.path))) {
+    const actions = node("div", "field-actions");
+    const entry = reviewEntry(options.path);
+    if (entry?.source === "llm") {
+      if (["unreviewed", "needs_review"].includes(entry.status)) {
+        const chip = node("button", "review-chip pending", entry.status === "needs_review" ? "需要复核" : "LLM · 待审阅");
+        chip.type = "button";
+        chip.addEventListener("click", () => markFieldReviewed(reviewPath(options.path)));
+        actions.appendChild(chip);
+      } else {
+        actions.appendChild(node("span", "review-chip done", "LLM · 已审阅"));
+      }
+    }
+    if (options.assist) {
+      const idea = node("button", "assist-btn", "灵感"); idea.type = "button";
+      idea.addEventListener("click", () => openAssist("ideas", options.path, label, String(value || "")));
+      const improve = node("button", "assist-btn", String(value || "").trim() ? "润色" : "补全"); improve.type = "button";
+      improve.addEventListener("click", () => openAssist(String(value || "").trim() ? "polish" : "complete", options.path, label, String(value || "")));
+      const check = node("button", "assist-btn", "检查"); check.type = "button";
+      check.addEventListener("click", () => openAssist("check", options.path, label, String(value || "")));
+      actions.append(idea, improve, check);
+    }
+    labelRow.appendChild(actions);
+  }
+  let control;
+  if (options.type === "select") {
+    control = node("select");
+    for (const option of options.options || []) {
+      const entry = node("option", "", option.label);
+      entry.value = option.value;
+      entry.selected = String(option.value) === String(value);
+      control.appendChild(entry);
+    }
+  } else if (options.type === "number") {
+    control = node("input");
+    control.type = "number";
+    control.min = options.min || "";
+    control.value = value ?? "";
+  } else if (options.type === "textarea" || options.multiline) {
+    control = node("textarea", options.tall ? "tall" : "");
+    control.value = value || "";
+    if (options.placeholder) control.placeholder = options.placeholder;
+  } else {
+    control = node("input");
+    control.type = "text";
+    control.value = value || "";
+    if (options.placeholder) control.placeholder = options.placeholder;
+  }
+  control.setAttribute("aria-label", label);
+  control.addEventListener(options.type === "select" ? "change" : "input", () => {
+    let next = control.value;
+    if (options.type === "number") next = next === "" ? null : Number(next);
+    if (options.path) recordReviewEdit(options.path, "manual", "manual");
+    onChange(next);
+  });
+  wrap.append(labelRow, control);
+  if (options.help) wrap.appendChild(node("div", "help", options.help));
+  return wrap;
+}
+
+function linesField(label, values, onChange, options = {}) {
+  return field(label, (values || []).join("\n"), (text) => {
+    onChange(text.split("\n").map((item) => item.trim()).filter(Boolean));
+  }, { ...options, type: "textarea", help: options.help || "每行填写一条。" });
+}
+
+function checkbox(label, checked, onChange, help = "") {
+  const wrap = node("div", "field");
+  const row = node("div", "check-row");
+  const input = node("input");
+  input.type = "checkbox";
+  input.checked = Boolean(checked);
+  input.addEventListener("change", () => onChange(input.checked));
+  row.append(input, node("label", "", label));
+  wrap.appendChild(row);
+  if (help) wrap.appendChild(node("div", "help", help));
+  return wrap;
+}
+
+function normalizedGenreTags(story) {
+  if (Array.isArray(story?.genre_tags) && story.genre_tags.length) {
+    return [...new Set(story.genre_tags.map((tag) => String(tag).trim()).filter(Boolean))];
+  }
+  const raw = String(story?.genre || "").trim();
+  if (LEGACY_GENRE_TAGS[raw]) return [...LEGACY_GENRE_TAGS[raw]];
+  return raw.split(/\s*(?:·|、|,|，|\/|\|)\s*/).map((tag) => tag.trim()).filter(Boolean);
+}
+
+function genreTagField(tags, onChange, options = {}) {
+  const wrap = node("div", "field");
+  const label = node("label", "field-label", options.label || "题材与类型");
+  if (options.required) label.appendChild(node("span", "required", "必填"));
+  wrap.appendChild(label);
+
+  let current = [...new Set((tags || []).map((tag) => String(tag).trim()).filter(Boolean))];
+  const editor = node("div", "genre-editor");
+  const chips = node("div", "genre-tags");
+  const inputRow = node("div", "genre-input-row");
+  const input = node("input");
+  input.type = "text";
+  input.maxLength = MAX_GENRE_TAG_LENGTH;
+  input.placeholder = "输入自定义题材，按回车添加";
+  input.setAttribute("aria-label", "添加题材或类型标签");
+  const addButton = node("button", "mini-btn", "添加");
+  addButton.type = "button";
+  inputRow.append(input, addButton);
+  const suggestions = node("div", "genre-suggestions");
+
+  function emit(next) {
+    current = next;
+    renderChips();
+    renderSuggestions();
+    onChange([...current]);
+  }
+  function addTag(raw) {
+    const pieces = String(raw || "").split(/(?:·|、|,|，|\/|\|)/).map((tag) => tag.trim()).filter(Boolean);
+    if (!pieces.length) return;
+    let next = [...current];
+    for (const tag of pieces) {
+      if (tag.length > MAX_GENRE_TAG_LENGTH) { toast(`每个题材标签最多 ${MAX_GENRE_TAG_LENGTH} 个字符`); continue; }
+      if (next.some((item) => item.toLocaleLowerCase() === tag.toLocaleLowerCase())) continue;
+      if (next.length >= MAX_GENRE_TAGS) { toast(`最多添加 ${MAX_GENRE_TAGS} 个题材标签`); break; }
+      if (next.length === 1 && next[0] === "未分类" && tag !== "未分类") next = [];
+      next.push(tag);
+    }
+    input.value = "";
+    emit(next);
+  }
+  function renderChips() {
+    chips.textContent = "";
+    for (const tag of current) {
+      const chip = node("span", "genre-tag");
+      chip.appendChild(document.createTextNode(tag));
+      const remove = node("button", "", "×");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `移除题材标签“${tag}”`);
+      remove.addEventListener("click", () => emit(current.filter((item) => item !== tag)));
+      chip.appendChild(remove);
+      chips.appendChild(chip);
+    }
+  }
+  function renderSuggestions() {
+    suggestions.textContent = "";
+    for (const suggestion of GENRE_SUGGESTIONS.filter((item) => !current.includes(item)).slice(0, 8)) {
+      const button = node("button", "genre-suggestion", `＋ ${suggestion}`);
+      button.type = "button";
+      button.addEventListener("click", () => addTag(suggestion));
+      suggestions.appendChild(button);
+    }
+  }
+  function commit() { addTag(input.value); }
+  addButton.addEventListener("click", commit);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === ",") { event.preventDefault(); commit(); }
+  });
+  input.addEventListener("blur", commit);
+  if (options.registerCommit) options.registerCommit(commit);
+  renderChips();
+  renderSuggestions();
+  editor.append(chips, inputRow, suggestions);
+  wrap.appendChild(editor);
+  wrap.appendChild(node("div", "help", options.help || "用于故事库分类和帮助 AI 理解方向；快捷项只是建议，也可以输入任意自定义题材。"));
+  return wrap;
+}
+
+function setStoryGenreTags(tags) {
+  detail.story.genre_tags = [...tags];
+  detail.story.genre = tags.join(" · ");
+  recordReviewEdit("genre_tags", "manual", "manual");
+  markDirty();
+}
+
+function setStory(path, value) {
+  setPath(detail.story, path, value);
+}
+
+function renderContent() {
+  const container = $("content");
+  container.textContent = "";
+  if (!detail) {
+    const empty = node("div", "top-empty");
+    empty.append(node("h2", "", "从一个故事开始"), node("p", "", "创建空白故事，或把已有 AIRPG 故事放入内容目录后刷新。"));
+    const button = node("button", "btn primary", "创建空白故事");
+    button.addEventListener("click", openCreateDialog);
+    empty.appendChild(button);
+    container.appendChild(empty);
+    return;
+  }
+  const renderers = {
+    overview: renderOverview,
+    blueprint: renderBlueprint,
+    player: renderPlayer,
+    characters: renderCharacters,
+    scenes: renderScenes,
+    items: renderItems,
+    modules: renderModules,
+    prose: renderProse,
+    validation: renderValidation,
+  };
+  renderers[activeSection](container);
+}
+
+function renderOverview(container) {
+  const story = currentStory();
+  container.appendChild(pageHead("创作概览", "从这里判断故事结构是否完整，并进入最需要处理的部分。"));
+  const metrics = node("div", "grid three");
+  const entries = [
+    ["人物", detail.stats.characters],
+    ["场景", detail.stats.scenes],
+    ["剧情模块", detail.stats.modules],
+  ];
+  for (const [label, value] of entries) {
+    const metric = card(label);
+    metric.classList.add("metric");
+    metric.append(node("div", "value", String(value)), node("div", "label", "当前故事中已建立"));
+    metrics.appendChild(metric);
+  }
+  container.appendChild(metrics);
+
+  const status = card("当前状态", "工作室允许保存不完整草稿；所有阻塞问题解决后即可试玩。" );
+  const summary = node("div", "issue-summary");
+  summary.appendChild(node("span", report().playable ? "chip good" : "chip bad", report().playable ? "可以试玩" : `${report().errors.length} 个阻塞问题`));
+  if (report().warnings.length) summary.appendChild(node("span", "chip warn", `${report().warnings.length} 个提醒`));
+  if (effectiveUnreviewedCount()) summary.appendChild(node("span", "chip warn", `${effectiveUnreviewedCount()} 处 LLM 内容待审阅`));
+  status.appendChild(summary);
+  if (!report().playable) {
+    const sample = report().errors.slice(0, 3);
+    const issues = node("div", "issues");
+    issues.style.marginTop = "14px";
+    for (const message of sample) issues.appendChild(node("div", "issue", humanIssue(message)));
+    status.appendChild(issues);
+    const go = node("button", "btn", "查看全部问题");
+    go.style.marginTop = "14px";
+    go.addEventListener("click", () => { activeSection = "validation"; renderAll(); });
+    status.appendChild(go);
+  } else {
+    status.appendChild(node("div", "notice", "故事结构与引用已通过检查。你可以启动试玩，验证人物表现、模块节奏和开场体验。"));
+  }
+  container.appendChild(status);
+
+  const identity = card("故事身份", "这些信息用于故事库和玩家启动页。底层标识由系统自动管理。" );
+  const row = node("div", "field-row");
+  row.append(
+    field("故事名称", story.title, (value) => { setStory(["title"], value); updateChrome(); }, { required: true }),
+    field("版本", story.version, (value) => setStory(["version"], value), { required: true })
+  );
+  const row2 = node("div", "field-row");
+  row2.append(
+    genreTagField(normalizedGenreTags(story), setStoryGenreTags, { required: true }),
+    field("语言", story.language, (value) => setStory(["language"], value), { type: "select", options: [{ value: "zh-CN", label: "简体中文" }, { value: "en", label: "English" }] })
+  );
+  identity.append(row, row2);
+  container.appendChild(identity);
+}
+
+function renderBlueprint(container) {
+  const story = currentStory();
+  container.appendChild(pageHead("故事蓝图", "先手动写下你已经确定的内容。所有字段都可以稍后回来补充或修改。"));
+  const core = card("故事核心", "决定故事持续围绕什么展开。" );
+  core.append(
+    field("故事前提", story.premise, (value) => setStory(["premise"], value), { type: "textarea", tall: true, required: true, help: "说明玩家进入故事时已经成立的处境与背景。", path: ["premise"], assist: true }),
+    field("玩家可见简介", story.player_facing_summary, (value) => setStory(["player_facing_summary"], value), { type: "textarea", help: "只给玩家看，不会进入模型调用。", path: ["player_facing_summary"], assist: true }),
+    field("情绪承诺", story.emotional_contract, (value) => setStory(["emotional_contract"], value), { type: "textarea", help: "希望玩家在整个故事中持续获得的感受。", path: ["emotional_contract"], assist: true })
+  );
+  container.appendChild(core);
+
+  const plot = card("AI 故事方向", "这些内容用于帮助旁白理解长期方向，其中隐藏真相不会进入玩家行动建议。" );
+  const plotData = story.ai_plot || {};
+  const fields = [
+    ["玩家在故事中的角色", "player_role"],
+    ["主要目标与核心矛盾", "main_goal"],
+    ["对抗力量或阻力", "opposition"],
+    ["世界规律", "world_rules"],
+    ["隐藏真相", "hidden_truth"],
+  ];
+  for (const [label, key] of fields) {
+    plot.appendChild(field(label, plotData[key], (value) => setStory(["ai_plot", key], value), { type: "textarea", help: key === "hidden_truth" ? "仅作为作者私有材料进入旁白，不直接展示给玩家。" : "", path: ["ai_plot", key], assist: true }));
+  }
+  container.appendChild(plot);
+}
+
+function renderPlayer(container) {
+  const story = currentStory();
+  const role = story.player_role || (story.player_role = { id: "player", constraints: [] });
+  const player = ensureObject(story, ["characters", "player"]);
+  container.appendChild(pageHead("玩家角色", "定义玩家是谁、想解决什么，以及旁白不能替玩家越过哪些边界。"));
+  const identity = card("角色身份", "玩家公开知道的身份与当前目标。" );
+  identity.append(
+    field("姓名", role.name, (value) => { role.name = value; player.name = value; markDirty(); }, { required: true }),
+    field("公开身份", role.public_identity, (value) => setStory(["player_role", "public_identity"], value), { type: "textarea", required: true, path: ["player_role", "public_identity"], assist: true }),
+    field("私人目标", role.private_goal, (value) => setStory(["player_role", "private_goal"], value), { type: "textarea", required: true, path: ["player_role", "private_goal"], assist: true }),
+    field("人物公开形象", player.public_profile, (value) => setStory(["characters", "player", "public_profile"], value), { type: "textarea", required: true, path: ["characters", "player", "public_profile"], assist: true })
+  );
+  container.appendChild(identity);
+  const boundaries = card("玩家边界", "每行一条，描述玩家不能凭空做到或旁白不能替玩家决定的事情。" );
+  boundaries.appendChild(linesField("约束", role.constraints || [], (value) => setStory(["player_role", "constraints"], value)));
+  const scenes = sceneOptions();
+  boundaries.appendChild(field("初始场景", getPath(story, ["initial_state", "positions", "player"], ""), (value) => setStory(["initial_state", "positions", "player"], value), { type: "select", options: [{ value: "", label: "请选择场景" }, ...scenes] }));
+  container.appendChild(boundaries);
+}
+
+function entityPage(container, config) {
+  const addButton = node("button", "btn primary", `＋ 手动新增${config.singular}`);
+  addButton.addEventListener("click", () => openEntityDialog(config.kind, config.singular));
+  container.appendChild(pageHead(config.title, config.description, addButton));
+  const shell = node("div", "entity-shell");
+  const listCard = card("", "");
+  listCard.classList.add("entity-list");
+  listCard.firstChild.remove();
+  const listHead = node("div", "entity-list-head");
+  listHead.append(node("strong", "", `${config.title} · ${Object.keys(config.collection).length}`));
+  const smallAdd = node("button", "mini-btn", "＋ 新增");
+  smallAdd.addEventListener("click", () => openEntityDialog(config.kind, config.singular));
+  listHead.appendChild(smallAdd);
+  const buttons = node("div", "entity-buttons");
+  for (const [id, value] of Object.entries(config.collection)) {
+    const button = node("button", "entity-button" + (selected[config.kind] === id ? " active" : ""));
+    button.append(node("strong", "", value.name || value.title || "未命名"), node("span", "", config.meta(value)));
+    button.addEventListener("click", () => { selected[config.kind] = id; renderContent(); });
+    buttons.appendChild(button);
+  }
+  listCard.append(listHead, buttons);
+  shell.appendChild(listCard);
+  const activeId = selected[config.kind];
+  if (!activeId || !config.collection[activeId]) {
+    const empty = node("div", "empty", `还没有${config.singular}。点击“手动新增${config.singular}”开始填写。`);
+    shell.appendChild(empty);
+  } else {
+    shell.appendChild(config.renderEditor(activeId, config.collection[activeId]));
+  }
+  container.appendChild(shell);
+}
+
+function renderCharacters(container) {
+  const characters = currentStory().characters || (currentStory().characters = {});
+  entityPage(container, {
+    kind: "characters", singular: "人物", title: "人物工作室",
+    description: "手动建立人物的公开形象、动机、压力和说话方式。底层人物标识和引用由系统维护。",
+    collection: characters,
+    meta: (value) => value.role === "player" ? "玩家角色" : (value.role || "尚未填写故事职责"),
+    renderEditor: renderCharacterEditor,
+  });
+}
+
+function renderCharacterEditor(id, character) {
+  const wrapper = node("section", "card");
+  const title = node("div", "editor-title");
+  title.appendChild(node("h4", "", character.name || "未命名人物"));
+  if (id !== "player") {
+    const remove = node("button", "btn danger", "删除人物");
+    remove.addEventListener("click", () => removeEntity("characters", id));
+    title.appendChild(remove);
+  }
+  wrapper.appendChild(title);
+  wrapper.appendChild(node("div", "section-label", "关键字段"));
+  const row = node("div", "field-row");
+  row.append(
+    field("姓名", character.name, (value) => { character.name = value; markDirty(); title.querySelector("h4").textContent = value || "未命名人物"; }, { required: true }),
+    field("故事职责", character.role, (value) => { character.role = value; markDirty(); }, { required: true, help: "例如：核心同伴、导师、竞争者。" })
+  );
+  wrapper.append(row, field("公开形象", character.public_profile, (value) => { character.public_profile = value; markDirty(); }, { type: "textarea", required: true, help: "玩家可以从外表、身份或行为直接知道的内容。", path: ["characters", id, "public_profile"], assist: true }));
+  if (id !== "player") {
+    wrapper.appendChild(node("div", "section-label", "人物内核"));
+    wrapper.append(
+      field("动机", character.motivation, (value) => { character.motivation = value; markDirty(); }, { type: "textarea", required: true, path: ["characters", id, "motivation"], assist: true }),
+      field("压力", character.pressure, (value) => { character.pressure = value; markDirty(); }, { type: "textarea", path: ["characters", id, "pressure"], assist: true }),
+      field("典型行为", character.behavior, (value) => { character.behavior = value; markDirty(); }, { type: "textarea", path: ["characters", id, "behavior"], assist: true })
+    );
+    wrapper.appendChild(node("div", "section-label", "语言与关系"));
+    wrapper.append(
+      field("说话方式", character.voice, (value) => { character.voice = value; markDirty(); }, { type: "textarea", required: true, path: ["characters", id, "voice"], assist: true }),
+      field("与玩家的初始关系", character.initial_relationship, (value) => { character.initial_relationship = value; markDirty(); }, { type: "textarea", required: true, path: ["characters", id, "initial_relationship"], assist: true }),
+      field("秘密", character.secret, (value) => optionalText(character, "secret", value), { type: "textarea", path: ["characters", id, "secret"], assist: true }),
+      field("习惯动作", character.mannerisms, (value) => optionalText(character, "mannerisms", value), { type: "textarea", path: ["characters", id, "mannerisms"], assist: true }),
+      field("旁白表演说明", character.narration_notes, (value) => optionalText(character, "narration_notes", value), { type: "textarea", path: ["characters", id, "narration_notes"], assist: true }),
+      linesField("示例对白", character.dialogue_examples || [], (value) => optionalList(character, "dialogue_examples", value))
+    );
+  }
+  wrapper.appendChild(node("div", "section-label", "故事关联"));
+  wrapper.appendChild(field("初始场景", getPath(currentStory(), ["initial_state", "positions", id], ""), (value) => setStory(["initial_state", "positions", id], value), { type: "select", options: [{ value: "", label: "请选择场景" }, ...sceneOptions()] }));
+  return wrapper;
+}
+
+function renderScenes(container) {
+  const scenes = currentStory().scenes || (currentStory().scenes = {});
+  entityPage(container, {
+    kind: "scenes", singular: "场景", title: "场景",
+    description: "用场景卡和出口连接组织故事空间，不需要维护任何场景引用。",
+    collection: scenes,
+    meta: (value) => `${(value.exits || []).length} 个出口`,
+    renderEditor: renderSceneEditor,
+  });
+}
+
+function renderSceneEditor(id, scene) {
+  const wrapper = node("section", "card");
+  const title = node("div", "editor-title");
+  title.appendChild(node("h4", "", scene.name || "未命名场景"));
+  const remove = node("button", "btn danger", "删除场景");
+  remove.addEventListener("click", () => removeEntity("scenes", id));
+  title.appendChild(remove);
+  wrapper.append(title, node("div", "section-label", "关键字段"));
+  wrapper.append(
+    field("名称", scene.name, (value) => { scene.name = value; markDirty(); title.querySelector("h4").textContent = value || "未命名场景"; }, { required: true }),
+    field("在故事中的作用", scene.purpose, (value) => { scene.purpose = value; markDirty(); }, { type: "textarea", required: true, path: ["scenes", id, "purpose"], assist: true }),
+    field("当前叙事方向", scene.goal, (value) => { scene.goal = value; markDirty(); }, { type: "textarea", required: true, path: ["scenes", id, "goal"], assist: true }),
+    field("进入场景时的环境文字", scene.entry_text, (value) => { scene.entry_text = value; markDirty(); }, { type: "textarea", tall: true, required: true, path: ["scenes", id, "entry_text"], assist: true })
+  );
+  wrapper.appendChild(node("div", "section-label", "场景出口"));
+  const exits = Array.isArray(scene.exits) ? scene.exits : (scene.exits = []);
+  const exitList = node("div", "inline-list");
+  exits.forEach((exit, index) => {
+    const row = node("div", "inline-row");
+    const select = makeSelect([{ value: "", label: "目标场景" }, ...sceneOptions(id)], exit.to || "", (value) => { exit.to = value; markDirty(); });
+    const label = node("input");
+    label.type = "text"; label.value = exit.label || ""; label.placeholder = "玩家看到的导航文字";
+    label.addEventListener("input", () => { exit.label = label.value; markDirty(); });
+    const removeExit = node("button", "remove-btn", "×");
+    removeExit.addEventListener("click", () => { exits.splice(index, 1); markDirty(); renderContent(); });
+    row.append(select, label, removeExit); exitList.appendChild(row);
+  });
+  wrapper.appendChild(exitList);
+  const addExit = node("button", "mini-btn", "＋ 添加出口");
+  addExit.style.marginTop = "9px";
+  addExit.addEventListener("click", () => { exits.push({ to: "", label: "" }); markDirty(); renderContent(); });
+  wrapper.appendChild(addExit);
+
+  wrapper.appendChild(node("div", "section-label", "环境对象"));
+  const objects = ensureObject(scene, ["available_objects", "environment"]);
+  const objectList = node("div", "inline-list");
+  Object.entries(objects).forEach(([objectId, objectLabel]) => {
+    const row = node("div", "inline-row wide");
+    const display = node("input");
+    display.type = "text"; display.value = String(objectLabel || ""); display.placeholder = "例如：挂满工具的墙";
+    display.addEventListener("input", () => { objects[objectId] = display.value; markDirty(); });
+    const note = node("div", "help", "可在场景中被旁白和玩家感知的静态对象");
+    const removeObject = node("button", "remove-btn", "×");
+    removeObject.addEventListener("click", () => { delete objects[objectId]; markDirty(); renderContent(); });
+    row.append(display, note, removeObject); objectList.appendChild(row);
+  });
+  wrapper.appendChild(objectList);
+  const addObject = node("button", "mini-btn", "＋ 添加环境对象");
+  addObject.style.marginTop = "9px";
+  addObject.addEventListener("click", () => {
+    const objectId = uniqueId(objects, "object");
+    objects[objectId] = "";
+    markDirty(); renderContent();
+  });
+  wrapper.appendChild(addObject);
+  return wrapper;
+}
+
+function renderItems(container) {
+  const items = currentStory().items || (currentStory().items = {});
+  entityPage(container, {
+    kind: "items", singular: "关键物品", title: "关键物品",
+    description: "只记录归属连续性对后续故事确实重要的物品，普通装饰留在场景描述中。",
+    collection: items,
+    meta: (value) => value.portable ? "可携带" : "不可携带",
+    renderEditor: renderItemEditor,
+  });
+}
+
+function renderItemEditor(id, item) {
+  const wrapper = node("section", "card");
+  const title = node("div", "editor-title");
+  title.appendChild(node("h4", "", item.name || "未命名物品"));
+  const remove = node("button", "btn danger", "删除物品");
+  remove.addEventListener("click", () => removeEntity("items", id));
+  title.appendChild(remove); wrapper.appendChild(title);
+  wrapper.append(
+    field("名称", item.name, (value) => { item.name = value; markDirty(); title.querySelector("h4").textContent = value || "未命名物品"; }, { required: true }),
+    field("描述", item.description, (value) => { item.description = value; markDirty(); }, { type: "textarea", required: true, path: ["items", id, "description"], assist: true }),
+    checkbox("可以被人物携带", item.portable, (value) => { item.portable = value; markDirty(); }),
+    checkbox("使用后会消耗", item.consumable, (value) => { item.consumable = value; markDirty(); }),
+    checkbox("被携带时对同场景玩家可见", item.visible_when_carried, (value) => { item.visible_when_carried = value; markDirty(); })
+  );
+  const placement = getPath(currentStory(), ["initial_state", "item_locations", id], {});
+  const currentValue = placement.type && placement.id ? `${placement.type}:${placement.id}` : "";
+  wrapper.appendChild(field("初始位置或持有人", currentValue, (value) => {
+    if (!value) delete ensureObject(currentStory(), ["initial_state", "item_locations"])[id];
+    else {
+      const [type, target] = value.split(":", 2);
+      ensureObject(currentStory(), ["initial_state", "item_locations"])[id] = { type, id: target };
+    }
+    markDirty();
+  }, { type: "select", options: placementOptions() }));
+  return wrapper;
+}
+
+function renderModules(container) {
+  const modules = currentStory().modules || {};
+  entityPage(container, {
+    kind: "modules", singular: "剧情模块", title: "剧情模块",
+    description: "手动提供剧情钩子、适用时机和升级方向。模块不会修改状态，也不会替玩家决定结果。",
+    collection: modules,
+    meta: (value) => categoryLabel(value.category),
+    renderEditor: renderModuleEditor,
+  });
+}
+
+function renderModuleEditor(id, module) {
+  const wrapper = node("section", "card");
+  const title = node("div", "editor-title");
+  title.appendChild(node("h4", "", module.title || "未命名模块"));
+  const remove = node("button", "btn danger", "删除模块");
+  remove.addEventListener("click", () => removeEntity("modules", id));
+  title.appendChild(remove); wrapper.appendChild(title);
+  const row = node("div", "field-row");
+  row.append(
+    field("标题", module.title, (value) => { module.title = value; markDirty(); title.querySelector("h4").textContent = value || "未命名模块"; }, { required: true }),
+    field("功能分类", module.category || "main", (value) => { module.category = value; markDirty(); }, { type: "select", options: [
+      { value: "main", label: "主线" }, { value: "character", label: "人物" }, { value: "pressure", label: "压力" }, { value: "aftermath", label: "余波" }, { value: "side", label: "支线" },
+    ] })
+  );
+  wrapper.append(row,
+    field("叙事目的", module.purpose, (value) => { module.purpose = value; markDirty(); }, { type: "textarea", required: true, path: ["modules", id, "purpose"], assist: true }),
+    field("抛给玩家的钩子", module.hook, (value) => { module.hook = value; markDirty(); }, { type: "textarea", required: true, path: ["modules", id, "hook"], assist: true }),
+    field("什么时候适合出现", module.trigger, (value) => { module.trigger = value; markDirty(); }, { type: "textarea", required: true, help: "使用自然语言描述，运行时由旁白判断语义。", path: ["modules", id, "trigger"], assist: true }),
+    field("玩家接住钩子后的升级方向", module.escalation, (value) => optionalText(module, "escalation", value), { type: "textarea", path: ["modules", id, "escalation"], assist: true }),
+    field("怎样算自然收尾", module.resolution, (value) => optionalText(module, "resolution", value), { type: "textarea", path: ["modules", id, "resolution"], assist: true }),
+    field("玩家忽略时怎样消退", module.fallback, (value) => optionalText(module, "fallback", value), { type: "textarea", path: ["modules", id, "fallback"], assist: true })
+  );
+  wrapper.appendChild(node("div", "section-label", "编排建议"));
+  const controls = node("div", "field-row");
+  controls.append(
+    field("最早出现回合", module.min_turn ?? "", (value) => optionalNumber(module, "min_turn", value), { type: "number", min: 1 }),
+    field("优先级", module.priority || "normal", (value) => { module.priority = value; markDirty(); }, { type: "select", options: [{ value: "low", label: "低" }, { value: "normal", label: "普通" }, { value: "high", label: "高" }] })
+  );
+  wrapper.append(controls, checkbox("可以重复出现", module.repeatable, (value) => { module.repeatable = value; markDirty(); }));
+  wrapper.appendChild(linesField("自由标签", module.tags || [], (value) => optionalList(module, "tags", value)));
+
+  wrapper.appendChild(node("div", "section-label", "涉及的人物、场景和物品"));
+  const involved = new Set(module.involves || []);
+  const tagGrid = node("div", "tag-grid");
+  for (const entity of allEntityOptions()) {
+    const label = node("label", "tag-check");
+    const input = node("input"); input.type = "checkbox"; input.checked = involved.has(entity.value);
+    input.addEventListener("change", () => {
+      if (input.checked) involved.add(entity.value); else involved.delete(entity.value);
+      module.involves = [...involved]; if (!module.involves.length) delete module.involves; markDirty();
+    });
+    const copy = node("span"); copy.append(node("span", "", entity.label), node("small", "", entity.kind));
+    label.append(input, copy); tagGrid.appendChild(label);
+  }
+  wrapper.appendChild(tagGrid);
+
+  wrapper.appendChild(node("div", "section-label", "硬依赖"));
+  const requirements = Array.isArray(module.requires) ? module.requires : (module.requires = []);
+  const requirementList = node("div", "inline-list");
+  requirements.forEach((requirement, index) => {
+    const row = node("div", "inline-row");
+    row.append(
+      makeSelect([{ value: "", label: "依赖的剧情模块" }, ...moduleOptions(id)], requirement.module || "", (value) => { requirement.module = value; markDirty(); }),
+      makeSelect([{ value: "offered", label: "钩子出现过" }, { value: "engaged", label: "玩家已经参与" }, { value: "resolved", label: "已经解决" }, { value: "dropped", label: "已经消退" }], requirement.status || "offered", (value) => { requirement.status = value; markDirty(); }),
+    );
+    const removeReq = node("button", "remove-btn", "×");
+    removeReq.addEventListener("click", () => { requirements.splice(index, 1); markDirty(); renderContent(); });
+    row.appendChild(removeReq); requirementList.appendChild(row);
+  });
+  wrapper.appendChild(requirementList);
+  const addRequirement = node("button", "mini-btn", "＋ 添加依赖");
+  addRequirement.style.marginTop = "9px";
+  addRequirement.addEventListener("click", () => { requirements.push({ module: "", status: "offered" }); markDirty(); renderContent(); });
+  wrapper.appendChild(addRequirement);
+  return wrapper;
+}
+
+function renderProse(container) {
+  const story = currentStory();
+  container.appendChild(pageHead("开场与文风", "直接手写玩家开场和叙事规则；这些文字会在运行时分别进入正确的上下文。"));
+  const opening = card("开场正文", "玩家启动故事时看到一次，同时作为旁白续写的文风与事实锚。" );
+  opening.appendChild(field("正文", story.opening_narration, (value) => setStory(["opening_narration"], value), { type: "textarea", tall: true, path: ["opening_narration"], assist: true }));
+  container.appendChild(opening);
+  const guidelines = card("叙事指南与关键提醒", "叙事指南只进入旁白；关键提醒最多保留 4 条。" );
+  guidelines.append(
+    linesField("叙事指南", story.narrative_guidelines || [], (value) => optionalTopList("narrative_guidelines", value)),
+    linesField("关键提醒", story.critical_reminders || [], (value) => optionalTopList("critical_reminders", value), { help: "每行一条，最多 4 条最高优先级规则。" })
+  );
+  container.appendChild(guidelines);
+  const style = card("文风", "这些字段帮助旁白保持稳定的镜头、语气与对话方式。" );
+  const bible = story.style_bible || (story.style_bible = {});
+  style.append(
+    field("语气", bible.tone, (value) => { bible.tone = value; markDirty(); }, { type: "textarea", path: ["style_bible", "tone"], assist: true }),
+    field("视角与镜头", bible.camera, (value) => { bible.camera = value; markDirty(); }, { type: "textarea", path: ["style_bible", "camera"], assist: true }),
+    field("对话风格", bible.dialogue, (value) => { bible.dialogue = value; markDirty(); }, { type: "textarea", path: ["style_bible", "dialogue"], assist: true }),
+    linesField("应避免的写法", bible.avoid || [], (value) => { bible.avoid = value; markDirty(); })
+  );
+  container.appendChild(style);
+  const global = card("全局边界", "描述整个故事长期成立的软边界，不会自动变成代码规则。" );
+  const rules = story.global_rules || (story.global_rules = {});
+  global.appendChild(linesField("边界", rules.boundaries || [], (value) => { rules.boundaries = value; markDirty(); }));
+  container.appendChild(global);
+}
+
+function renderValidation(container) {
+  const refresh = node("button", "btn", "保存并重新检查");
+  refresh.addEventListener("click", async () => { await saveNow(); renderContent(); toast("检查结果已更新"); });
+  container.appendChild(pageHead("检查结果", "结构和引用问题会阻止试玩；你仍然可以继续保存和编辑不完整草稿。", refresh));
+  const summary = card("故事状态");
+  const chips = node("div", "issue-summary");
+  chips.append(
+    node("span", report().playable ? "chip good" : "chip bad", report().playable ? "结构检查通过" : `${report().errors.length} 个阻塞问题`),
+    node("span", report().warnings.length ? "chip warn" : "chip good", `${report().warnings.length} 个提醒`)
+  );
+  summary.appendChild(chips); container.appendChild(summary);
+  const errors = card("阻塞问题", "解决后才能创建试玩会话。" );
+  const errorList = node("div", "issues");
+  if (!report().errors.length) errorList.appendChild(node("div", "notice", "没有结构或引用错误。"));
+  else for (const message of report().errors) errorList.appendChild(node("div", "issue", humanIssue(message)));
+  errors.appendChild(errorList); container.appendChild(errors);
+  if (report().warnings.length) {
+    const warnings = card("提醒"); const list = node("div", "issues");
+    for (const message of report().warnings) list.appendChild(node("div", "issue warning", humanIssue(message)));
+    warnings.appendChild(list); container.appendChild(warnings);
+  }
+}
+
+function sceneOptions(exclude = null) {
+  return Object.entries(currentStory()?.scenes || {}).filter(([id]) => id !== exclude).map(([value, scene]) => ({ value, label: scene.name || "未命名场景" }));
+}
+
+function moduleOptions(exclude = null) {
+  return Object.entries(currentStory()?.modules || {}).filter(([id]) => id !== exclude).map(([value, spec]) => ({ value, label: spec.title || "未命名模块" }));
+}
+
+function placementOptions() {
+  const options = [{ value: "", label: "请选择初始位置" }];
+  for (const [id, character] of Object.entries(currentStory()?.characters || {})) options.push({ value: `carried_by:${id}`, label: `由人物携带 · ${character.name || "未命名人物"}` });
+  for (const [id, scene] of Object.entries(currentStory()?.scenes || {})) options.push({ value: `board:${id}`, label: `位于场景 · ${scene.name || "未命名场景"}` });
+  return options;
+}
+
+function allEntityOptions() {
+  const options = [];
+  for (const [value, item] of Object.entries(currentStory()?.characters || {})) options.push({ value, label: item.name || "未命名人物", kind: "人物" });
+  for (const [value, item] of Object.entries(currentStory()?.scenes || {})) options.push({ value, label: item.name || "未命名场景", kind: "场景" });
+  for (const [value, item] of Object.entries(currentStory()?.items || {})) options.push({ value, label: item.name || "未命名物品", kind: "物品" });
+  return options;
+}
+
+function makeSelect(options, value, onChange) {
+  const select = node("select");
+  for (const option of options) {
+    const element = node("option", "", option.label); element.value = option.value; element.selected = String(option.value) === String(value); select.appendChild(element);
+  }
+  select.addEventListener("change", () => onChange(select.value));
+  return select;
+}
+
+function categoryLabel(value) {
+  return { main: "主线", character: "人物", pressure: "压力", aftermath: "余波", side: "支线" }[value] || "尚未分类";
+}
+
+function uniqueId(collection, prefix) {
+  let index = 1;
+  while (collection[`${prefix}_${index}`]) index += 1;
+  return `${prefix}_${index}`;
+}
+
+function idFromName(name, prefix, collection) {
+  const ascii = name.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  let base = ascii && /^[a-z]/.test(ascii) ? ascii : prefix;
+  if (!collection[base]) return base;
+  let index = 2;
+  while (collection[`${base}_${index}`]) index += 1;
+  return `${base}_${index}`;
+}
+
+function optionalText(object, key, value) {
+  if (value.trim()) object[key] = value; else delete object[key];
+  markDirty();
+}
+
+function optionalList(object, key, value) {
+  if (value.length) object[key] = value; else delete object[key];
+  markDirty();
+}
+
+function optionalNumber(object, key, value) {
+  if (value === null) delete object[key]; else object[key] = value;
+  markDirty();
+}
+
+function optionalTopList(key, value) {
+  if (value.length) currentStory()[key] = value; else delete currentStory()[key];
+  markDirty();
+}
+
+function openEntityDialog(kind, singular) {
+  entityKind = kind;
+  $("entityDialogTitle").textContent = `手动新增${singular}`;
+  $("entityName").value = "";
+  $("entityDialog").showModal();
+  setTimeout(() => $("entityName").focus(), 30);
+}
+
+function addEntity(kind, name) {
+  const story = currentStory();
+  if (kind === "characters") {
+    const collection = story.characters || (story.characters = {});
+    const id = idFromName(name, uniqueId(collection, "character"), collection);
+    collection[id] = { name, role: "supporting_character", public_profile: "", motivation: "", voice: "", initial_relationship: "" };
+    ensureObject(story, ["initial_state", "positions"])[id] = Object.keys(story.scenes || {})[0] || "";
+    selected.characters = id;
+  } else if (kind === "scenes") {
+    const collection = story.scenes || (story.scenes = {});
+    const id = idFromName(name, uniqueId(collection, "scene"), collection);
+    collection[id] = { name, purpose: "", goal: "", entry_text: "", exits: [], available_objects: {} };
+    selected.scenes = id;
+  } else if (kind === "items") {
+    const collection = story.items || (story.items = {});
+    const id = idFromName(name, uniqueId(collection, "item"), collection);
+    collection[id] = { name, description: "", portable: true, consumable: false, visible_when_carried: false };
+    selected.items = id;
+  } else if (kind === "modules") {
+    const collection = story.modules || (story.modules = {});
+    const id = idFromName(name, uniqueId(collection, "module"), collection);
+    collection[id] = { category: "main", title: name, purpose: "", hook: "", trigger: "", priority: "normal" };
+    selected.modules = id;
+  }
+  markDirty();
+  renderAll();
+}
+
+function removeEntity(kind, id) {
+  const singular = { characters: "人物", scenes: "场景", items: "物品", modules: "剧情模块" }[kind];
+  if (!window.confirm(`确定删除这个${singular}吗？相关引用会一并清理。`)) return;
+  const story = currentStory();
+  delete (story[kind] || {})[id];
+  if (kind === "characters") {
+    delete ensureObject(story, ["initial_state", "positions"])[id];
+    for (const [itemId, placement] of Object.entries(getPath(story, ["initial_state", "item_locations"], {}))) if (placement.type === "carried_by" && placement.id === id) delete story.initial_state.item_locations[itemId];
+    for (const opening of Object.values(story.openings || {})) if (opening.positions) delete opening.positions[id];
+  } else if (kind === "scenes") {
+    for (const scene of Object.values(story.scenes || {})) scene.exits = (scene.exits || []).filter((exit) => exit.to !== id);
+    for (const [characterId, sceneId] of Object.entries(getPath(story, ["initial_state", "positions"], {}))) if (sceneId === id) delete story.initial_state.positions[characterId];
+    for (const [itemId, placement] of Object.entries(getPath(story, ["initial_state", "item_locations"], {}))) if (placement.type === "board" && placement.id === id) delete story.initial_state.item_locations[itemId];
+    for (const opening of Object.values(story.openings || {})) {
+      for (const [characterId, sceneId] of Object.entries(opening.positions || {})) if (sceneId === id) delete opening.positions[characterId];
+    }
+  } else if (kind === "items") {
+    delete ensureObject(story, ["initial_state", "item_locations"])[id];
+  } else if (kind === "modules") {
+    for (const module of Object.values(story.modules || {})) {
+      if (module.requires) module.requires = module.requires.filter((requirement) => requirement.module !== id);
+      if (module.requires && !module.requires.length) delete module.requires;
+    }
+  }
+  if (["characters", "scenes", "items"].includes(kind)) {
+    for (const module of Object.values(story.modules || {})) {
+      if (module.involves) module.involves = module.involves.filter((entityId) => entityId !== id);
+      if (module.involves && !module.involves.length) delete module.involves;
+    }
+  }
+  if (kind === "modules" && !Object.keys(story.modules || {}).length) delete story.modules;
+  selected[kind] = Object.keys(story[kind] || {})[0] || null;
+  markDirty(); renderAll();
+}
+
+function humanIssue(message) {
+  return message
+    .replace(/^root missing required field: /, "缺少故事字段：")
+    .replace(/ missing required field: /, " 缺少必填内容：")
+    .replace(/ must be a non-empty string\.?$/, " 不能为空。")
+    .replace(/ must be a mapping\.?$/, " 必须是完整的内容分组。")
+    .replace(/ must be a list\.?$/, " 必须是一个列表。")
+    .replace(/references unknown scene '([^']+)'\.?/, "引用了不存在的场景“$1”。")
+    .replace(/references unknown entity '([^']+)'\.?/, "引用了不存在的内容“$1”。")
+    .replace(/missing character '([^']+)'\.?/, "缺少人物“$1”的初始场景。")
+    .replace(/missing item '([^']+)'\.?/, "缺少物品“$1”的初始位置。")
+    .replace(/root\./g, "故事 · ")
+    .replace(/characters\./g, "人物 · ")
+    .replace(/scenes\./g, "场景 · ")
+    .replace(/modules\./g, "剧情模块 · ")
+    .replace(/initial_state\.positions/g, "人物初始位置")
+    .replace(/initial_state\.item_locations/g, "物品初始位置")
+    .replace(/player_role/g, "玩家角色");
+}
+
+function operationLabel(operation) {
+  return { ideas: "寻找灵感", complete: "补全字段", polish: "润色文字", check: "一致性检查" }[operation] || "创作辅助";
+}
+
+async function openAssist(operation, path, label, currentText) {
+  assistTarget = { operation, path: reviewPath(path), label, currentText };
+  assistResult = null;
+  $("assistantTitle").textContent = `${label} · ${operationLabel(operation)}`;
+  $("assistantHint").textContent = operation === "check" ? "助手只指出问题，不会修改故事。" : "候选不会自动写入故事，你可以先比较再决定。";
+  $("assistInstruction").value = "";
+  $("assistantDialog").showModal();
+  await runAssist();
+}
+
+async function runAssist() {
+  if (!assistTarget || !detail) return;
+  const results = $("assistantResults");
+  results.textContent = "";
+  results.appendChild(node("div", "assistant-loading", "正在阅读相关设定并准备候选…"));
+  $("rerunAssistBtn").disabled = true;
+  try {
+    await saveNow();
+    assistResult = await api(`/api/stories/${encodeURIComponent(detail.id)}/assist`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: detail.revision,
+        operation: assistTarget.operation,
+        path: assistTarget.path,
+        label: assistTarget.label,
+        instruction: $("assistInstruction").value.trim(),
+      }),
+    });
+    renderAssistResults();
+  } catch (error) {
+    results.textContent = "";
+    results.appendChild(node("div", "issue", error.message));
+  } finally {
+    $("rerunAssistBtn").disabled = false;
+  }
+}
+
+function renderAssistResults() {
+  const results = $("assistantResults");
+  results.textContent = "";
+  if (!assistResult) return;
+  if (assistResult.operation === "polish" && assistResult.original_text) {
+    results.append(node("div", "help", "创作者原文"), node("div", "original-box", assistResult.original_text));
+  }
+  if (assistResult.observations?.length) {
+    const issues = node("div", "issues");
+    for (const observation of assistResult.observations) issues.appendChild(node("div", "issue warning", observation));
+    results.appendChild(issues);
+  }
+  for (const candidate of assistResult.candidates || []) {
+    const card = node("article", "candidate");
+    card.appendChild(node("div", "candidate-text", candidate.text));
+    if (candidate.rationale) card.appendChild(node("div", "candidate-why", candidate.rationale));
+    const actions = node("div", "candidate-actions");
+    const later = node("button", "btn", "采用，稍后审阅");
+    later.addEventListener("click", () => applyCandidate(candidate.text, "unreviewed"));
+    const reviewed = node("button", "btn primary", "采用并确认");
+    reviewed.addEventListener("click", () => applyCandidate(candidate.text, "reviewed"));
+    actions.append(later, reviewed); card.appendChild(actions); results.appendChild(card);
+  }
+  if (!(assistResult.candidates || []).length && !(assistResult.observations || []).length) {
+    results.appendChild(node("div", "notice", "助手没有提出需要修改的内容。"));
+  }
+  results.appendChild(node("div", "help", `由 ${assistResult.model} 生成 · 采用前不会修改故事`));
+}
+
+function applyCandidate(text, status) {
+  if (!assistTarget || !assistResult) return;
+  if (assistResult.revision !== detail.revision) {
+    toast("故事已经变化，请重新生成候选");
+    return;
+  }
+  setPath(detail.story, assistTarget.path.split("."), text, {
+    source: "llm",
+    status,
+    operation: assistTarget.operation,
+  });
+  $("assistantDialog").close();
+  renderContent();
+  updateChrome();
+  toast(status === "reviewed" ? "候选已采用并确认" : "候选已采用，已加入审阅队列");
+}
+
+async function markFieldReviewed(path) {
+  try {
+    await saveNow();
+    const payload = await api(`/api/stories/${encodeURIComponent(detail.id)}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ revision: detail.revision, path }),
+    });
+    detail.review = payload.review;
+    delete pendingReviewEdits[path];
+    renderContent(); updateChrome(); toast("这段 LLM 内容已经确认");
+  } catch (error) { toast(error.message); }
+}
+
+function openCreateDialog() {
+  $("newTitle").value = "";
+  newStoryGenreTags = ["未分类"];
+  const host = $("newGenreField");
+  host.textContent = "";
+  host.appendChild(genreTagField(newStoryGenreTags, (tags) => { newStoryGenreTags = tags; }, {
+    required: true,
+    registerCommit: (commit) => { commitNewGenreInput = commit; },
+    help: "用于未来故事库的筛选和归类；不确定时可以暂时保留“未分类”。",
+  }));
+  $("createStoryDialog").showModal();
+  setTimeout(() => $("newTitle").focus(), 30);
+}
+
+async function createStory() {
+  commitNewGenreInput();
+  const title = $("newTitle").value.trim();
+  if (!title) { toast("请先填写故事名称"); return; }
+  if (!newStoryGenreTags.length) { toast("请至少添加一个题材或类型标签"); return; }
+  const created = await api("/api/stories", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, genre_tags: newStoryGenreTags, language: $("newLanguage").value }),
+  });
+  $("createStoryDialog").close();
+  await loadStories(created.id);
+  activeSection = "overview";
+  renderAll();
+  toast("空白故事已创建，可以开始手动填写");
+}
+
+async function startPlaytest() {
+  await saveNow();
+  if (!report().playable) { activeSection = "validation"; renderAll(); toast("请先解决阻塞问题"); return; }
+  try {
+    const data = await api(`/api/stories/${encodeURIComponent(detail.id)}/playtest`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    window.open(data.url, "_blank", "noopener");
+  } catch (error) { toast(error.message); }
+}
+
+$("newStoryBtn").addEventListener("click", openCreateDialog);
+$("cancelCreateBtn").addEventListener("click", () => $("createStoryDialog").close());
+$("createStoryForm").addEventListener("submit", (event) => { event.preventDefault(); createStory().catch((error) => toast(error.message)); });
+$("cancelEntityBtn").addEventListener("click", () => $("entityDialog").close());
+$("entityForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = $("entityName").value.trim();
+  if (!name) { toast("请填写名称"); return; }
+  $("entityDialog").close(); addEntity(entityKind, name);
+});
+$("saveBtn").addEventListener("click", saveNow);
+$("playBtn").addEventListener("click", startPlaytest);
+$("rerunAssistBtn").addEventListener("click", runAssist);
+$("closeAssistantBtn").addEventListener("click", () => $("assistantDialog").close());
+$("mobileMenuBtn").addEventListener("click", () => document.body.classList.toggle("menu-open"));
+window.addEventListener("beforeunload", (event) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
+
+loadStories().catch((error) => {
+  $("content").appendChild(node("div", "issue", `工作室无法启动：${error.message}`));
+  toast(error.message);
+});
+</script>
+</body>
+</html>

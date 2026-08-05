@@ -244,6 +244,8 @@ const sendBtn = $("sendBtn");
 const ideasBtn = $("ideasBtn");
 const overlay = $("overlay");
 const ideasList = $("ideasList");
+const apiBase = new URLSearchParams(window.location.search).get("api") || "/api";
+const apiUrl = (path) => apiBase + path;
 
 const NOTICES = {
   physical_conflict: "（上面这段与物理事实核对冲突，已撤回，正在重写……）",
@@ -451,7 +453,7 @@ function sendCurrentInput() {
   const text = input.value.trim();
   if (!text || busy) return;
   input.value = "";
-  runTurn("/api/turn", { text }, text);
+  runTurn(apiUrl("/turn"), { text }, text);
 }
 
 function renderIdeas(actions) {
@@ -475,7 +477,7 @@ function renderIdeas(actions) {
     card.append(title, body, why);
     card.addEventListener("click", () => {
       overlay.hidden = true;
-      runTurn("/api/idea", { suggestion_id: action.suggestion_id }, null);
+      runTurn(apiUrl("/idea"), { suggestion_id: action.suggestion_id }, null);
     });
     ideasList.appendChild(card);
   }
@@ -487,7 +489,7 @@ async function openIdeas(refresh) {
   ideasList.innerHTML = '<div class="sheet-note">正在生成提案……</div>';
   $("refreshBtn").disabled = true;
   try {
-    const res = await fetch("/api/ideas", {
+    const res = await fetch(apiUrl("/ideas"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh }),
@@ -515,7 +517,7 @@ async function openIdeas(refresh) {
 
 async function boot() {
   try {
-    const res = await fetch("/api/state");
+    const res = await fetch(apiUrl("/state"));
     const data = await res.json();
     setStatus(data.snapshot);
     if (data.developer?.editor_comparison) {

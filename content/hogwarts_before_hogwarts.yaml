@@ -16,7 +16,12 @@ id: hogwarts_before_hogwarts
 title: "霍格沃茨之前的霍格沃茨"
 version: 0.2.0
 language: zh-CN
-genre: ancient_magic_hogwarts_mystery
+genre: "奇幻 · 悬疑 · 魔法学院 · 远古魔法"
+genre_tags:
+  - "奇幻"
+  - "悬疑"
+  - "魔法学院"
+  - "远古魔法"
 
 design_goal: |
   将“霍格沃茨地下的远古学院遗址”与“最后一个不用魔杖的巫师”结合成一条故事线：

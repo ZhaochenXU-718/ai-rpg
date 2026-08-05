@@ -65,6 +65,10 @@ python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm kimi
 # Web 客户端（同一引擎，浏览器访问 http://127.0.0.1:8642）
 python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi
 
+# 故事工作室（浏览器访问 http://127.0.0.1:8643）
+# mock 提供离线开发建议；也可改为 deepseek 或 kimi 使用真实创作助手。
+python server/studio.py --llm mock
+
 # 可选行编辑器：建议先用 shadow 收集初稿/候选稿对照
 python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi --prose-editor shadow
 
@@ -80,12 +84,17 @@ CLI 命令：`ideas`、`idea <编号>`、`who`、`state`、`memory`、`memory ra
 
 Web 客户端（`server/web.py` + `web/index.html`，零额外依赖）：旁白按 SSE 流式逐块显示；「灵感」按钮弹出行动提案卡，点击卡片直接作为行动执行，支持刷新重新生成；刷新页面后从已提交事件恢复完整对局记录。开发时可用 `--show-editor-comparison` 显示逐回合编辑前后对照，该开关要求编辑器处于 `shadow` 或 `on`。一个服务进程承载一个会话，与 CLI 相同；`undo`/`memory` 等调试入口暂未搬入 Web，需要时仍用 CLI。
 
+故事工作室（`server/studio.py` + `web/studio.html`）把 YAML 隐藏在服务边界之后：创作者通过故事蓝图、玩家角色、人物、场景、关键物品、剧情模块、开场和文风页面手动创作；工作室自动生成稳定 ID、维护实体引用、原子保存草稿并复用现有内容校验。通过全部阻塞检查后，可以从工作室启动使用当前草稿快照的 Web 试玩会话。“题材与类型”采用可自由输入的建议标签，结构化标签可供未来故事库筛选与归类，但不触发引擎专属规则。
+
+关键文本字段提供「灵感」「补全/润色」「检查」三类创作者 LLM 操作。候选生成时不会修改故事；创作者可以选择「采用，稍后审阅」或「采用并确认」。采用后，字段来源与审阅状态保存在独立创作元数据中，未审阅内容会持续提示。`--llm deepseek` 使用 `DEEPSEEK_API_KEY`，`--llm kimi` 使用 `KIMI_API_KEY`；`mock` 不需要网络或 API key。完整故事的分阶段批量生成仍是后续阶段。
+
 ## 文档
 
 - [引擎守则](docs/engine-principles.md)
 - [叙事协议](docs/narrative-first-protocol.md)
 - [作者契约](docs/authoring-contract.md)
 - [内容 schema](docs/content-schema.md)
+- [故事工作室方案设计](docs/story-studio-design.md)
 - [状态时间线](docs/state-timeline.md)
 - [记忆与小结](docs/memory-and-summaries.md)
 - [行动提案](docs/action-suggestions.md)

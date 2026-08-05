@@ -1,0 +1,259 @@
+{
+  "story_id": "story_fe082192",
+  "content_revision": "352ae3cd9c8de0bb",
+  "default_source": "manual",
+  "fields": {
+    "premise": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T09:37:06+00:00"
+    },
+    "emotional_contract": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T09:42:59+00:00"
+    },
+    "player_facing_summary": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T09:43:14+00:00"
+    },
+    "ai_plot.player_role": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T09:48:06+00:00"
+    },
+    "ai_plot.main_goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T09:49:52+00:00"
+    },
+    "ai_plot.opposition": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T09:50:06+00:00"
+    },
+    "ai_plot.world_rules": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T09:59:06+00:00"
+    },
+    "player_role.constraints": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T09:59:57+00:00"
+    },
+    "ai_plot.hidden_truth": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:03:15+00:00"
+    },
+    "player_role.public_identity": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:03:40+00:00"
+    },
+    "player_role.private_goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:03:57+00:00"
+    },
+    "characters.player.public_profile": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:04:18+00:00"
+    },
+    "characters.character_1.public_profile": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:19:04+00:00"
+    },
+    "characters.character_1.motivation": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:20:10+00:00"
+    },
+    "characters.character_1.initial_relationship": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:21:21+00:00"
+    },
+    "characters.character_1.voice": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:22:11+00:00"
+    },
+    "characters.character_1.secret": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:22:32+00:00"
+    },
+    "characters.character_2.public_profile": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:26:37+00:00"
+    },
+    "characters.character_2.motivation": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:29:01+00:00"
+    },
+    "characters.character_2.voice": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T10:30:12+00:00"
+    },
+    "characters.character_2.initial_relationship": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:00:18+00:00"
+    },
+    "characters.character_2.secret": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:00:23+00:00"
+    },
+    "characters.character_3.public_profile": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:00:50+00:00"
+    },
+    "characters.character_3.motivation": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:00:56+00:00"
+    },
+    "characters.character_3.voice": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:01:04+00:00"
+    },
+    "characters.character_3.initial_relationship": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:01:10+00:00"
+    },
+    "characters.character_3.secret": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:01:16+00:00"
+    },
+    "characters.character_4.public_profile": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:01:49+00:00"
+    },
+    "characters.character_4.motivation": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:01:54+00:00"
+    },
+    "characters.character_4.voice": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:02:00+00:00"
+    },
+    "characters.character_4.initial_relationship": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:02:08+00:00"
+    },
+    "characters.character_4.secret": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:02:17+00:00"
+    },
+    "characters.character_5.public_profile": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:02:54+00:00"
+    },
+    "characters.character_5.motivation": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:03:00+00:00"
+    },
+    "characters.character_5.voice": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:03:09+00:00"
+    },
+    "characters.character_5.initial_relationship": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:03:18+00:00"
+    },
+    "characters.character_5.secret": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:03:23+00:00"
+    },
+    "characters.character_6.public_profile": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:03:48+00:00"
+    },
+    "characters.character_6.motivation": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:03:54+00:00"
+    },
+    "characters.character_6.voice": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:04:01+00:00"
+    },
+    "characters.character_6.initial_relationship": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:04:09+00:00"
+    },
+    "characters.character_6.secret": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-05T11:04:29+00:00"
+    }
+  }
+}

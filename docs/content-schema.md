@@ -6,7 +6,7 @@
 
 必填：`id`、`title`、`version`、`schema_version`、`content_profile`、`language`、`genre`、`premise`、`player_role`、`style_bible`、`global_rules`、`initial_state`、`characters`、`scenes`。
 
-`items` 可选。`design_goal`、`target_duration_minutes`、`authoring_notes` 等说明字段可保留。
+`items` 可选。`genre_tags` 是建议使用的结构化题材标签列表，用于故事库筛选和给创作辅助模型提供背景；标签不触发引擎题材分支。`genre` 保留为向后兼容的可读摘要。`design_goal`、`target_duration_minutes`、`authoring_notes` 等说明字段可保留。
 
 ## 作者叙事分层（可选）
 

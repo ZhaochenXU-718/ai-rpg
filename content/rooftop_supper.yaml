@@ -4,7 +4,10 @@ version: 0.5.0
 schema_version: 2
 content_profile: pre_pivot_archive
 language: zh-CN
-genre: urban_slice_of_life
+genre: "都市 · 日常"
+genre_tags:
+  - "都市"
+  - "日常"
 target_duration_minutes: 15-25
 
 archive_status:
