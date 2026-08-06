@@ -1,6 +1,6 @@
 {
   "story_id": "story_fe082192",
-  "content_revision": "352ae3cd9c8de0bb",
+  "content_revision": "2e2510767e9c1d3a",
   "default_source": "manual",
   "fields": {
     "premise": {
@@ -254,6 +254,414 @@
       "status": "manual",
       "operation": null,
       "updated_at": "2026-08-05T11:04:29+00:00"
+    },
+    "items.item_1.description": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T02:47:41+00:00"
+    },
+    "items.item_2.description": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T02:52:32+00:00"
+    },
+    "items.item_3.description": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T02:53:14+00:00"
+    },
+    "items.item_4.description": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T02:53:45+00:00"
+    },
+    "items.item_5.description": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T02:54:24+00:00"
+    },
+    "items.item_6.description": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T02:56:04+00:00"
+    },
+    "scenes.scene_6.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:03:23+00:00"
+    },
+    "scenes.scene_6.goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:03:32+00:00"
+    },
+    "scenes.scene_6.entry_text": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:03:55+00:00"
+    },
+    "scenes.scene_7.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:04:31+00:00"
+    },
+    "scenes.scene_7.goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:04:44+00:00"
+    },
+    "scenes.scene_7.entry_text": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:04:53+00:00"
+    },
+    "scenes.scene_2.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:05:06+00:00"
+    },
+    "scenes.scene_2.goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:05:13+00:00"
+    },
+    "scenes.scene_2.entry_text": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:05:20+00:00"
+    },
+    "scenes.scene_3.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:05:34+00:00"
+    },
+    "scenes.scene_3.goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:05:40+00:00"
+    },
+    "scenes.scene_3.entry_text": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:05:46+00:00"
+    },
+    "scenes.scene_4.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:05:55+00:00"
+    },
+    "scenes.scene_4.goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:06:02+00:00"
+    },
+    "scenes.scene_4.entry_text": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:06:08+00:00"
+    },
+    "scenes.scene_8.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:06:41+00:00"
+    },
+    "scenes.scene_8.goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:06:47+00:00"
+    },
+    "scenes.scene_8.entry_text": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:06:52+00:00"
+    },
+    "scenes.scene_1.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:07:05+00:00"
+    },
+    "scenes.scene_1.goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:07:12+00:00"
+    },
+    "scenes.scene_1.entry_text": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:07:19+00:00"
+    },
+    "scenes.scene_5.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:07:30+00:00"
+    },
+    "scenes.scene_5.goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:07:35+00:00"
+    },
+    "scenes.scene_5.entry_text": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:07:41+00:00"
+    },
+    "initial_state.positions.player": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:08:14+00:00"
+    },
+    "initial_state.positions.character_1": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:08:33+00:00"
+    },
+    "initial_state.positions.character_2": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:08:40+00:00"
+    },
+    "initial_state.positions.character_3": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:08:49+00:00"
+    },
+    "initial_state.positions.character_4": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:09:00+00:00"
+    },
+    "initial_state.positions.character_5": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:09:19+00:00"
+    },
+    "initial_state.positions.character_6": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:09:51+00:00"
+    },
+    "modules.module_2.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:17:47+00:00"
+    },
+    "modules.module_2.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:18:06+00:00"
+    },
+    "modules.module_2.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:18:12+00:00"
+    },
+    "modules.module_3.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:19:21+00:00"
+    },
+    "modules.module_3.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:19:47+00:00"
+    },
+    "modules.module_3.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:19:53+00:00"
+    },
+    "modules.module_4.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:21:37+00:00"
+    },
+    "modules.module_4.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:21:44+00:00"
+    },
+    "modules.module_4.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:21:50+00:00"
+    },
+    "modules.module_5.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:22:32+00:00"
+    },
+    "modules.module_5.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:22:43+00:00"
+    },
+    "modules.module_5.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:22:49+00:00"
+    },
+    "modules.module_6.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:23:24+00:00"
+    },
+    "modules.module_6.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:23:30+00:00"
+    },
+    "modules.module_6.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:23:35+00:00"
+    },
+    "modules.module_7.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:24:50+00:00"
+    },
+    "modules.module_7.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:24:57+00:00"
+    },
+    "modules.module_7.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:25:03+00:00"
+    },
+    "modules.module_8.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:25:48+00:00"
+    },
+    "modules.module_8.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:26:02+00:00"
+    },
+    "modules.module_8.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:26:07+00:00"
+    },
+    "modules.module_9.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:26:42+00:00"
+    },
+    "modules.module_9.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:26:49+00:00"
+    },
+    "modules.module_9.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:26:55+00:00"
+    },
+    "modules.module_10.purpose": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:27:43+00:00"
+    },
+    "modules.module_10.hook": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:27:50+00:00"
+    },
+    "modules.module_10.trigger": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:27:56+00:00"
+    },
+    "style_bible.tone": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:50:54+00:00"
+    },
+    "style_bible.camera": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:45:41+00:00"
+    },
+    "style_bible.dialogue": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T03:49:34+00:00"
+    },
+    "opening_narration": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-06T04:00:37+00:00"
     }
   }
 }
