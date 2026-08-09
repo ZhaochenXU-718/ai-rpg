@@ -23,6 +23,7 @@ from typing import Any
 
 import yaml
 
+from server.studio_scale import get_scale_template
 from tools.validate_content import validate_content
 
 
@@ -30,6 +31,15 @@ STORY_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 GENRE_SEPARATOR = " · "
 MAX_GENRE_TAGS = 8
 MAX_GENRE_TAG_LENGTH = 24
+
+# 概念提案字段 → 故事蓝图路径。概念只填蓝图层，不生成人物、场景或模块。
+CONCEPT_FIELD_PATHS = {
+    "premise": "premise",
+    "emotional_contract": "emotional_contract",
+    "main_goal": "ai_plot.main_goal",
+    "opposition": "ai_plot.opposition",
+    "hidden_truth": "ai_plot.hidden_truth",
+}
 
 
 class StudioError(Exception):
@@ -178,7 +188,6 @@ def _blank_story(
         "player_role": {
             "id": "player",
             "name": "玩家",
-            "public_identity": "",
             "private_goal": "",
             "constraints": [],
         },
@@ -238,17 +247,25 @@ def _normalize_story(data: dict[str, Any], story_id: str) -> dict[str, Any]:
 
 
 class StoryStudioWorkspace:
-    """A content-directory workspace with optimistic, atomic draft saves."""
+    """A content-directory workspace with optimistic, atomic draft saves.
+
+    ``drafts/`` holds the mutable working copies; ``releases/<story_id>/``
+    holds immutable published snapshots plus a ``releases.json`` index with
+    the publish records and the current-version pointer.  Rollback moves the
+    pointer only — snapshots are never rewritten.
+    """
 
     def __init__(self, content_dir: str | Path) -> None:
         self.content_dir = Path(content_dir)
-        self.content_dir.mkdir(parents=True, exist_ok=True)
+        self.drafts_dir = self.content_dir / "drafts"
+        self.drafts_dir.mkdir(parents=True, exist_ok=True)
+        self.releases_dir = self.content_dir / "releases"
         self.metadata_dir = self.content_dir / ".studio"
         self._lock = threading.RLock()
 
     def _active_stories(self) -> dict[str, Path]:
         stories: dict[str, Path] = {}
-        for path in sorted(self.content_dir.glob("*.yaml")):
+        for path in sorted(self.drafts_dir.glob("*.yaml")):
             if not path.is_file():
                 continue
             try:
@@ -287,6 +304,10 @@ class StoryStudioWorkspace:
             for story_id in self._active_stories():
                 stored = self._load_locked(story_id)
                 report = _report_payload(stored.data)
+                try:
+                    index = self._read_releases_locked(story_id)
+                except StudioError:
+                    index = {"current": None, "releases": []}
                 result.append({
                     "id": story_id,
                     "title": str(stored.data.get("title") or story_id),
@@ -298,6 +319,8 @@ class StoryStudioWorkspace:
                     "error_count": len(report["errors"]),
                     "warning_count": len(report["warnings"]),
                     "playable": report["playable"],
+                    "published_version": index["current"],
+                    "release_count": len(index["releases"]),
                 })
             return result
 
@@ -316,19 +339,84 @@ class StoryStudioWorkspace:
         if not title:
             raise StudioError("故事名称不能为空")
         with self._lock:
-            known = self._active_stories()
-            for _ in range(16):
-                story_id = f"story_{uuid.uuid4().hex[:8]}"
-                if story_id not in known:
-                    break
-            else:  # pragma: no cover - effectively impossible
-                raise DuplicateStory("无法生成唯一的故事标识")
+            story_id = self._new_story_id_locked()
             data = _blank_story(story_id, title, genre, tags, language)
-            path = self.content_dir / f"{story_id}.yaml"
+            path = self.drafts_dir / f"{story_id}.yaml"
             self._write_locked(path, data)
             stored = StoredStory(story_id, path, data, _revision(data))
             self._write_review_locked(stored, {"fields": {}})
             return self._detail_payload(stored)
+
+    def create_from_concept(
+        self,
+        *,
+        concept: dict[str, Any],
+        scale_key: str,
+        brief: str,
+        language: str = "zh-CN",
+    ) -> dict[str, Any]:
+        """Create a draft seeded from an adopted concept proposal.
+
+        概念文字全部以 ``source=llm, status=unreviewed`` 进入审阅账本；
+        档位与简报保存在创作元数据中，供后续生成阶段和质量提示使用。
+        """
+        if not isinstance(concept, dict):
+            raise StudioError("概念提案必须是一个对象")
+        title = str(concept.get("title") or "").strip()
+        if not title:
+            raise StudioError("概念提案缺少故事名称")
+        tags = _normalize_genre_tags(
+            None, list(concept.get("genre_tags") or []), allow_default=True
+        )
+        language = str(language or "").strip() or "zh-CN"
+        with self._lock:
+            story_id = self._new_story_id_locked()
+            data = _blank_story(
+                story_id, title, GENRE_SEPARATOR.join(tags), tags, language
+            )
+            template = get_scale_template(scale_key)
+            if template is None:
+                raise StudioError(f"未知的篇幅档位“{scale_key}”")
+            low, high = template["duration_minutes"]
+            data["target_duration_minutes"] = f"{low}-{high}"
+            fields: dict[str, Any] = {}
+            for key, path in CONCEPT_FIELD_PATHS.items():
+                text = str(concept.get(key) or "").strip()
+                if not text:
+                    continue
+                _set_path(data, path, text)
+                fields[path] = {
+                    "source": "llm",
+                    "status": "unreviewed",
+                    "operation": "concept",
+                    "updated_at": _now_iso(),
+                }
+            draft_path = self.drafts_dir / f"{story_id}.yaml"
+            self._write_locked(draft_path, data)
+            stored = StoredStory(story_id, draft_path, data, _revision(data))
+            self._write_review_locked(stored, {
+                "default_source": "manual",
+                "fields": fields,
+                "authoring": {
+                    "scale": scale_key,
+                    "brief": str(brief or "").strip()[:4000],
+                    "concept_scale": {
+                        field: value
+                        for field, value in (concept.get("scale") or {}).items()
+                        if field in {"characters", "scenes", "modules", "rationale"}
+                    } if isinstance(concept.get("scale"), dict) else {},
+                    "created_at": _now_iso(),
+                },
+            })
+            return self._detail_payload(stored)
+
+    def _new_story_id_locked(self) -> str:
+        known = self._active_stories()
+        for _ in range(16):
+            story_id = f"story_{uuid.uuid4().hex[:8]}"
+            if story_id not in known:
+                return story_id
+        raise DuplicateStory("无法生成唯一的故事标识")  # pragma: no cover
 
     def save(
         self,
@@ -403,6 +491,114 @@ class StoryStudioWorkspace:
             self._write_review_locked(stored, review)
             return self._review_payload(stored)
 
+    def list_releases(self, story_id: str) -> dict[str, Any]:
+        with self._lock:
+            self._load_locked(story_id)
+            return self._releases_payload(story_id)
+
+    def publish(self, story_id: str, *, expected_revision: str) -> dict[str, Any]:
+        """Compile the draft into a new immutable release snapshot."""
+        with self._lock:
+            stored = self._load_locked(story_id)
+            if expected_revision != stored.revision:
+                raise RevisionConflict(
+                    "故事已经在其他位置发生变化，请刷新后再发布"
+                )
+            report = _report_payload(stored.data)
+            if report["errors"]:
+                raise StudioError(
+                    f"故事还有 {len(report['errors'])} 个阻塞问题，修复后才能发布"
+                )
+            review = self._review_payload(stored)
+            if review["unreviewed_count"]:
+                raise StudioError(
+                    f"还有 {review['unreviewed_count']} 处 LLM 内容未审阅，"
+                    "全部确认后才能发布"
+                )
+            index = self._read_releases_locked(story_id)
+            version = _next_release_version(index["releases"])
+            snapshot_path = self.releases_dir / story_id / f"{version}.yaml"
+            if snapshot_path.exists():
+                raise StudioError(
+                    f"版本 {version} 的快照已经存在，发布中止；请检查发布记录"
+                )
+            snapshot = copy.deepcopy(stored.data)
+            snapshot["version"] = version
+            self._write_locked(snapshot_path, snapshot)
+            index["releases"].append({
+                "version": version,
+                "published_at": _now_iso(),
+                "source_revision": stored.revision,
+                "title": str(stored.data.get("title") or story_id),
+                "stats": _story_stats(stored.data),
+                "file": snapshot_path.name,
+            })
+            index["current"] = version
+            self._write_releases_locked(story_id, index)
+            return self._releases_payload(story_id)
+
+    def rollback(self, story_id: str, version: str) -> dict[str, Any]:
+        """Point the current-version marker at an existing snapshot."""
+        version = str(version or "").strip()
+        if not version:
+            raise StudioError("请选择要回滚到的版本")
+        with self._lock:
+            self._load_locked(story_id)
+            index = self._read_releases_locked(story_id)
+            known = {
+                str(record.get("version") or "") for record in index["releases"]
+            }
+            if version not in known:
+                raise StudioError(f"没有版本 {version} 的发布记录")
+            index["current"] = version
+            self._write_releases_locked(story_id, index)
+            return self._releases_payload(story_id)
+
+    def _releases_index_path(self, story_id: str) -> Path:
+        return self.releases_dir / story_id / "releases.json"
+
+    def _read_releases_locked(self, story_id: str) -> dict[str, Any]:
+        path = self._releases_index_path(story_id)
+        if not path.exists():
+            return {"story_id": story_id, "current": None, "releases": []}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            # 损坏的发布记录不能静默清空：那会让版本号从头计数并
+            # 试图覆盖已存在的不可变快照。
+            raise StudioError(f"发布记录无法读取：{exc}") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("releases"), list):
+            raise StudioError("发布记录格式不正确")
+        return {
+            "story_id": story_id,
+            "current": data.get("current"),
+            "releases": [
+                record for record in data["releases"] if isinstance(record, dict)
+            ],
+        }
+
+    def _write_releases_locked(
+        self,
+        story_id: str,
+        index: dict[str, Any],
+    ) -> None:
+        payload = {
+            "story_id": story_id,
+            "current": index.get("current"),
+            "releases": index.get("releases") or [],
+        }
+        self._atomic_write_text(
+            self._releases_index_path(story_id),
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        )
+
+    def _releases_payload(self, story_id: str) -> dict[str, Any]:
+        index = self._read_releases_locked(story_id)
+        return {
+            "current": index["current"],
+            "releases": copy.deepcopy(index["releases"]),
+        }
+
     def _write_locked(self, path: Path, data: dict[str, Any]) -> None:
         text = yaml.safe_dump(
             data,
@@ -460,11 +656,13 @@ class StoryStudioWorkspace:
                     continue
                 if entry.get("status") == "reviewed":
                     entry["status"] = "needs_review"
+        authoring = data.get("authoring")
         return {
             "story_id": stored.story_id,
             "content_revision": stored.revision,
             "default_source": str(data.get("default_source") or "imported"),
             "fields": fields,
+            "authoring": authoring if isinstance(authoring, dict) else {},
         }
 
     def _write_review_locked(
@@ -472,11 +670,13 @@ class StoryStudioWorkspace:
         stored: StoredStory,
         review: dict[str, Any],
     ) -> None:
+        authoring = review.get("authoring")
         payload = {
             "story_id": stored.story_id,
             "content_revision": stored.revision,
             "default_source": str(review.get("default_source") or "manual"),
             "fields": review.get("fields") or {},
+            "authoring": authoring if isinstance(authoring, dict) else {},
         }
         self._atomic_write_text(
             self._review_path(stored.story_id),
@@ -497,6 +697,7 @@ class StoryStudioWorkspace:
             "fields": copy.deepcopy(fields),
             "unreviewed_paths": sorted(unreviewed),
             "unreviewed_count": len(unreviewed),
+            "authoring": copy.deepcopy(review.get("authoring") or {}),
         }
 
     def _detail_payload(self, stored: StoredStory) -> dict[str, Any]:
@@ -510,6 +711,21 @@ class StoryStudioWorkspace:
         }
 
 
+def _next_release_version(releases: list[dict[str, Any]]) -> str:
+    """Bump the minor version; creators never manage release numbers."""
+    best: tuple[int, int] | None = None
+    for record in releases:
+        match = re.fullmatch(r"(\d+)\.(\d+)\.0", str(record.get("version") or ""))
+        if not match:
+            continue
+        pair = (int(match.group(1)), int(match.group(2)))
+        if best is None or pair > best:
+            best = pair
+    if best is None:
+        return "1.0.0"
+    return f"{best[0]}.{best[1] + 1}.0"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -521,3 +737,15 @@ def _path_exists(data: dict[str, Any], path: str) -> bool:
             return False
         value = value[part]
     return True
+
+
+def _set_path(data: dict[str, Any], path: str, value: Any) -> None:
+    parts = path.split(".")
+    target: dict[str, Any] = data
+    for part in parts[:-1]:
+        node = target.get(part)
+        if not isinstance(node, dict):
+            node = {}
+            target[part] = node
+        target = node
+    target[parts[-1]] = value

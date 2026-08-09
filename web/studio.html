@@ -215,6 +215,27 @@
   .issue { border: 1px solid #e9c8c0; border-radius: 10px; padding: 11px 13px; background: #fff9f7; color: #77342c; line-height: 1.55; }
   .issue.warning { border-color: #e7d6ad; background: #fffaf0; color: #735517; }
   .notice { border-left: 3px solid var(--green); padding: 12px 14px; background: var(--green-soft); color: #28513f; line-height: 1.6; }
+  .picker-actions { display: flex; gap: 4px; }
+  .scale-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .scale-option { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; text-align: left; background: transparent; cursor: pointer; display: grid; gap: 3px; }
+  .scale-option strong { font-size: 14px; }
+  .scale-option .scale-duration { color: var(--muted); font-size: 12px; }
+  .scale-option .scale-ranges { color: var(--muted); font-size: 11px; line-height: 1.5; }
+  .scale-option.active { border-color: var(--accent); background: rgba(184,91,63,.06); }
+  .concept-results { display: grid; gap: 10px; margin-top: 12px; max-height: 46vh; overflow-y: auto; }
+  .concept-card { border: 1px solid var(--line); border-radius: 12px; padding: 13px 15px; display: grid; gap: 7px; }
+  .concept-card h4 { font-size: 15px; }
+  .concept-line { font-size: 13px; line-height: 1.6; }
+  .concept-line strong { color: var(--muted); font-weight: 650; margin-right: 4px; }
+  .concept-meta { color: var(--muted); font-size: 12px; line-height: 1.55; }
+  .concept-card .btn { justify-self: start; margin-top: 2px; }
+  .dialog-alt { margin-top: 10px; color: var(--muted); font-size: 12.5px; }
+  .link-btn { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; font-size: inherit; text-decoration: underline; }
+  .release-list { display: grid; gap: 8px; margin-top: 12px; max-height: 300px; overflow-y: auto; }
+  .release-row { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; display: grid; gap: 5px; }
+  .release-head { display: flex; align-items: center; gap: 8px; }
+  .release-meta { color: var(--muted); font-size: 12px; }
+  .release-row .btn { justify-self: start; margin-top: 3px; }
   .top-empty { max-width: 620px; margin: 12vh auto; text-align: center; }
   .top-empty h2 { font-family: Georgia, "Songti SC", serif; font-size: 34px; }
   dialog { width: min(480px, calc(100vw - 28px)); border: 0; border-radius: 16px; padding: 0; box-shadow: 0 30px 100px rgba(20,20,16,.28); }
@@ -278,7 +299,10 @@
     <div class="story-picker">
       <div class="story-picker-head">
         <span class="eyebrow">故事</span>
-        <button class="icon-btn" id="newStoryBtn" aria-label="新建故事" title="新建故事">＋</button>
+        <span class="picker-actions">
+          <button class="icon-btn" id="briefBtn" aria-label="从想法开始" title="从想法开始">✦</button>
+          <button class="icon-btn" id="newStoryBtn" aria-label="新建故事" title="新建空白故事">＋</button>
+        </span>
       </div>
       <div class="story-list" id="storyList"></div>
     </div>
@@ -295,6 +319,7 @@
       </div>
       <div class="top-actions">
         <button class="btn subtle" id="saveBtn">立即保存</button>
+        <button class="btn subtle" id="publishBtn">发布</button>
         <button class="btn primary" id="playBtn">试玩故事</button>
       </div>
     </header>
@@ -321,7 +346,48 @@
       <button class="btn" value="cancel" type="button" id="cancelCreateBtn">取消</button>
       <button class="btn primary" value="default" type="submit">创建并开始填写</button>
     </div>
+    <p class="dialog-alt">只有一个初步想法？<button type="button" class="link-btn" id="openBriefFromCreate">从想法开始，让助手提几个方向</button></p>
   </form>
+</dialog>
+
+<dialog id="briefDialog" class="assistant-dialog">
+  <div class="dialog-body">
+    <h3>从想法开始</h3>
+    <p>写下初步创意，助手会提出 2–3 个可讨论的故事方向。方向只是候选：采用后写入蓝图的文字都处于待审阅状态，仍由你逐项确认。</p>
+    <div class="field">
+      <label class="field-label" for="briefText">创意简报 <span class="required">必填</span></label>
+      <textarea id="briefText" placeholder="例如：一座只在涨潮时出现的灯塔，和一位每晚准时上塔、却从不点灯的守塔人。"></textarea>
+    </div>
+    <div class="field">
+      <span class="field-label">篇幅档位</span>
+      <div class="scale-options" id="briefScaleField"></div>
+    </div>
+    <div class="field-row">
+      <div id="briefGenreField"></div>
+      <div class="field">
+        <label class="field-label" for="briefLanguage">语言</label>
+        <select id="briefLanguage"><option value="zh-CN">简体中文</option><option value="en">English</option></select>
+      </div>
+    </div>
+    <div class="concept-results" id="conceptResults"></div>
+    <div class="dialog-actions">
+      <button class="btn" type="button" id="closeBriefBtn">关闭</button>
+      <button class="btn primary" type="button" id="proposeBtn">生成故事方向</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="releaseDialog">
+  <div class="dialog-body">
+    <h3>发布与版本</h3>
+    <p>发布会把当前草稿编译成一份不可变的版本快照；回滚只移动“当前版本”指针，不改动任何已发布快照，也不影响进行中的游玩会话。</p>
+    <div id="releaseGate"></div>
+    <div id="releaseList" class="release-list"></div>
+    <div class="dialog-actions">
+      <button class="btn" type="button" id="closeReleaseBtn">关闭</button>
+      <button class="btn primary" type="button" id="publishNowBtn">发布新版本</button>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="entityDialog">
@@ -557,6 +623,7 @@ function updateChrome() {
     $("saveStatus").textContent = "准备就绪";
   }
   $("saveBtn").disabled = !story || saving || !dirty;
+  $("publishBtn").disabled = !story || saving;
   $("playBtn").disabled = !story || saving || dirty || !report().playable;
 }
 
@@ -677,7 +744,8 @@ function renderStoryList() {
     const button = node("button", "story-item" + (detail?.id === item.id ? " active" : ""));
     const title = node("span", "story-item-title", item.title);
     const genres = (item.genre_tags || []).slice(0, 2).join(" · ");
-    const counts = `${item.stats.characters} 人物 · ${item.stats.scenes} 场景${item.error_count ? ` · ${item.error_count} 问题` : ""}`;
+    const published = item.published_version ? ` · 已发布 v${item.published_version}` : "";
+    const counts = `${item.stats.characters} 人物 · ${item.stats.scenes} 场景${item.error_count ? ` · ${item.error_count} 问题` : ""}${published}`;
     const meta = node("span", "story-item-meta", genres ? `${genres} · ${counts}` : counts);
     button.append(title, meta);
     button.addEventListener("click", () => loadStory(item.id).catch((error) => toast(error.message)));
@@ -910,10 +978,17 @@ function renderContent() {
   container.textContent = "";
   if (!detail) {
     const empty = node("div", "top-empty");
-    empty.append(node("h2", "", "从一个故事开始"), node("p", "", "创建空白故事，或把已有 AIRPG 故事放入内容目录后刷新。"));
-    const button = node("button", "btn primary", "创建空白故事");
-    button.addEventListener("click", openCreateDialog);
-    empty.appendChild(button);
+    empty.append(node("h2", "", "从一个故事开始"), node("p", "", "从一个初步想法生成故事方向，或直接创建空白故事手动填写。"));
+    const actions = node("div", "");
+    actions.style.display = "flex";
+    actions.style.gap = "10px";
+    actions.style.justifyContent = "center";
+    const briefButton = node("button", "btn primary", "从想法开始");
+    briefButton.addEventListener("click", () => openBriefDialog().catch((error) => toast(error.message)));
+    const blankButton = node("button", "btn", "创建空白故事");
+    blankButton.addEventListener("click", openCreateDialog);
+    actions.append(briefButton, blankButton);
+    empty.appendChild(actions);
     container.appendChild(empty);
     return;
   }
@@ -1015,12 +1090,11 @@ function renderPlayer(container) {
   const role = story.player_role || (story.player_role = { id: "player", constraints: [] });
   const player = ensureObject(story, ["characters", "player"]);
   container.appendChild(pageHead("玩家角色", "定义玩家是谁、想解决什么，以及旁白不能替玩家越过哪些边界。"));
-  const identity = card("角色身份", "玩家公开知道的身份与当前目标。" );
+  const identity = card("角色身份", "玩家对外的样子与私下的目标。" );
   identity.append(
     field("姓名", role.name, (value) => { role.name = value; player.name = value; markDirty(); }, { required: true }),
-    field("公开身份", role.public_identity, (value) => setStory(["player_role", "public_identity"], value), { type: "textarea", required: true, path: ["player_role", "public_identity"], assist: true }),
-    field("私人目标", role.private_goal, (value) => setStory(["player_role", "private_goal"], value), { type: "textarea", required: true, path: ["player_role", "private_goal"], assist: true }),
-    field("人物公开形象", player.public_profile, (value) => setStory(["characters", "player", "public_profile"], value), { type: "textarea", required: true, path: ["characters", "player", "public_profile"], assist: true })
+    field("公开形象", player.public_profile, (value) => setStory(["characters", "player", "public_profile"], value), { type: "textarea", required: true, help: "其他人眼中的玩家：对外的身份、外表与行为观感。这段文字会进入玩家感知和在场人物列表。玩家不愿示人的身世写进故事蓝图（如隐藏真相），不写在这里。", path: ["characters", "player", "public_profile"], assist: true }),
+    field("私人目标", role.private_goal, (value) => setStory(["player_role", "private_goal"], value), { type: "textarea", required: true, path: ["player_role", "private_goal"], assist: true })
   );
   container.appendChild(identity);
   const boundaries = card("玩家边界", "每行一条，描述玩家不能凭空做到或旁白不能替玩家决定的事情。" );
@@ -1641,6 +1715,242 @@ async function createStory() {
   toast("空白故事已创建，可以开始手动填写");
 }
 
+let scaleTemplates = null;
+let briefScaleKey = "medium";
+let briefGenreTags = [];
+let commitBriefGenreInput = () => {};
+let lastConceptPayload = null;
+
+async function ensureScaleTemplates() {
+  if (!scaleTemplates) {
+    const data = await api("/api/scale-templates");
+    scaleTemplates = data.templates || [];
+  }
+  return scaleTemplates;
+}
+
+function renderScaleOptions() {
+  const host = $("briefScaleField");
+  host.textContent = "";
+  for (const template of scaleTemplates || []) {
+    const option = node("button", "scale-option" + (template.key === briefScaleKey ? " active" : ""));
+    option.type = "button";
+    const ranges = `约 ${template.characters[0]}–${template.characters[1]} 人物 · ${template.scenes[0]}–${template.scenes[1]} 场景 · ${template.modules[0]}–${template.modules[1]} 模块`;
+    option.append(
+      node("strong", "", template.label),
+      node("span", "scale-duration", template.duration_label),
+      node("span", "scale-ranges", ranges),
+    );
+    option.addEventListener("click", () => { briefScaleKey = template.key; renderScaleOptions(); });
+    host.appendChild(option);
+  }
+}
+
+async function openBriefDialog() {
+  $("createStoryDialog").close();
+  const host = $("briefGenreField");
+  host.textContent = "";
+  host.appendChild(genreTagField(briefGenreTags, (tags) => { briefGenreTags = tags; }, {
+    registerCommit: (commit) => { commitBriefGenreInput = commit; },
+    help: "可选：给方向一个大致题材；提案也会补充建议标签。",
+  }));
+  try {
+    await ensureScaleTemplates();
+  } catch (error) { toast(error.message); return; }
+  renderScaleOptions();
+  $("briefDialog").showModal();
+  setTimeout(() => $("briefText").focus(), 30);
+}
+
+async function runConceptProposals() {
+  commitBriefGenreInput();
+  const brief = $("briefText").value.trim();
+  if (!brief) { toast("请先写下你的创意"); return; }
+  const results = $("conceptResults");
+  results.textContent = "";
+  results.appendChild(node("div", "concept-meta", "正在生成故事方向…"));
+  $("proposeBtn").disabled = true;
+  try {
+    lastConceptPayload = await api("/api/concepts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        brief,
+        scale: briefScaleKey,
+        genre_tags: briefGenreTags,
+        language: $("briefLanguage").value,
+      }),
+    });
+    renderConceptProposals();
+    $("proposeBtn").textContent = "重新生成";
+  } catch (error) {
+    results.textContent = "";
+    results.appendChild(node("div", "issue", error.message));
+  } finally {
+    $("proposeBtn").disabled = false;
+  }
+}
+
+function renderConceptProposals() {
+  const results = $("conceptResults");
+  results.textContent = "";
+  const proposals = lastConceptPayload?.proposals || [];
+  if (!proposals.length) {
+    results.appendChild(node("div", "issue", "没有得到可用的故事方向，请调整简报后重试。"));
+    return;
+  }
+  for (const proposal of proposals) {
+    const card = node("div", "concept-card");
+    card.appendChild(node("h4", "", proposal.title));
+    if (proposal.rationale) card.appendChild(node("div", "concept-meta", proposal.rationale));
+    const lines = [
+      ["故事前提", proposal.premise],
+      ["主要目标与矛盾", proposal.main_goal],
+      ["对抗力量", proposal.opposition],
+      ["隐藏真相方向", proposal.hidden_truth],
+      ["情绪承诺", proposal.emotional_contract],
+    ];
+    for (const [label, text] of lines) {
+      if (!text) continue;
+      const line = node("div", "concept-line");
+      line.append(node("strong", "", label + "："), document.createTextNode(text));
+      card.appendChild(line);
+    }
+    const metaParts = [];
+    if (proposal.genre_tags?.length) metaParts.push(`题材：${proposal.genre_tags.join(" · ")}`);
+    const scale = proposal.scale || {};
+    if (scale.characters || scale.scenes || scale.modules) {
+      const counts = [
+        scale.characters ? `${scale.characters} 人物` : null,
+        scale.scenes ? `${scale.scenes} 场景` : null,
+        scale.modules ? `${scale.modules} 模块` : null,
+      ].filter(Boolean).join(" · ");
+      metaParts.push(`建议规模：${counts}${scale.rationale ? `（${scale.rationale}）` : ""}`);
+    }
+    if (metaParts.length) card.appendChild(node("div", "concept-meta", metaParts.join("　")));
+    const adopt = node("button", "btn primary", "采用这个方向");
+    adopt.addEventListener("click", () => adoptConcept(proposal).catch((error) => toast(error.message)));
+    card.appendChild(adopt);
+    results.appendChild(card);
+  }
+}
+
+async function adoptConcept(proposal) {
+  const created = await api("/api/stories-from-concept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      concept: proposal,
+      scale: lastConceptPayload?.scale || briefScaleKey,
+      brief: lastConceptPayload?.brief || $("briefText").value.trim(),
+      language: $("briefLanguage").value,
+    }),
+  });
+  $("briefDialog").close();
+  await loadStories(created.id);
+  activeSection = "blueprint";
+  renderAll();
+  toast("概念已写入故事蓝图，相关字段等待你逐项审阅");
+}
+
+let releaseState = null;
+
+async function openReleaseDialog() {
+  if (!detail) return;
+  await saveNow();
+  if (dirty) { toast("还有内容没有保存，暂时不能发布"); return; }
+  $("releaseDialog").showModal();
+  await refreshReleaseDialog();
+}
+
+async function refreshReleaseDialog() {
+  const gate = $("releaseGate");
+  const list = $("releaseList");
+  gate.textContent = "";
+  const blockers = [];
+  if (report().errors.length) blockers.push(`${report().errors.length} 个阻塞校验问题`);
+  if (effectiveUnreviewedCount()) blockers.push(`${effectiveUnreviewedCount()} 处 LLM 内容待审阅`);
+  if (blockers.length) {
+    gate.appendChild(node("div", "issue", `暂时不能发布：${blockers.join("；")}。`));
+  } else {
+    gate.appendChild(node("div", "notice", "草稿已通过全部发布检查，可以发布新版本。"));
+  }
+  $("publishNowBtn").disabled = blockers.length > 0;
+  list.textContent = "正在读取发布记录…";
+  try {
+    releaseState = await api(`/api/stories/${encodeURIComponent(detail.id)}/releases`);
+    renderReleaseList();
+  } catch (error) {
+    list.textContent = "";
+    list.appendChild(node("div", "issue", error.message));
+  }
+}
+
+function renderReleaseList() {
+  const list = $("releaseList");
+  list.textContent = "";
+  const releases = [...(releaseState?.releases || [])].reverse();
+  if (!releases.length) {
+    list.appendChild(node("div", "release-meta", "这个故事还没有发布过版本。"));
+    return;
+  }
+  for (const release of releases) {
+    const row = node("div", "release-row");
+    const head = node("div", "release-head");
+    head.appendChild(node("strong", "", `v${release.version}`));
+    if (release.version === releaseState.current) head.appendChild(node("span", "chip good", "当前版本"));
+    row.appendChild(head);
+    const when = String(release.published_at || "").replace("T", " ").replace("+00:00", " UTC");
+    const stats = release.stats ? ` · ${release.stats.characters} 人物 · ${release.stats.scenes} 场景 · ${release.stats.modules} 模块` : "";
+    row.appendChild(node("div", "release-meta", `发布于 ${when}${stats}`));
+    if (release.version !== releaseState.current) {
+      const back = node("button", "btn", "回滚到此版本");
+      back.addEventListener("click", () => rollbackTo(release.version));
+      row.appendChild(back);
+    }
+    list.appendChild(row);
+  }
+}
+
+function syncSummaryRelease() {
+  const summary = storySummaries.find((item) => item.id === detail?.id);
+  if (summary && releaseState) {
+    summary.published_version = releaseState.current;
+    summary.release_count = (releaseState.releases || []).length;
+    renderStoryList();
+  }
+}
+
+async function publishNow() {
+  $("publishNowBtn").disabled = true;
+  try {
+    releaseState = await api(`/api/stories/${encodeURIComponent(detail.id)}/publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ revision: detail.revision }),
+    });
+    renderReleaseList();
+    syncSummaryRelease();
+    toast(`已发布 v${releaseState.current}`);
+  } catch (error) {
+    toast(error.message);
+    await refreshReleaseDialog();
+  }
+}
+
+async function rollbackTo(version) {
+  try {
+    releaseState = await api(`/api/stories/${encodeURIComponent(detail.id)}/rollback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version }),
+    });
+    renderReleaseList();
+    syncSummaryRelease();
+    toast(`当前版本已切换到 v${version}`);
+  } catch (error) { toast(error.message); }
+}
+
 async function startPlaytest() {
   await saveNow();
   if (!report().playable) { activeSection = "validation"; renderAll(); toast("请先解决阻塞问题"); return; }
@@ -1651,6 +1961,10 @@ async function startPlaytest() {
 }
 
 $("newStoryBtn").addEventListener("click", openCreateDialog);
+$("briefBtn").addEventListener("click", () => openBriefDialog().catch((error) => toast(error.message)));
+$("openBriefFromCreate").addEventListener("click", () => openBriefDialog().catch((error) => toast(error.message)));
+$("closeBriefBtn").addEventListener("click", () => $("briefDialog").close());
+$("proposeBtn").addEventListener("click", () => runConceptProposals().catch((error) => toast(error.message)));
 $("cancelCreateBtn").addEventListener("click", () => $("createStoryDialog").close());
 $("createStoryForm").addEventListener("submit", (event) => { event.preventDefault(); createStory().catch((error) => toast(error.message)); });
 $("cancelEntityBtn").addEventListener("click", () => $("entityDialog").close());
@@ -1661,6 +1975,9 @@ $("entityForm").addEventListener("submit", (event) => {
   $("entityDialog").close(); addEntity(entityKind, name);
 });
 $("saveBtn").addEventListener("click", saveNow);
+$("publishBtn").addEventListener("click", () => openReleaseDialog().catch((error) => toast(error.message)));
+$("closeReleaseBtn").addEventListener("click", () => $("releaseDialog").close());
+$("publishNowBtn").addEventListener("click", publishNow);
 $("playBtn").addEventListener("click", startPlaytest);
 $("rerunAssistBtn").addEventListener("click", runAssist);
 $("closeAssistantBtn").addEventListener("click", () => $("assistantDialog").close());

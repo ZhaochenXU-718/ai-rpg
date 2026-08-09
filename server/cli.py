@@ -42,19 +42,48 @@ def read_line(prompt: str) -> str | None:
 
 
 def discover_story_paths(content_dir: Path = CONTENT_DIR) -> list[Path]:
-    """Discover active narrative-first stories only."""
+    """Discover playable narrative-first stories.
+
+    已发布的故事优先使用 releases/ 中 current 指针指向的不可变快照；
+    未发布的故事回退到 drafts/ 草稿。也兼容直接平铺 YAML 的普通目录。
+    templates/ 与 archive/ 不参与发现。
+    """
     if not content_dir.is_dir():
         return []
+    seen_ids: set[str] = set()
     paths: list[Path] = []
-    for path in sorted(content_dir.glob("*.yaml")):
+
+    def try_add(path: Path) -> None:
         if not path.is_file():
-            continue
+            return
         try:
             story = Story.load(path)
         except (OSError, ValueError):
-            continue
-        if story.data.get("content_profile") == "narrative_first":
-            paths.append(path)
+            return
+        if story.data.get("content_profile") != "narrative_first":
+            return
+        story_id = str(story.data.get("id") or path.stem)
+        if story_id in seen_ids:
+            return
+        seen_ids.add(story_id)
+        paths.append(path)
+
+    releases_root = content_dir / "releases"
+    if releases_root.is_dir():
+        for index_path in sorted(releases_root.glob("*/releases.json")):
+            try:
+                index = json.loads(index_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            current = index.get("current") if isinstance(index, dict) else None
+            if current:
+                try_add(index_path.parent / f"{current}.yaml")
+    drafts_dir = content_dir / "drafts"
+    if drafts_dir.is_dir():
+        for path in sorted(drafts_dir.glob("*.yaml")):
+            try_add(path)
+    for path in sorted(content_dir.glob("*.yaml")):
+        try_add(path)
     return paths
 
 

@@ -1,0 +1,77 @@
+{
+  "story_id": "story_22a04b75",
+  "content_revision": "59b863ee2bf8553c",
+  "default_source": "manual",
+  "fields": {
+    "premise": {
+      "source": "llm",
+      "status": "needs_review",
+      "operation": "concept",
+      "updated_at": "2026-08-09T15:08:22+00:00",
+      "reviewed_at": "2026-08-09T15:09:45+00:00"
+    },
+    "emotional_contract": {
+      "source": "llm",
+      "status": "needs_review",
+      "operation": "concept",
+      "updated_at": "2026-08-09T15:08:22+00:00",
+      "reviewed_at": "2026-08-09T15:11:03+00:00"
+    },
+    "ai_plot.main_goal": {
+      "source": "llm",
+      "status": "needs_review",
+      "operation": "concept",
+      "updated_at": "2026-08-09T15:08:22+00:00",
+      "reviewed_at": "2026-08-09T15:13:39+00:00"
+    },
+    "ai_plot.opposition": {
+      "source": "llm",
+      "status": "needs_review",
+      "operation": "concept",
+      "updated_at": "2026-08-09T15:08:22+00:00",
+      "reviewed_at": "2026-08-09T15:13:40+00:00"
+    },
+    "ai_plot.hidden_truth": {
+      "source": "llm",
+      "status": "needs_review",
+      "operation": "concept",
+      "updated_at": "2026-08-09T15:08:22+00:00",
+      "reviewed_at": "2026-08-09T15:13:48+00:00"
+    },
+    "ai_plot.player_role": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-09T15:20:11+00:00"
+    },
+    "ai_plot.world_rules": {
+      "source": "llm",
+      "status": "needs_review",
+      "operation": "complete",
+      "updated_at": "2026-08-09T15:13:36+00:00"
+    },
+    "player_role.private_goal": {
+      "source": "manual",
+      "status": "manual",
+      "operation": null,
+      "updated_at": "2026-08-09T15:15:34+00:00"
+    },
+    "characters.player.public_profile": {
+      "source": "llm",
+      "status": "unreviewed",
+      "operation": "ideas",
+      "updated_at": "2026-08-09T15:41:34+00:00"
+    }
+  },
+  "authoring": {
+    "scale": "short",
+    "brief": "男主在小时候受家族的仇人追杀，意外被女主救起，但导致男主仇家灭口了女主一家，只剩女主一人。女主在孤儿院长大，孤儿院又是当地拐卖儿童的一个机构幌子。女主长大后拼命逃离孤儿院，想除掉孤儿院的院长及背后势力。过程中与男主重新相遇，但不知道小时候的小女孩和小男孩就是彼此。一步步报仇中女主发现正式男主导致自己成为孤儿，这种家族仇恨和爱情纠葛引发了一系列的爱恨情仇。",
+    "concept_scale": {
+      "characters": 5,
+      "scenes": 3,
+      "modules": 5,
+      "rationale": "符合短篇档位：玩家、男主、院长、一位孤儿院旧友、一名买家中间人，场景集中在孤儿院、城区暗线据点和一处旧宅，体量足以承载调查与情感双线。"
+    },
+    "created_at": "2026-08-09T15:08:22+00:00"
+  }
+}

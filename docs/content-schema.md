@@ -96,13 +96,14 @@ openings:
 player_role:
   id: player
   name: "住户"
-  public_identity: "正在帮忙的普通住户"
   private_goal: "把眼前的事情妥善处理"
   constraints:
     - "不能凭空获得关键物品。"
 ```
 
 约束只影响生成 prompt，不会自动变成代码规则。
+
+`public_identity` 已于 2026-08-09 移除：它与玩家人物卡的 `public_profile` 高度重复且运行时从未消费。玩家对外的身份与形象只写一处——`characters.<player>.public_profile`（进入玩家感知与在场人物列表）；玩家不愿示人的身世写入 `ai_plot`（如 `hidden_truth`）。旧内容中残留的 `public_identity` 会触发校验警告。
 
 ## characters
 

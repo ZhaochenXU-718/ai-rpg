@@ -74,8 +74,39 @@ class GenericRuntimeContentIndependenceTests(unittest.TestCase):
             self.assertEqual(selected, second)
 
     def test_retired_rooftop_case_is_not_discovered_as_active_content(self) -> None:
-        retired = ROOT / "content" / "rooftop_supper.yaml"
+        retired = ROOT / "content" / "archive" / "rooftop_supper.yaml"
         self.assertNotIn(retired, discover_story_paths(ROOT / "content"))
+
+    def test_published_snapshot_is_preferred_over_its_draft(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            content_dir = Path(temp_dir)
+            drafts = content_dir / "drafts"
+            drafts.mkdir()
+            (drafts / "a_story.yaml").write_text(
+                'id: a_story\ntitle: "草稿版"\ncontent_profile: narrative_first\n',
+                encoding="utf-8",
+            )
+            (drafts / "b_story.yaml").write_text(
+                'id: b_story\ntitle: "未发布故事"\ncontent_profile: narrative_first\n',
+                encoding="utf-8",
+            )
+            release_dir = content_dir / "releases" / "a_story"
+            release_dir.mkdir(parents=True)
+            snapshot = release_dir / "1.0.0.yaml"
+            snapshot.write_text(
+                'id: a_story\ntitle: "发布版"\ncontent_profile: narrative_first\n',
+                encoding="utf-8",
+            )
+            (release_dir / "releases.json").write_text(
+                '{"story_id": "a_story", "current": "1.0.0", "releases": '
+                '[{"version": "1.0.0"}]}',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                discover_story_paths(content_dir),
+                [snapshot, drafts / "b_story.yaml"],
+            )
 
 
 if __name__ == "__main__":

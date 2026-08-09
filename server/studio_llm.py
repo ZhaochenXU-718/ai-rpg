@@ -15,6 +15,7 @@ from typing import Any
 
 from server.engine.llm import LLMProviderError, create_provider
 from server.engine.llm_deepseek import DeepSeekCallPolicy, DeepSeekProvider
+from server.studio_scale import describe_scale_ranges, get_scale_template
 from tools.validate_content import validate_content
 
 
@@ -25,6 +26,13 @@ AUTHORING_POLICY = DeepSeekCallPolicy(
     thinking="disabled",
     temperature=0.45,
     max_tokens=1800,
+    json_mode=True,
+)
+CONCEPT_POLICY = DeepSeekCallPolicy(
+    capability="studio_concept",
+    thinking="disabled",
+    temperature=0.7,
+    max_tokens=3200,
     json_mode=True,
 )
 
@@ -259,6 +267,256 @@ def authoring_context(
             if isinstance(value, dict)
         }
     return context
+
+
+CONCEPT_SYSTEM_PROMPT = """\
+你是 AIRPG 故事工作室中的概念策划助手。创作者提供一段初步创意简报，你提出 2—3 个可讨论的故事方向供创作者挑选；创作者拥有最终决定权，你的提案只是候选。
+
+提案原则：
+1. 每个提案必须是实质不同的故事方向，不是同一方向换措辞；差异应体现在核心冲突、隐藏真相或情绪基调上。
+2. 尊重简报中已经确定的元素：简报里明确给出的设定、人物或基调必须保留，不得替换成你偏好的版本。
+3. 故事前提写玩家进入故事时已经成立的处境，不剧透隐藏真相；隐藏真相单独表述，两者不能互相泄漏。
+4. 保留玩家主体性：主要目标写成玩家可以主动追求的方向，不预设玩家的感情、立场或结局。
+5. 不使用分支脚本、剧情旗标、数值好感度或条件结局来描述故事；冲突和张力来自人物动机与处境。
+6. 规模建议参考给定的篇幅档位区间；可以偏离区间，但必须在理由中说明为什么这个故事需要更多或更少。
+7. 不提 YAML、schema、机器 ID、prompt 或系统实现；使用创作者能直接阅读的中文。
+
+只输出以下 JSON，不输出 Markdown：
+{
+  "proposals": [{
+    "title": "故事名称",
+    "premise": "故事前提（2—4 句，玩家开局时已成立的处境）",
+    "main_goal": "主要目标与核心矛盾",
+    "opposition": "对抗力量或阻力",
+    "hidden_truth": "隐藏真相方向（不会出现在玩家可见内容中）",
+    "emotional_contract": "希望玩家持续获得的感受",
+    "genre_tags": ["题材标签"],
+    "scale": {"characters": 人物数, "scenes": 场景数, "modules": 剧情模块数, "rationale": "规模理由"},
+    "rationale": "这个方向的取舍与适合的创作者"
+  }]
+}
+"""
+
+
+@dataclass(frozen=True)
+class ConceptBrief:
+    brief: str
+    scale_key: str
+    genre_tags: tuple[str, ...] = ()
+    language: str = "zh-CN"
+    instruction: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.brief.strip():
+            raise ValueError("创意简报不能为空")
+        if len(self.brief) > 4000:
+            raise ValueError("创意简报请控制在 4000 字以内")
+        if get_scale_template(self.scale_key) is None:
+            raise ValueError(f"未知的篇幅档位 '{self.scale_key}'")
+
+
+@dataclass(frozen=True)
+class ConceptProposal:
+    title: str
+    premise: str
+    main_goal: str
+    opposition: str
+    hidden_truth: str
+    emotional_contract: str
+    genre_tags: tuple[str, ...]
+    scale: dict[str, Any]
+    rationale: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "premise": self.premise,
+            "main_goal": self.main_goal,
+            "opposition": self.opposition,
+            "hidden_truth": self.hidden_truth,
+            "emotional_contract": self.emotional_contract,
+            "genre_tags": list(self.genre_tags),
+            "scale": dict(self.scale),
+            "rationale": self.rationale,
+        }
+
+
+@dataclass(frozen=True)
+class ConceptResult:
+    proposals: tuple[ConceptProposal, ...]
+    model: str
+    usage: dict[str, Any]
+    diagnostics: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "proposals": [proposal.to_dict() for proposal in self.proposals],
+            "model": self.model,
+            "usage": self.usage,
+        }
+
+
+class ConceptAssistant:
+    name = "abstract"
+
+    def propose(self, brief: ConceptBrief) -> ConceptResult:
+        raise NotImplementedError
+
+
+class HeuristicConceptAssistant(ConceptAssistant):
+    """Deterministic offline proposals for development and tests."""
+
+    name = "mock"
+
+    def propose(self, brief: ConceptBrief) -> ConceptResult:
+        template = get_scale_template(brief.scale_key) or {}
+        anchor = " ".join(brief.brief.split())[:80]
+        tags = list(brief.genre_tags) or ["未分类"]
+
+        def midpoint(field: str) -> int:
+            low, high = template.get(field, (3, 5))
+            return (low + high) // 2
+
+        scale = {
+            "characters": midpoint("characters"),
+            "scenes": midpoint("scenes"),
+            "modules": midpoint("modules"),
+            "rationale": "离线开发模式按档位区间中点建议规模。",
+        }
+        directions = (
+            (
+                "揭示向",
+                "把简报中的处境写成一个可以被逐步验证的谜题，玩家通过观察和对质接近真相。",
+                "真相被某个在场人物主动维护，而不是单纯被隐藏。",
+                "克制、渐进的紧张感。",
+            ),
+            (
+                "关系代价向",
+                "让简报中的目标必须以某段关系为代价才能达成，玩家在推进中不断面对取舍。",
+                "最大的阻力来自玩家在意的人，而不是外部敌人。",
+                "亲近与愧疚交替的情感压力。",
+            ),
+            (
+                "处境升级向",
+                "让简报中的处境按自身逻辑持续恶化，玩家的每次介入都改变局势的走向。",
+                "对抗力量是失控的局势本身，人物只是被卷入的各方。",
+                "步步紧逼的时间与空间压力。",
+            ),
+        )
+        proposals = tuple(
+            ConceptProposal(
+                title=f"{anchor[:12] or '未命名故事'}·{label}",
+                premise=f"围绕“{anchor}”：{premise_hint}",
+                main_goal=f"玩家需要在局势失控前弄清并回应“{anchor}”中的核心矛盾。",
+                opposition=opposition_hint,
+                hidden_truth=(
+                    "离线开发模式不虚构隐藏真相，只提示方向：真相应当解释简报中"
+                    "最反常的细节，并且揭开后能改变玩家对已有人物的判断。"
+                ),
+                emotional_contract=mood,
+                genre_tags=tuple(tags),
+                scale=dict(scale),
+                rationale=f"{label}方向的结构示意；使用 DeepSeek 或 Kimi 可生成正式提案。",
+            )
+            for label, premise_hint, opposition_hint, mood in directions
+        )
+        return ConceptResult(
+            proposals=proposals,
+            model="heuristic-studio-concept-0.1",
+            usage={},
+            diagnostics={},
+        )
+
+
+class ProviderConceptAssistant(ConceptAssistant):
+    def __init__(self, provider: DeepSeekProvider) -> None:
+        self.provider = provider
+        self.name = provider.name
+
+    def propose(self, brief: ConceptBrief) -> ConceptResult:
+        messages = build_concept_messages(brief)
+        proposals, _raw, usage, diagnostics = self.provider._run_structured(
+            messages,
+            policy=CONCEPT_POLICY,
+            coerce=coerce_concept_result,
+            repair_label="概念提案",
+            error_label="概念策划助手",
+        )
+        return ConceptResult(
+            proposals=proposals,
+            model=self.provider.model,
+            usage=usage,
+            diagnostics=diagnostics,
+        )
+
+
+def create_concept_assistant(name: str) -> ConceptAssistant:
+    if name == "mock":
+        return HeuristicConceptAssistant()
+    provider = create_provider(name)
+    if not isinstance(provider, DeepSeekProvider):  # pragma: no cover - registry guard
+        raise LLMProviderError(f"provider '{name}' does not support studio concepts")
+    return ProviderConceptAssistant(provider)
+
+
+def build_concept_messages(brief: ConceptBrief) -> list[dict[str, str]]:
+    template = get_scale_template(brief.scale_key) or {}
+    payload = {
+        "创意简报": brief.brief.strip(),
+        "篇幅档位": describe_scale_ranges(template) if template else brief.scale_key,
+        "创作者已选题材标签": list(brief.genre_tags) or None,
+        "语言": brief.language,
+        "创作者补充要求": brief.instruction or None,
+    }
+    return [
+        {"role": "system", "content": CONCEPT_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
+def coerce_concept_result(content: str) -> tuple[ConceptProposal, ...]:
+    try:
+        data = json.loads(_strip_fences(content))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid json: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("response must be a json object")
+    proposals: list[ConceptProposal] = []
+    for raw in data.get("proposals") or []:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title") or "").strip()
+        premise = str(raw.get("premise") or "").strip()
+        if not title or not premise:
+            continue
+        raw_scale = raw.get("scale") if isinstance(raw.get("scale"), dict) else {}
+        scale: dict[str, Any] = {}
+        for field in ("characters", "scenes", "modules"):
+            value = raw_scale.get(field)
+            if isinstance(value, (int, float)) and 1 <= int(value) <= 99:
+                scale[field] = int(value)
+        scale["rationale"] = str(raw_scale.get("rationale") or "").strip()[:800]
+        tags = tuple(
+            tag_text[:24]
+            for tag in (raw.get("genre_tags") or [])[:8]
+            if (tag_text := str(tag or "").strip())
+        )
+        proposals.append(ConceptProposal(
+            title=title[:60],
+            premise=premise[:2000],
+            main_goal=str(raw.get("main_goal") or "").strip()[:2000],
+            opposition=str(raw.get("opposition") or "").strip()[:2000],
+            hidden_truth=str(raw.get("hidden_truth") or "").strip()[:2000],
+            emotional_contract=str(raw.get("emotional_contract") or "").strip()[:800],
+            genre_tags=tags,
+            scale=scale,
+            rationale=str(raw.get("rationale") or "").strip()[:800],
+        ))
+        if len(proposals) >= 3:
+            break
+    if not proposals:
+        raise ValueError("concept response needs proposals")
+    return tuple(proposals)
 
 
 def _strip_fences(content: str) -> str:

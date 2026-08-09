@@ -4,8 +4,10 @@
 # 填写指南：
 #   - 把所有空字符串 "" 填上实际内容；标注 [可选] 的整块不需要可整块删除。
 #   - 机器 ID 格式：小写字母开头，只含小写字母、数字、下划线（如 owl_post_office）。
-#   - 校验：python tools/validate_content.py content/drafts/story_draft.yaml
-#   - drafts/ 目录不会被 CLI 发现；填完并通过校验后移到 content/ 即可游玩。
+#   - 校验：python tools/validate_content.py content/templates/story_template.yaml
+#   - 本文件是手写参考模板。复制为 content/drafts/<故事id>.yaml 并填入
+#     有效的机器 ID 后，会出现在故事工作室中，可继续编辑、试玩和发布。
+#     （工作室首次保存会统一格式化，本文件的注释不会保留。）
 #
 # 路由标记（该字段内容最终被谁看到）：
 #   [玩家]     玩家在界面上直接看到的文案
@@ -98,7 +100,6 @@ critical_reminders:
 player_role:
   id: player            # 玩家角色机器 ID，须与 characters 中的条目对应
   name: ""              # [玩家] 玩家角色名
-  public_identity: ""   # 玩家的公开身份（创作参考；场景中他人眼里的玩家）
   private_goal: ""      # 玩家的私人目标。校验必填；当前运行时未直接消费，
                         #   作为创作参考（长线看会并入 ai_plot.player_role）
   constraints:          # [旁白][提案] 作为"世界边界"进入 prompt 的表达约束，

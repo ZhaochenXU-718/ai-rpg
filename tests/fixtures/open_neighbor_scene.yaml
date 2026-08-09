@@ -81,7 +81,6 @@ modules:
 player_role:
   id: player
   name: "住户"
-  public_identity: "帮忙整理公共院子的住户"
   private_goal: "找到一件能临时盖住长桌的东西"
   constraints:
     - "不能凭空获得物品，也不能强迫别人交出私人物品。"

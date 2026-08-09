@@ -14,8 +14,8 @@ from tools.validate_content import validate_content
 
 ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_FIXTURE = ROOT / "tests" / "fixtures" / "open_neighbor_scene.yaml"
-RETIRED_CASE = ROOT / "content" / "rooftop_supper.yaml"
-ARCHIVE = ROOT / "content" / "midnight_archive.yaml"
+RETIRED_CASE = ROOT / "content" / "archive" / "rooftop_supper.yaml"
+ARCHIVE = ROOT / "content" / "archive" / "midnight_archive.yaml"
 
 
 class FactCommitSkeletonTest(unittest.TestCase):

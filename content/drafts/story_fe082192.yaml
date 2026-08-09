@@ -62,7 +62,6 @@ premise: '人间尚有旧剑
 player_role:
   id: player
   name: 井九
-  public_identity: 一个初入青山、境界低微、性情懒散的年轻弟子
   private_goal: '第一，查明自己飞升失败的真正原因。
 
     第二，找回被人从神末峰带走的神秘旧物。
@@ -122,7 +121,7 @@ characters:
   player:
     name: 井九
     role: player
-    public_profile: 一个没有来历、没有境界、看起来对任何事情都提不起兴趣的白衣少年。
+    public_profile: 初入青山不久的年轻弟子；没有来历、没有境界，看起来对任何事情都提不起兴趣的白衣少年。
   character_1:
     name: 赵腊月
     role: 主要调查伙伴。推动景阳飞升之谜与神末峰旧案的调查

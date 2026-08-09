@@ -542,9 +542,15 @@ def validate_content(data: dict[str, Any]) -> ValidationReport:
     player_role = _mapping(data, "player_role", report)
     player_id = str(player_role.get("id") or "")
     _validate_machine_id(player_id, "player_role.id", report)
-    for field in ("name", "public_identity", "private_goal"):
+    for field in ("name", "private_goal"):
         if not _non_empty_string(player_role.get(field)):
             report.error(f"player_role.{field} must be a non-empty string.")
+    if "public_identity" in player_role:
+        report.warning(
+            "player_role.public_identity was merged into the player's"
+            " characters public_profile; move any unique detail there and"
+            " remove this field."
+        )
     constraints = player_role.get("constraints")
     if not isinstance(constraints, list) or not all(
         _non_empty_string(item) for item in constraints

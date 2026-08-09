@@ -63,17 +63,17 @@ export KIMI_API_KEY="你的密钥"
 python server/cli.py tests/fixtures/open_neighbor_scene.yaml --llm kimi
 
 # Web 客户端（同一引擎，浏览器访问 http://127.0.0.1:8642）
-python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi
+python server/web.py content/drafts/hogwarts_before_hogwarts.yaml --llm kimi
 
 # 故事工作室（浏览器访问 http://127.0.0.1:8643）
 # mock 提供离线开发建议；也可改为 deepseek 或 kimi 使用真实创作助手。
 python server/studio.py --llm mock
 
 # 可选行编辑器：建议先用 shadow 收集初稿/候选稿对照
-python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi --prose-editor shadow
+python server/web.py content/drafts/hogwarts_before_hogwarts.yaml --llm kimi --prose-editor shadow
 
 # 开发用 Web 对照面板：逐回合并排显示编辑前后正文与最终选择
-python server/web.py content/hogwarts_before_hogwarts.yaml --llm kimi --prose-editor shadow --show-editor-comparison
+python server/web.py content/drafts/hogwarts_before_hogwarts.yaml --llm kimi --prose-editor shadow --show-editor-comparison
 
 # 校验与测试
 python tools/validate_content.py tests/fixtures/open_neighbor_scene.yaml
@@ -86,7 +86,9 @@ Web 客户端（`server/web.py` + `web/index.html`，零额外依赖）：旁白
 
 故事工作室（`server/studio.py` + `web/studio.html`）把 YAML 隐藏在服务边界之后：创作者通过故事蓝图、玩家角色、人物、场景、关键物品、剧情模块、开场和文风页面手动创作；工作室自动生成稳定 ID、维护实体引用、原子保存草稿并复用现有内容校验。通过全部阻塞检查后，可以从工作室启动使用当前草稿快照的 Web 试玩会话。“题材与类型”采用可自由输入的建议标签，结构化标签可供未来故事库筛选与归类，但不触发引擎专属规则。
 
-关键文本字段提供「灵感」「补全/润色」「检查」三类创作者 LLM 操作。候选生成时不会修改故事；创作者可以选择「采用，稍后审阅」或「采用并确认」。采用后，字段来源与审阅状态保存在独立创作元数据中，未审阅内容会持续提示。`--llm deepseek` 使用 `DEEPSEEK_API_KEY`，`--llm kimi` 使用 `KIMI_API_KEY`；`mock` 不需要网络或 API key。完整故事的分阶段批量生成仍是后续阶段。
+内容目录按“可变草稿 / 不可变发布快照”分层：`content/drafts/` 是工作室管理的草稿；`content/releases/<故事id>/` 存放发布产生的不可变版本快照和 `releases.json`（发布记录与当前版本指针）；`content/templates/` 是手写 YAML 参考模板；`content/archive/` 是 pre-pivot 历史样本。发布要求零阻塞校验错误且所有 LLM 内容均已审阅；版本号由系统递增，回滚只移动当前版本指针，快照永不改写。已发布的快照可直接交给运行时游玩，例如 `python server/web.py content/releases/<故事id>/1.0.0.yaml --llm kimi`。
+
+「从想法开始」入口支持从一段创意简报出发：选择篇幅档位（短/中/长，附建议规模区间）后，助手给出 2–3 个可讨论的故事方向；采用的概念以未审阅状态写入故事蓝图，仍由创作者逐项确认。关键文本字段提供「灵感」「补全/润色」「检查」三类创作者 LLM 操作。候选生成时不会修改故事；创作者可以选择「采用，稍后审阅」或「采用并确认」。采用后，字段来源与审阅状态保存在独立创作元数据中，未审阅内容会持续提示。`--llm deepseek` 使用 `DEEPSEEK_API_KEY`，`--llm kimi` 使用 `KIMI_API_KEY`；`mock` 不需要网络或 API key。创作与游玩两侧的模型可分别配置：`--llm` 是同时设置两者的快捷方式，`--authoring-llm` 覆盖创作助手模型，`--play-llm` 覆盖内嵌试玩模型。完整故事的分阶段批量生成仍是后续阶段。
 
 ## 文档
 
@@ -102,4 +104,4 @@ Web 客户端（`server/web.py` + `web/index.html`，零额外依赖）：旁白
 
 当前没有正式活动展示故事。`tests/fixtures/open_neighbor_scene.yaml` 只用于引擎测试，不代表产品体验。
 
-`content/midnight_archive.yaml` 与 `content/rooftop_supper.yaml` 均为 `pre_pivot_archive` 历史样本，只保留研究价值，不能启动新会话，也不再作为当前设计样板。
+`content/archive/midnight_archive.yaml` 与 `content/archive/rooftop_supper.yaml` 均为 `pre_pivot_archive` 历史样本，只保留研究价值，不能启动新会话，也不再作为当前设计样板。

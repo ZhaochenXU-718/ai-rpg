@@ -23,7 +23,13 @@ from server.studio_service import (
     StoryStudioWorkspace,
     StudioError,
 )
-from server.studio_llm import FieldAssistRequest, create_authoring_assistant
+from server.studio_llm import (
+    ConceptBrief,
+    FieldAssistRequest,
+    create_authoring_assistant,
+    create_concept_assistant,
+)
+from server.studio_scale import DEFAULT_SCALE_KEY, scale_payload
 from server.web import WebGame
 
 
@@ -40,14 +46,17 @@ class StudioApplication:
         self,
         workspace: StoryStudioWorkspace,
         *,
-        provider_name: str = "mock",
+        authoring_provider: str = "mock",
+        play_provider: str = "mock",
         no_log: bool = False,
     ) -> None:
         self.workspace = workspace
-        self.provider_name = provider_name
+        self.authoring_provider = authoring_provider
+        self.play_provider = play_provider
         self.no_log = no_log
         self._games: dict[str, WebGame] = {}
         self._authoring_assistant = None
+        self._concept_assistant = None
         self._lock = threading.RLock()
 
     def invalidate_playtest(self, story_id: str) -> None:
@@ -61,7 +70,7 @@ class StudioApplication:
             raise StudioError(
                 f"故事还有 {len(errors)} 个阻塞问题，修复后才能开始试玩"
             )
-        provider = create_provider(self.provider_name)
+        provider = create_provider(self.play_provider)
         game = WebGame(
             Story(detail["story"]),
             provider,
@@ -97,7 +106,7 @@ class StudioApplication:
         with self._lock:
             if self._authoring_assistant is None:
                 self._authoring_assistant = create_authoring_assistant(
-                    self.provider_name
+                    self.authoring_provider
                 )
             assistant = self._authoring_assistant
         try:
@@ -114,6 +123,32 @@ class StudioApplication:
         payload = assistant.assist(request).to_dict()
         payload["revision"] = revision
         payload["original_text"] = current_text
+        return payload
+
+    def propose_concepts(self, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            brief = ConceptBrief(
+                brief=str(body.get("brief") or ""),
+                scale_key=str(body.get("scale") or DEFAULT_SCALE_KEY),
+                genre_tags=tuple(
+                    tag_text
+                    for tag in (body.get("genre_tags") or [])
+                    if (tag_text := str(tag or "").strip())
+                ),
+                language=str(body.get("language") or "zh-CN"),
+                instruction=str(body.get("instruction") or ""),
+            )
+        except ValueError as exc:
+            raise StudioError(str(exc)) from exc
+        with self._lock:
+            if self._concept_assistant is None:
+                self._concept_assistant = create_concept_assistant(
+                    self.authoring_provider
+                )
+            assistant = self._concept_assistant
+        payload = assistant.propose(brief).to_dict()
+        payload["scale"] = brief.scale_key
+        payload["brief"] = brief.brief
         return payload
 
 
@@ -201,8 +236,18 @@ class _StudioHandler(BaseHTTPRequestHandler):
             if segments == ["api", "stories"]:
                 self._json(200, {"stories": self.app.workspace.list_stories()})
                 return
+            if segments == ["api", "scale-templates"]:
+                self._json(200, {"templates": scale_payload()})
+                return
             if len(segments) == 3 and segments[:2] == ["api", "stories"]:
                 self._json(200, self.app.workspace.load(segments[2]))
+                return
+            if (
+                len(segments) == 4
+                and segments[:2] == ["api", "stories"]
+                and segments[3] == "releases"
+            ):
+                self._json(200, self.app.workspace.list_releases(segments[2]))
                 return
             if (
                 len(segments) == 4
@@ -229,6 +274,18 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 )
                 self._json(201, detail)
                 return
+            if segments == ["api", "concepts"]:
+                self._json(200, self.app.propose_concepts(body))
+                return
+            if segments == ["api", "stories-from-concept"]:
+                detail = self.app.workspace.create_from_concept(
+                    concept=body.get("concept") or {},
+                    scale_key=str(body.get("scale") or DEFAULT_SCALE_KEY),
+                    brief=str(body.get("brief") or ""),
+                    language=str(body.get("language") or "zh-CN"),
+                )
+                self._json(201, detail)
+                return
             if (
                 len(segments) == 4
                 and segments[:2] == ["api", "stories"]
@@ -242,6 +299,26 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 and segments[3] == "assist"
             ):
                 self._json(200, self.app.assist(segments[2], body))
+                return
+            if (
+                len(segments) == 4
+                and segments[:2] == ["api", "stories"]
+                and segments[3] == "publish"
+            ):
+                self._json(201, self.app.workspace.publish(
+                    segments[2],
+                    expected_revision=str(body.get("revision") or ""),
+                ))
+                return
+            if (
+                len(segments) == 4
+                and segments[:2] == ["api", "stories"]
+                and segments[3] == "rollback"
+            ):
+                self._json(200, self.app.workspace.rollback(
+                    segments[2],
+                    str(body.get("version") or ""),
+                ))
                 return
             if (
                 len(segments) == 4
@@ -315,7 +392,24 @@ class _StudioHandler(BaseHTTPRequestHandler):
 def main() -> int:
     parser = argparse.ArgumentParser(description="Serve the AIRPG story studio.")
     parser.add_argument("--content-dir", default="content")
-    parser.add_argument("--llm", choices=["mock", "deepseek", "kimi"], default="mock")
+    parser.add_argument(
+        "--llm",
+        choices=["mock", "deepseek", "kimi"],
+        default="mock",
+        help="同时设置创作与游玩模型的快捷方式",
+    )
+    parser.add_argument(
+        "--authoring-llm",
+        choices=["mock", "deepseek", "kimi"],
+        default=None,
+        help="创作助手（灵感/补全/检查与后续生成管线）使用的模型",
+    )
+    parser.add_argument(
+        "--play-llm",
+        choices=["mock", "deepseek", "kimi"],
+        default=None,
+        help="内嵌试玩会话使用的模型",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8643)
     parser.add_argument("--no-log", action="store_true")
@@ -324,7 +418,8 @@ def main() -> int:
     workspace = StoryStudioWorkspace(args.content_dir)
     app = StudioApplication(
         workspace,
-        provider_name=args.llm,
+        authoring_provider=args.authoring_llm or args.llm,
+        play_provider=args.play_llm or args.llm,
         no_log=args.no_log,
     )
     _StudioHandler.app = app
